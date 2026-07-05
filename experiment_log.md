@@ -116,6 +116,60 @@ problem was sampled, so some of the final-window drop is composition noise.
 One seed, one epoch — findings 4–5 are the mechanistically-plausible reading,
 not established fact; see backlog for the falsification runs.
 
+### Discussion
+
+**Was the +5.5pt elicitation or overfitting?** Not overfitting in the
+memorization sense: the gain is on held-out test problems and training was a
+single epoch (nothing to memorize from). But it is the *cheap* kind of gain.
+GRPO with group-relative rewards approximately trains toward the model's own
+majority-vote answer, converting sampling inconsistency into greedy
+reliability — pass@1 climbs toward where maj@8 already was, plus ~1pt of pure
+format cleanup. The model didn't learn math it lacked; it stopped fumbling
+math it knew. At an 86.5% baseline the task offers no other kind of headroom,
+so "GSM8K is too easy" is correct in that precise sense. This matches the
+RLVR-skeptic literature: RL raises pass@1 while base-model pass@k at large k
+often stays equal or better — sampling efficiency moves, the capability
+boundary doesn't. Testable: if base maj@8 ≈ trained pass@1 and pass@8 didn't
+move, the sharpening story is confirmed (see backlog).
+
+**Is Countdown "learning from scratch"?** No — and in a sense nothing in RLVR
+is: the reward channel carries a few bits per rollout, far too narrow to
+inject knowledge. GRPO can only redistribute probability over behaviors the
+model can already emit (its occasional stumbled-into successes are what let
+it bootstrap at all). The useful axis is not elicitation-vs-acquisition but
+*behavioral distance*: GSM8K-on-instruct reinforces the model's typical
+behavior (distance ≈ 0, reliability tuning); Countdown-on-base makes a
+vanishingly-rare composition of pretrained components (propose → evaluate →
+backtrack, with persistence) into the dominant strategy — elicitation at the
+component level, genuinely new at the policy level. Even R1-Zero's "aha
+moment" got this reinterpretation (Qwen2.5 base shows self-reflection at
+step 0). For visibly reorganizing behavior rather than polishing it,
+Countdown is the better instrument.
+
+**What "overfitting" means in a GRPO run.** Held-out validation *does* exist
+in RLVR — a held-out prompt set evaluated periodically (TRL: `eval_dataset`);
+it's just expensive (every val point costs generation), so the curve is
+sparse and train-time metrics fill the gaps. "Overfitting" then fragments
+into four failure modes with different detectors:
+
+1. **Prompt-set overfitting** — memorizing a small training prompt set. One
+   epoch can't; a multi-epoch run over our 300 problems absolutely could.
+   Only held-out prompts detect it.
+2. **Verifier overfitting (reward hacking)** — policy exploits the reward
+   function; train reward actively misleads. Detectors: reading sampled
+   completions, unit-testing the verifier *before* training.
+3. **Distributional collapse** — the policy "overfits to its own mode"
+   (observed live in this run). Detectors: entropy, unique_answer_rate,
+   frac_reward_zero_std, KL — these fire *before* any eval degrades.
+4. **Capability forgetting** — better at the task, quietly worse elsewhere.
+   Needs broader evals; KL is a crude proxy for distance traveled.
+
+Caveat on naive train/val comparison: train correctness (~0.8 @ temp 1.0 on
+deliberately-hard filtered problems) and val accuracy (92% greedy, unfiltered
+test) measure different quantities under different distributions — train
+reward is a property of the exploration distribution, not a preview of
+deployment behavior.
+
 ---
 
 ## Backlog
@@ -132,6 +186,19 @@ variable, encode it in the run name, add an entry above.
   order (composition)?
 - **Analysis-only**: split per-step `kl` by group outcome (zero-var vs mixed)
   in run `nfrzmbjv` to separate relaxation from composition noise.
+- **pass@k / maj@k audit** (analysis-only, tests the sharpening story from
+  the E1 discussion): base vs trained at k=1/8/64 on test. Prediction: base
+  maj@8 ≈ trained pass@1, and pass@64 barely moves — pass@1 gains came from
+  consistency, not new capability.
+- **Deliberate prompt-set overfit**: rerun E1 for ~5 epochs over the same 300
+  problems with periodic held-out eval. Prediction: train reward keeps
+  climbing while held-out accuracy stalls/degrades — the classic gap, made
+  visible in an RL run.
+
+**Instrumentation:**
+- Periodic held-out eval during training (TRL `eval_dataset` or an eval
+  callback every ~50 steps) — turns the two-point before/after into an
+  actual validation curve.
 
 **Fight the collapse (each vs the E1 baseline):**
 - Temperature 0.7 vs 1.0 vs 1.2 — depth of the entropy trough vs final eval.
