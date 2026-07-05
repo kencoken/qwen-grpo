@@ -177,48 +177,61 @@ deployment behavior.
 Roughly ordered by information-per-GPU-hour. Each Stage-2 run: change one
 variable, encode it in the run name, add an entry above.
 
-**Directly falsify/confirm E1's dynamics story:**
-- **Pure-easy control**: same config on *unfiltered* GSM8K. Prediction from
-  finding 4: monotone entropy decline with no recovery (no hard-problem force
-  to flip the sign), and a smaller eval gain.
-- **Re-shuffle rerun** (new seed, same data): does the entropy trough-and-
-  recovery appear at the same training phase (dynamics) or follow the data
-  order (composition)?
-- **Analysis-only**: split per-step `kl` by group outcome (zero-var vs mixed)
-  in run `nfrzmbjv` to separate relaxation from composition noise.
-- **pass@k / maj@k audit** (analysis-only, tests the sharpening story from
-  the E1 discussion): base vs trained at k=1/8/64 on test. Prediction: base
-  maj@8 ≈ trained pass@1, and pass@64 barely moves — pass@1 gains came from
-  consistency, not new capability.
-- **Deliberate prompt-set overfit**: rerun E1 for ~5 epochs over the same 300
-  problems with periodic held-out eval. Prediction: train reward keeps
-  climbing while held-out accuracy stalls/degrades — the classic gap, made
-  visible in an RL run.
+Organized by the phase plan in `stages.md` (A → E). Pre-registration rule:
+write the prediction here before launching the run.
 
-**Instrumentation:**
-- Periodic held-out eval during training (TRL `eval_dataset` or an eval
-  callback every ~50 steps) — turns the two-point before/after into an
-  actual validation curve.
+**Phase A — close E1's open claims:**
+- **A1 pass@k / maj@k audit** (inference-only): base vs E1 adapter at
+  k=1/8/64 on test. Prediction: base maj@8 ≈ trained pass@1, pass@64 barely
+  moves — pass@1 gains came from consistency, not new capability.
+- **A2 KL-split analysis** (zero GPU): split per-step `kl` by group outcome
+  (zero-var vs mixed) in run `nfrzmbjv` — relaxation vs composition noise.
+- **A3 pure-easy control** (~2h run): E1 config on *unfiltered* GSM8K.
+  Prediction from E1 finding 4: monotone entropy decline with no recovery,
+  and a smaller eval gain.
+- **A4 (contingent) re-shuffle rerun** (new seed, same data), only if A3
+  leaves the trough-and-recovery story ambiguous: same training phase
+  (dynamics) or data order (composition)?
 
-**Fight the collapse (each vs the E1 baseline):**
-- Temperature 0.7 vs 1.0 vs 1.2 — depth of the entropy trough vs final eval.
-- `entropy_coef` > 0 (explicit entropy bonus).
-- Clip-higher (`epsilon_high`, the DAPO trick): let unlikely-but-good tokens
-  gain probability faster than the symmetric clip allows.
+**Phase B — instrumentation:**
+- vLLM path for offline generation in `eval.py`/`filter_data.py` (training
+  untouched; ~10× on bucketing/eval/pass@k passes).
+- Periodic held-out eval during training (every ~50 steps → W&B) — the
+  two-point before/after becomes a validation curve.
+- pass@k / maj@k support in `eval.py`.
+- GSM8K regression run (E1 config) to certify the changed tooling.
 
-**Better data:**
-- Stricter filter: 8 rollouts, keep 0.25–0.625 band, scan all 7.4k problems.
-- MATH levels 3–5 + `math_verify` — raises headroom so the modal answer isn't
-  already correct.
+**Phase C — Countdown difficulty laboratory (3B/1.5B, fast sweeps):**
+- C0: task module + tests; calibrate the difficulty dial vs initial pass rate.
+- C1 **difficulty sweep** (centerpiece): five levels targeting ~90/70/50/30/10%
+  initial pass; measure reward slope, entropy trajectory, zero-variance
+  fraction, transfer. Prediction: inverted U, echoing E1.
+- C2 knobs at the sweet spot: group size 4/8/16, temperature 0.7/1.0/1.2,
+  `entropy_coef` > 0, clip-higher (`epsilon_high`, DAPO).
+- C3 difficulty schedules: curriculum vs anti-curriculum vs adaptive (hold
+  pass rate ≈ 50% — home-made DAPO dynamic sampling).
+- C4 (stretch) learnability-statistics pilot: does rollout disagreement /
+  trace diversity predict per-problem improvement better than pass rate?
+- (fits here if wanted) **Deliberate prompt-set overfit** demo: many epochs
+  over a small fixed problem set with periodic eval — train reward climbs
+  while held-out stalls. Cheap on Countdown.
 
-**Original Stage-2 grid (stages.md):** group size 4/8/16, LoRA rank 8/16/32,
-reward shaping via `reward_weights`, max tokens 256/512, SFT warm start,
-β=0.04 real-leash arm.
+**Phase D — MATH transfer test:**
+- D0 **verifier project first**: `math_verify` equivalence checking + test
+  suite (fractions, intervals, surds, π), offline, before any training uses
+  it. Data via mirrors: `DigitalLearningGmbH/MATH-lighteval` (train),
+  `HuggingFaceH4/MATH-500` (eval-only, full 500, fixed seeds).
+- D1 baselines: MATH500 greedy + maj@8; pass-rate buckets over MATH-train.
+- D2 one boring baseline run: random sample, 768–1024 tokens,
+  `mask_truncated_completions`, periodic eval; watch `clipped_ratio` and
+  length *growth* — the first dynamic earlier phases can't show.
+- D3 bucket runs (easy/median/hard) with Phase-C-derived pre-registered
+  predictions; re-estimate buckets if drift matters.
 
-**Bigger arms:**
+**Unscheduled / opportunistic (slot in where a phase makes them cheap):**
 - Base model R1-Zero style (7B base, raw-text prompt) — format emergence,
-  which the instruct model can't show (finding 2).
+  which the instruct model can't show (E1 finding 2).
 - Full-FT vs LoRA on 1.5B/3B (`use_lora false`) — test the "LoRA barely
-  changes the dynamics" claim.
-- Countdown on Qwen2.5-3B (+ vLLM colocate) — skill acquisition rather than
-  elicitation; the fast-sweep vehicle.
+  changes the dynamics" claim; natural fit alongside Phase C.
+- β=0.04 real-leash arm; LoRA rank 8/16/32; reward shaping via
+  `reward_weights`; SFT warm start (mandatory anyway for Phase E Conductor).

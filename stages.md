@@ -1,110 +1,137 @@
 # Exploration roadmap: learning GRPO dynamics on a single RTX 4090
 
 The goal is **intuition about GRPO training dynamics**, not benchmark numbers.
-Inspired by the Conductor paper (Qwen2.5-7B, 200 GRPO iterations, 4 questions ×
-64 rollouts, 2× H100 — far beyond one 4090), the plan is to build a minimal,
-fully-understood training loop and then vary one thing at a time.
+The organizing question after Stage 1: **how does reward density (task
+difficulty) shape GRPO dynamics?** Datasets are instruments for that question,
+not destinations.
 
-Success criterion (unchanged from the original plan):
+Success criterion (unchanged since the original plan):
 
 > *"I can predict how changing group size, temperature, reward shaping, and
 > max length affects training."*
 
-This document is the revised version of the original staging, after review.
-Revisions and their reasons are marked **[revised]**.
+Working discipline, applied throughout:
+
+- **Pre-register**: every run gets its prediction written in
+  `experiment_log.md` *before* launch. Where predictions fail is where the
+  learning is.
+- **One hard change at a time**: a dataset move is secretly a verifier move +
+  a distribution move + a length-regime move; sequence them.
+- **Statistics**: full-set evals with fixed seeds (MATH500 at ~70% has ±~2%
+  SE on all 500 — no 200-problem shortcuts there); two seeds before believing
+  a headline claim.
+- **GSM8K is retired as a research object but kept as the regression
+  control**: rerun the E1 config after major trainer/code changes; if it
+  degrades, the bug is ours, not the science.
+- **Experiments per week is the real currency** on one GPU — prefer the
+  instrument that iterates faster.
 
 ---
 
-## Stage 0 — plumbing (smoke test)
+## Stage 0/1 — GSM8K: validate the pipeline ✅ (2026-07-05)
 
-Prove the pipeline before spending real GPU-hours.
+Complete; see `experiment_log.md` E0/E1. Headline: 86.5% → 92.0% held-out
+after 300 steps on difficulty-filtered problems; observed zero-variance
+groups, entropy-collapse pressure, and its endogenous self-stabilization.
+Left behind: written predictions to test (Phase A) and the conclusion that
+GSM8K has no headroom that isn't reliability-shaped.
 
-- **Verifier first**: `pytest test_rewards.py` green before any training.
-  Reward bugs are the canonical silent GRPO failure — a regex that accepts
-  malformed output *teaches the model malformed output*.
-- **Run A**: Qwen2.5-**1.5B**-Instruct, bf16 + LoRA r=16, 20 optimizer steps,
-  64 unfiltered GSM8K problems (~15 min).
+## Phase A — close E1's open claims (~2–3 days, mostly cheap)
 
-**Exit criterion**: W&B shows both reward curves, the `kl` curve, and the
-sample-completions table; no OOM. Format reward should tick up within ~20 steps.
+Test our own story before opening new fronts:
 
-## Stage 1 — first real run
+- **A1 pass@k/maj@k audit** (inference-only): base vs E1 adapter at k=1/8/64.
+  Prediction: base maj@8 ≈ trained pass@1; pass@64 unmoved (sharpening, not
+  new capability).
+- **A2 KL-split analysis** (zero GPU): per-step `kl` in run `nfrzmbjv` split
+  by group outcome (zero-var vs mixed) — relaxation vs composition noise.
+- **A3 pure-easy control** (one ~2h run): E1 config on *unfiltered* GSM8K.
+  Prediction: monotone entropy decline, no recovery (no hard-problem force to
+  flip the sign), smaller eval gain.
+- **A4 (contingent)**: re-shuffle rerun with a new seed if A3 leaves the
+  trough-and-recovery story ambiguous.
 
-**Run B**: Qwen2.5-**7B**-Instruct, 4-bit QLoRA r=16, group size 8,
-1 prompt/step, max completion 512, 300 steps on 512 GSM8K problems (overnight;
-generation-bound at ~1.5–3 min/step via HF `generate`).
+## Phase B — instrumentation (~1–2 days, before the inference-heavy science)
 
-Revisions vs. the original plan:
+- **vLLM path for offline generation**: swap the generate helper used by
+  `eval.py`/`filter_data.py` to vLLM (training untouched). Offline scripts
+  have no training state on the GPU, so a bf16 7B fits and runs ~10× faster —
+  bucketing, pass@k, and full-set evals drop from hours to minutes.
+- **Periodic in-training eval** (every ~50 steps → W&B): before/after points
+  become validation curves.
+- **pass@k / maj@k support** in `eval.py`.
+- Then one **GSM8K regression run** to certify the changed tooling.
 
-- **[revised] Difficulty-filtered data.** Qwen2.5-7B-Instruct already scores
-  ~80–85% on GSM8K. GRPO's advantage is zero when all rollouts in a group score
-  the same, so easy problems contribute no gradient. `filter_data.py` samples
-  4 rollouts on ~1500 train problems and keeps ~512 with pass rate strictly
-  between 0 and 1 — training signal concentrated where gradients exist.
-- **[revised] KL logged, not penalized (β=1e-3).** Modern practice (DAPO
-  onward) drops the KL penalty for verifiable-reward training: the reward
-  can't be hacked the way a learned reward model can, and reasoning training
-  *wants* distribution shift. But the KL curve is a drift gauge worth watching,
-  and with LoRA the reference model is free (adapter-disabled forward pass).
-  Tiny β keeps the gauge on with the leash off.
-- **[revised] Held-out eval.** The original plan had none. `eval.py` runs
-  greedy pass@1 on 200 GSM8K test problems before and after training.
-- **No SFT warm start** (as originally planned, now with the reason explicit):
-  an instruct model emits valid format often enough for nonzero group variance,
-  and watching format emerge cold is half the point. SFT is a Stage-2 ablation
-  and becomes *mandatory* in Stage 3.
+## Phase C — Countdown: the difficulty laboratory (~1–2 weeks; the core)
 
-Expected observations: format reward improves first; correctness is noisy;
-`unique_answer_rate` collapsing toward 1/group_size signals mode collapse;
-`completions/clipped_ratio` rising means answers are hitting the length limit.
+For the reward-density question, Countdown is the superior instrument, not a
+detour: **difficulty is generative** (number count / target range dial initial
+pass rate by construction — no estimation passes, no stale buckets, no
+regression-to-the-mean like E1's filter), **data is infinite** (no prompt-set
+overfitting confound, fresh eval problems with tight statistics), the
+**verifier is trivial pure Python**, and a **3B/1.5B model with short
+completions** iterates in minutes-to-an-hour per run (possibly vLLM-colocated
+training). What it won't show — long CoT, realistic reasoning failures — is
+Phase D's job.
 
-**Exit criterion**: format compliance clearly up on held-out test; accuracy
-movement is a bonus, not the bar.
+- **C0**: Countdown task module in `data.py`/`rewards.py` + tests; calibrate
+  the difficulty dial against initial pass rate on the chosen model.
+- **C1 — the difficulty sweep** (the centerpiece): fixed config, five
+  difficulty levels targeting ~90/70/50/30/10% initial pass rate. Measure
+  reward slope, entropy trajectory, zero-variance fraction, transfer to a
+  held-out difficulty band. Prediction: inverted U in learning, echoing E1.
+- **C2 — knobs at the sweet spot**: group size 4/8/16, temperature 0.7/1.0/1.2,
+  `entropy_coef`, clip-higher (`epsilon_high`, the DAPO trick).
+- **C3 — difficulty schedules**: curriculum, anti-curriculum, and *adaptive*
+  (raise difficulty to hold pass rate ≈ 50% — home-made DAPO dynamic
+  sampling; only clean on a generative task).
+- **C4 (stretch) — learnability statistics pilot**: which group statistics
+  (rollout disagreement, reward variance, trace diversity) predict
+  per-problem improvement better than raw pass rate.
 
-## Stage 2 — dynamics experiments
+## Phase D — MATH: the transfer test (~1–2 weeks)
 
-One variable at a time, everything else frozen. Each run is a config override
-plus a W&B run name that encodes the variable (`stage2-7b-g16-t1.0`).
+MATH's role is **external validity**: does the difficulty→dynamics map from
+the lab predict the field? Train on MATH-train, evaluate on **MATH500
+(eval-only — 500 problems is an evaluation set, never a training set)**.
+Known-messy HF availability: use mirrors (`DigitalLearningGmbH/MATH-lighteval`
+train, `HuggingFaceH4/MATH-500` eval).
 
-Original grid:
+- **D0 — the verifier project, first and separately**: `math_verify`-based
+  equivalence checking (fractions, intervals, surds, π-expressions) with a
+  proper test suite, built and tested offline before any training depends on
+  it. Verifier false negatives don't add noise — they *teach* the model the
+  buggy verifier's preferences.
+- **D1 — baselines** (cheap post-Phase-B): full MATH500 greedy + maj@8;
+  pass-rate estimation over a MATH-train sample → measured difficulty buckets.
+- **D2 — one boring baseline run**: random MATH-train sample, 768–1024 token
+  budget, `mask_truncated_completions` on, periodic eval. Watch
+  `clipped_ratio` and whether completion length *grows* — the first new
+  dynamic the previous phases couldn't show.
+- **D3 — bucket runs** (easy/median/hard), each with a Phase-C-derived
+  prediction pre-registered. Bucket caveat: membership is defined vs the
+  initial policy and drifts as training sharpens the model — re-estimate or
+  acknowledge.
 
-| Axis | Values |
-|---|---|
-| group size (`num_generations`) | 4 vs 8 vs 16 |
-| temperature | 0.7 vs 1.0 |
-| LoRA rank | 8 vs 16 vs 32 |
-| reward shaping (`reward_weights`) | binary vs partial credit |
-| max completion tokens | 256 vs 512 |
-| SFT warm start | no vs yes |
+## Phase E — code rewards, then toy Conductor
 
-Added arms **[revised]**:
+Deliberately unplanned in detail; Phases C/D should shape it. Sketch: code
+execution rewards (rich partial credit: N tests passed, runtime/syntax
+errors) on LiveCodeBench-easy, then the minimal Conductor (SFT on synthetic
+workflow traces first — mandatory, cold GRPO would produce all-zero groups —
+then tiny GRPO with parseability + correctness rewards, 1–2 local workers).
 
-| Axis | Values | Why |
-|---|---|---|
-| KL penalty | β=1e-3 (log-only) vs 0.04 | does the leash change the dynamics? |
-| base vs instruct | 7B base (R1-Zero style) vs 7B-Instruct | watch format emerge from nothing; Qwen2.5 base is known to cold-start well |
-| full FT vs LoRA | 1.5B/3B, `use_lora` off vs on | test the "LoRA barely changes dynamics" claim |
-| task | **Countdown on Qwen2.5-3B** | TinyZero-style skill *acquisition* (vs GSM8K's elicitation); unlimited synthetic data, tunable difficulty, fast sweeps |
+---
 
-Throughput unlock for the sweep phase: 1.5B/3B fit vLLM colocate
-(`use_vllm=True, vllm_mode="colocate"`) → ~4–8× wall clock. The 7B QLoRA run
-cannot use it (a second bf16 weight copy doesn't fit in 24 GB, and TRL can't
-sync LoRA into a quantized engine).
+## Reference: hardware envelope (RTX 4090, 24 GB)
 
-Memory notes for full FT (weights + grads + adamw_8bit states, before
-activations): 1.5B ≈ 9.5 GB (comfortable, KL ref copy fits), 3B ≈ 18.5 GB
-(tight; no room for a ref copy → β must be 0), 7B — never on 24 GB.
-
-## Stage 3 — mini-Conductor
-
-Unchanged from the original plan:
-
-1. **SFT first** on synthetic conductor traces (mandatory here: the model has
-   ~zero prior probability of emitting valid workflow lists, so cold GRPO
-   would produce all-zero groups).
-2. Then tiny GRPO: reward = parseable workflow + final answer correctness.
-3. 1–2 cheap local workers, 100–300 math/code problems, workflow ≤ 2 steps,
-   4–8 rollouts. Debug locally before touching API frontier workers.
-
-Dataset progression stays GSM8K → MATH500 subset (needs `math_verify` for
-LaTeX answer equivalence) → LiveCodeBench-easy (execution rewards).
+- 7B: QLoRA only. Training-time generation must be HF `generate` (a vLLM
+  colocate copy is ~15 GB bf16 and TRL can't sync LoRA into a quantized
+  engine). Measured E1 footprint: 12.5 GB peak, ~26 s/step at 512 tokens.
+- 1.5B/3B: LoRA or full FT (1.5B comfortable; 3B needs adamw_8bit + grad
+  ckpt and has no room for the KL reference copy → β=0). vLLM colocate fits →
+  the fast-sweep vehicle for Phase C.
+- Offline inference (eval/filter/bucketing): vLLM with bf16 7B fits fine —
+  no training state on the GPU (Phase B unlock).
+- NVIDIA driver 560 caps CUDA at 12.6: torch stays on the cu126 wheel index
+  (pinned in pyproject.toml).
