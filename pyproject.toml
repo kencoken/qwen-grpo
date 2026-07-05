@@ -16,13 +16,3 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
 ]
-
-# The NVIDIA driver on this machine (560.xx) supports CUDA <= 12.6, so torch
-# must come from the cu126 wheel index rather than PyPI's default cu13 build.
-[tool.uv.sources]
-torch = { index = "pytorch-cu126" }
-
-[[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
-explicit = true
