@@ -1,0 +1,12 @@
+# training outputs (checkpoints are GB-scale; adapters live in W&B / runs dir)
+runs/
+wandb/
+
+# python
+.venv/
+__pycache__/
+.pytest_cache/
+
+# scratch
+*.log
+nohup.out

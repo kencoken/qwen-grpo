@@ -1,0 +1,28 @@
+[project]
+name = "qwen-grpo"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.14.0",
+    "bitsandbytes>=0.49.2",
+    "datasets>=5.0.0",
+    "peft>=0.19.1",
+    "torch>=2.12.1",
+    "trl>=1.7.1",
+    "wandb>=0.28.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+# The NVIDIA driver on this machine (560.xx) supports CUDA <= 12.6, so torch
+# must come from the cu126 wheel index rather than PyPI's default cu13 build.
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
