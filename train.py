@@ -68,6 +68,13 @@ class Config:
     # Costs ~10-15% step time. Set 0.04 for a real leash (Stage-2 arm).
     beta: float = 1e-3
     max_steps: int = 20          # 300 for Stage 1
+    # Periodic held-out eval (TRL generates completions for n_eval test
+    # problems every eval_steps and logs eval reward means). Caveat: this is
+    # *sampled* accuracy at the training temperature — a relative validation
+    # curve to catch divergence/overfitting mid-run; the headline greedy
+    # number remains eval.py's job. Costs roughly 5-10% of run time.
+    n_eval: int = 64
+    eval_steps: int = 50
 
 
 def parse_config():
@@ -86,6 +93,7 @@ def main():
         train_dataset = load_gsm8k_filtered(n=cfg.n_train)
     else:
         train_dataset = load_gsm8k("train", n=cfg.n_train)
+    eval_dataset = load_gsm8k("test", n=cfg.n_eval)
 
     args = GRPOConfig(
         output_dir=f"runs/{cfg.run_name}",
@@ -104,6 +112,12 @@ def main():
         warmup_steps=10,
         beta=cfg.beta,
         max_steps=cfg.max_steps,
+        # periodic held-out eval (see Config note); 4 generations per eval
+        # prompt halves the cost vs reusing the training group size
+        eval_strategy="steps",
+        eval_steps=cfg.eval_steps,
+        num_generations_eval=4,
+        per_device_eval_batch_size=cfg.per_device_batch,
         # memory: checkpoint activations; the model itself may be 4-bit (below).
         # Generation is HF generate — slow (~1.5-3 min/step on the 7B) but zero
         # extra weight copies. vLLM colocate would be ~5-10x faster generation
@@ -162,6 +176,7 @@ def main():
         model=cfg.model,
         args=args,
         train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
         # order matters only for reward_weights; both default to weight 1.0
         reward_funcs=[format_reward, correctness_reward],
         peft_config=peft_config,

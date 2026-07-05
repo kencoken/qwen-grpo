@@ -1,4 +1,4 @@
-"""One-off difficulty filter for the Stage-1 training set (~1-2 h on the 7B).
+"""One-off difficulty filter for the Stage-1 training set (~minutes on vLLM).
 
 Samples a few rollouts per training problem at the training temperature and
 keeps only problems with pass rate strictly between 0 and 1. Why: GRPO's
@@ -26,16 +26,14 @@ def main():
     parser.add_argument("--n_problems", type=int, default=1500)
     parser.add_argument("--num_rollouts", type=int, default=4)
     parser.add_argument("--temperature", type=float, default=1.0)
-    parser.add_argument("--batch_size", type=int, default=8)
     args = parser.parse_args()
 
     dataset = load_gsm8k("train", n=args.n_problems)
-    model, tokenizer = load_model(args.model)
+    llm, _ = load_model(args.model)
     completions = batch_generate(
-        model, tokenizer, dataset["prompt"],
+        llm, dataset["prompt"],
         temperature=args.temperature,
         num_return=args.num_rollouts,
-        batch_size=args.batch_size,
     )
 
     passes = [

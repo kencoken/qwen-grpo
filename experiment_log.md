@@ -216,6 +216,48 @@ needed. A3's pure-easy control remains the causal test of the mechanism.
 
 ---
 
+## E3 — Phase B certification + regression run (2026-07-05, in progress)
+
+**What changed since E1:** NVIDIA driver 560→595 (CUDA 13.2), torch
+2.12.1+cu126 → 2.11.0+cu130 (relaxed to honor vLLM 0.24.0's exact pin),
+vLLM offline generation + pass@k/maj@k in `eval.py`, periodic in-training
+eval in `train.py`. This run certifies the whole bundle before A1/A3.
+
+**Certification battery (done):**
+
+| check | result |
+|---|---|
+| base greedy, 200 (vLLM) | **88.5%** (HF/E1 measured 86.5% — engine shift, 4 problems) |
+| E1 adapter greedy, 200 (vLLM) | **90.5%**, format 100% |
+| pass@8 coherence (base, n=50, t=1.0) | pass@1 0.875 < maj@8 0.96 < pass@8 0.98 ✓ |
+
+**Lesson locked in: effect sizes are engine-dependent** — the E1 gain reads
++5.5pt on HF generate and +2.0pt on vLLM (both engines agree on direction;
+borderline generations flip). Standing policy: only same-engine comparisons
+count; the vLLM anchors are now base 88.5% / E1-adapter 90.5%.
+(Bonus pre-A1 signal, n=50 so indicative only: base maj@8 (0.96) ≥ trained
+pass@1 (0.905–0.92) — consistent with the sharpening story.)
+
+**Pre-registered expectations for the regression run** (`e1-repro-newstack`,
+exact E1 config + seed, new stack, periodic eval on):
+
+1. Not bit-identical to E1 (new kernels ⇒ different rollouts), but
+   statistically equivalent training dynamics: reward curves same shape;
+   entropy trough ~mid-run with late recovery; zero-variance fraction rising
+   from ~40% toward ~60%; KL rising then relaxing late.
+2. Periodic eval curve (new instrumentation) appears in W&B without errors
+   and shows no divergence.
+3. Final adapter greedy eval (vLLM, 200): within ±2.5% of the E1 adapter's
+   same-engine 90.5%, and above the same-engine base 88.5%.
+4. Format compliance ≥ 99.5%.
+5. If the trough-and-recovery reproduces at the same training phase with the
+   same seed on different kernels, that's partial A4 evidence for "dynamics,
+   not data order".
+
+_Result: pending._
+
+---
+
 ## Backlog
 
 Roughly ordered by information-per-GPU-hour. Each Stage-2 run: change one

@@ -43,6 +43,7 @@ uv run python train.py --model Qwen/Qwen2.5-7B-Instruct --load_in_4bit true \
     --max_completion_length 512 --max_steps 300 --dataset filtered \
     --run_name stage1-7b-g8-t1.0
 uv run python eval.py --adapter runs/stage1-7b-g8-t1.0   # after
+uv run python eval.py --num_samples 8 --temperature 1.0  # pass@8 / maj@8
 ```
 
 Any `Config` field in `train.py` is a `--flag value` override. Metrics go to
