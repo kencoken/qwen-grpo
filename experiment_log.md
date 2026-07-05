@@ -172,6 +172,50 @@ deployment behavior.
 
 ---
 
+## E2 — A2: KL split by group outcome (2026-07-05, analysis-only)
+
+**Question** (pre-registered in the Phase-A backlog): is E1's late-run KL drop
+(0.027 → 0.016) composition noise (driven by which problems were sampled) or
+genuine relaxation of the sharpening? Discriminator: a drop confined to
+zero-variance steps → composition; a drop present in mixed-outcome steps →
+relaxation.
+
+**Method:** `analysis/a2_kl_split.py` — E1 run history from the W&B API,
+`kl`/`entropy` per 50-step window, split by `frac_reward_zero_std`
+(uniform vs mixed groups). Zero GPU.
+
+**Result:**
+
+| steps | kl uniform | kl mixed | ent uniform | ent mixed | n uniform |
+|---|---|---|---|---|---|
+| 1–50 | 0.0066 | 0.0036 | 0.152 | 0.228 | 21 |
+| 51–100 | 0.0111 | 0.0098 | 0.156 | 0.196 | 32 |
+| 101–150 | 0.0227 | 0.0194 | 0.130 | 0.166 | 29 |
+| 151–200 | 0.0239 | 0.0196 | 0.128 | 0.204 | 31 |
+| 201–250 | 0.0279 | 0.0256 | 0.146 | 0.208 | 25 |
+| 251–300 | **0.0147** | **0.0190** | 0.174 | 0.214 | 32 |
+
+**Verdict: genuine relaxation, not composition noise.** The drop appears in
+*both* strata — mixed-outcome steps fell 0.0256 → 0.0190 (−26%), so the
+discriminator lands on relaxation. Two bonus observations:
+
+1. Uniform steps carried *higher* KL than mixed steps in every window through
+   step 250 — consistent with E1 finding 5's claim that sharpening (strongest
+   on easy problems, whose groups go uniform) was the dominant component of
+   measured KL.
+2. The reversal is strongest exactly in that uniform stratum (−47%,
+   0.0279 → 0.0147, ending *below* the mixed stratum): sharpening relaxed
+   most where it had gone furthest. The entropy split agrees: uniform-step
+   entropy troughs deeper (0.128 vs mixed's shallow dip) and recovers to its
+   highest value in the final window.
+
+**Caveats:** ~25–32 steps per cell, one seed; per-step KL is noisy
+(0.005–0.08 range), so treat magnitudes as suggestive. The direction of the
+verdict is consistent across both strata, which is what the discriminator
+needed. A3's pure-easy control remains the causal test of the mechanism.
+
+---
+
 ## Backlog
 
 Roughly ordered by information-per-GPU-hour. Each Stage-2 run: change one
@@ -184,8 +228,8 @@ write the prediction here before launching the run.
 - **A1 pass@k / maj@k audit** (inference-only): base vs E1 adapter at
   k=1/8/64 on test. Prediction: base maj@8 ≈ trained pass@1, pass@64 barely
   moves — pass@1 gains came from consistency, not new capability.
-- **A2 KL-split analysis** (zero GPU): split per-step `kl` by group outcome
-  (zero-var vs mixed) in run `nfrzmbjv` — relaxation vs composition noise.
+- ~~**A2 KL-split analysis**~~ → done, see E2: genuine relaxation, present in
+  both strata.
 - **A3 pure-easy control** (~2h run): E1 config on *unfiltered* GSM8K.
   Prediction from E1 finding 4: monotone entropy decline with no recovery,
   and a smaller eval gain.
