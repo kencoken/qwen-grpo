@@ -23,6 +23,6 @@ lines). Past that, promote it to a tasks/<name>/ package whose __init__.py
 re-exports the same names — callers never notice the difference.
 """
 
-from tasks import gsm8k
+from tasks import countdown, gsm8k
 
-TASKS = {"gsm8k": gsm8k}
+TASKS = {"gsm8k": gsm8k, "countdown": countdown}
