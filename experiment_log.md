@@ -287,6 +287,46 @@ sometimes, or rarely.
 
 ---
 
+## E4 — A1: pass@k / maj@k audit (2026-07-06, inference-only)
+
+**Pre-registered:** (a) base maj@8 ≈ trained greedy pass@1 (0.905–0.910);
+(b) trained pass@64 does not exceed base pass@64 (sharpening moves sampling
+efficiency, not the capability boundary).
+
+**Method:** k=64 samples at temp 1.0, 200 test problems, vLLM; pass@k via the
+unbiased estimator, maj@k by plurality over the first k (`eval.py` doubling
+curve). Three models: base, E1 adapter, repro adapter.
+
+| k | base pass@k | E1 pass@k | repro pass@k | base maj@k | E1 maj@k | repro maj@k |
+|---|---|---|---|---|---|---|
+| 1 | 0.868 | 0.899 | 0.903 | — | — | — |
+| 8 | 0.973 | 0.971 | 0.975 | 0.930 | 0.935 | 0.935 |
+| 64 | **0.990** | **0.985** | **0.985** | 0.945 | 0.950 | 0.940 |
+
+**Verdict:**
+
+- **(b) confirmed cleanly.** Trained pass@64 ≤ base pass@64 (0.985 vs 0.990);
+  the curves converge by k≈4. The capability boundary did not move (if
+  anything a hair down, matching the RLVR-skeptic literature). The maj@k
+  ceiling (~0.945) is also identical across all three models — training
+  didn't change what the ensemble knows, only how often single samples hit it.
+- **(a) qualitatively right, quantitatively undershot** — in the direction the
+  n=50 preview hinted: base maj@8 (0.930) sits *above* trained greedy pass@1
+  (0.905–0.910). RL harvested roughly **half** the majority-vote headroom
+  (+2.0–2.5pt of the +4.5pt gap over base greedy).
+- Sharpening seen directly at temp 1.0: base pays a 1.7pt sampling penalty
+  (greedy 0.885 → sampled 0.868); the trained models pay ~0.5pt
+  (0.910 → 0.903). Training mostly *removed the cost of sampling*.
+
+**E1-discussion claim revised:** "trained pass@1 ≈ base maj@8" overstated it;
+the accurate statement is *trained pass@1 closed about half the distance from
+base pass@1 to base maj@8, with the pass@k boundary unmoved*. Mechanism
+(consistency, not capability) stands. Also noteworthy: maj@k saturates by
+k≈16 for all models — self-consistency has its own ceiling well below
+pass@64, i.e. the ensemble *knows* answers it cannot *vote in*.
+
+---
+
 ## Backlog
 
 Roughly ordered by information-per-GPU-hour. Each Stage-2 run: change one
@@ -296,18 +336,21 @@ Organized by the phase plan in `stages.md` (A → E). Pre-registration rule:
 write the prediction here before launching the run.
 
 **Phase A — close E1's open claims:**
-- **A1 pass@k / maj@k audit** (inference-only): base vs E1 adapter at
-  k=1/8/64 on test. Prediction: base maj@8 ≈ trained pass@1, pass@64 barely
-  moves — pass@1 gains came from consistency, not new capability.
+- ~~**A1 pass@k / maj@k audit**~~ → done, see E4: boundary unmoved (confirmed),
+  RL captured ~half the majority-vote headroom.
 - ~~**A2 KL-split analysis**~~ → done, see E2: genuine relaxation, present in
   both strata.
-- **A3 pure-easy control** (~2h run): E1 config on *unfiltered* GSM8K.
-  Prediction from E1 finding 4: monotone entropy decline with no recovery,
-  and a smaller eval gain.
-- **A4 re-shuffle rerun** (new seed, same data) — upgraded from contingent
-  after E3: the same-seed repro already shows the recovery is not robust
-  (trough reproduces, relaxation doesn't), so replication variance is now a
-  live question, not a tie-breaker.
+- **A3 pure-easy control** (~3h run, `a3-easy-control`): repro config on
+  *unfiltered* GSM8K, compute-matched. Pre-registered (post-E3 revision):
+  (1) zero-variance fraction ~70–80% from step 1 (filter histogram: 77%
+  all-pass); (2) entropy declines with **no recovery** and KL grows slowly
+  (few gradient-carrying steps); (3) same-engine eval gain over base 88.5%
+  is ≤ +1pt (vs repro's +2.5pt) — mostly wasted compute.
+- **A4 re-seed replication** (~3h run, `a4-filtered-s1`, seed 1) — upgraded
+  from contingent after E3: trough is 2/2, recovery 1/2; A4 gives n=3.
+  Pre-registered: trough appears mid-run (expect 3/3); recovery explicitly
+  *uncertain* (the point is to measure it); final eval within noise of
+  repro's 91.0%.
 
 **Phase B — instrumentation:**
 - vLLM path for offline generation in `eval.py`/`filter_data.py` (training

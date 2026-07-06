@@ -15,6 +15,7 @@ QLoRA training state, and TRL can't sync LoRA into a quantized engine.
 
 import argparse
 from collections import Counter
+from math import comb
 
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
@@ -68,25 +69,36 @@ def main():
         temperature=args.temperature, num_return=args.num_samples, lora=lora,
     )
 
-    k = args.num_samples
+    n = args.num_samples
     extracted = [[extract_answer(c) for c in group] for group in completions]
     golds = dataset["answer"]
-    # pass@1 = mean per-sample correctness; with k samples at n=k, pass@k is
-    # the plain "any correct" fraction (no estimator needed); maj@k takes the
-    # plurality answer (None answers count as a - losing - candidate).
-    pass1 = sum(e == g for ex, g in zip(extracted, golds) for e in ex) / (len(golds) * k)
-    passk = sum(any(e == g for e in ex) for ex, g in zip(extracted, golds)) / len(golds)
-    majk = sum(Counter(ex).most_common(1)[0][0] == g
-               for ex, g in zip(extracted, golds)) / len(golds)
-    format_rate = sum(is_formatted(c) for gr in completions for c in gr) / (len(golds) * k)
+    corrects = [sum(e == g for e in ex) for ex, g in zip(extracted, golds)]
+
+    def pass_at(k):
+        # standard unbiased estimator from n samples with c correct:
+        # P(at least one correct in a size-k draw) = 1 - C(n-c,k)/C(n,k)
+        return sum(1 - comb(n - c, k) / comb(n, k) for c in corrects) / len(golds)
+
+    def maj_at(k):
+        # plurality vote over the first k samples (deterministic; a None
+        # answer is a candidate that simply never matches gold)
+        return sum(Counter(ex[:k]).most_common(1)[0][0] == g
+                   for ex, g in zip(extracted, golds)) / len(golds)
+
+    format_rate = sum(is_formatted(c) for gr in completions for c in gr) / (len(golds) * n)
 
     name = args.adapter or args.model
     print(f"\n{name} on {args.n} GSM8K test problems "
-          f"(k={k}, temp={args.temperature}):")
-    print(f"  pass@1            {pass1:.3f}")
-    if k > 1:
-        print(f"  pass@{k:<2}           {passk:.3f}")
-        print(f"  maj@{k:<2}            {majk:.3f}")
+          f"(n={n}, temp={args.temperature}):")
+    ks = [2**i for i in range(n.bit_length()) if 2**i <= n]
+    metrics = {"eval/format_rate": format_rate}
+    for k in ks:
+        line = f"  pass@{k:<3} {pass_at(k):.3f}"
+        metrics[f"eval/pass@{k}"] = pass_at(k)
+        if k > 1:
+            line += f"   maj@{k:<3} {maj_at(k):.3f}"
+            metrics[f"eval/maj@{k}"] = maj_at(k)
+        print(line)
     print(f"  format compliance {format_rate:.3f}")
     print(f"\nsample completion:\n{completions[0][0]}")
 
@@ -95,11 +107,10 @@ def main():
 
         run = wandb.init(
             project="qwen-grpo",
-            name=f"eval-{name.split('/')[-1]}-k{k}-t{args.temperature}",
+            name=f"eval-{name.split('/')[-1]}-k{n}-t{args.temperature}",
             job_type="eval",
         )
-        run.log({"eval/pass@1": pass1, f"eval/pass@{k}": passk,
-                 f"eval/maj@{k}": majk, "eval/format_rate": format_rate})
+        run.log(metrics)
         run.finish()
 
 
