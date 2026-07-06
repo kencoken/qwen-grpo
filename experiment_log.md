@@ -327,6 +327,124 @@ pass@64, i.e. the ensemble *knows* answers it cannot *vote in*.
 
 ---
 
+## E5 — A3: pure-easy control (2026-07-06)
+
+**Setup:** repro config, `--dataset unfiltered` (first 300 GSM8K train
+problems), seed 0, 300 steps. Run
+[`n5vs16yt`](https://wandb.ai/kencoken/qwen-grpo/runs/n5vs16yt).
+
+**Scoring the pre-registered predictions:**
+
+| # | prediction | verdict |
+|---|---|---|
+| 1 | zero-var ~70–80% from step 1 | ✓ (64% first window, 76–86% after) |
+| 2 | entropy declines, **no recovery**; KL slow | ✓ (0.185→0.140 monotone; KL 0.016 vs repro's 0.032) |
+| 3 | eval gain ≤ +1pt (mostly wasted compute) | **✗ badly: 93.0%** — the *best* adapter yet (repro 91.0, E1 90.5) |
+
+Dynamics (windows): corr 0.90→0.955, completion length *stable* (~182–191,
+no shrink phase unlike the filtered runs' dip to ~153), smooth entropy
+decline with no trough-and-recovery structure.
+
+**What prediction 3 got wrong.** The "zero-variance ⇒ wasted compute ⇒ no
+gain" chain treated all gradient-carrying groups as equal *signal*. Candidate
+revision: signal **quality** differs by difficulty. In a mostly-correct group
+the advantage isolates the single wrong rollout — low-noise "polishing"
+toward the model's own reliable behavior. In a hard mixed group the advantage
+reinforces rare successes, which may be lucky/atypical paths — higher-variance
+signal. Since E4 showed the gains *are* consistency-polishing, easy data may
+simply be the better consistency teacher per gradient-carrying step. The
+~25% of A3 steps that carried gradient did more per step for eval than the
+~50% in the filtered runs.
+
+**Caveats, firmly:** one seed per condition; the A3-vs-repro gap (93.0 vs
+91.0, n=200) is ~4 problems, near the noise floor for a *pairwise* claim —
+but the pre-registered bar was ≤89.5%, and 93.0 clears that by well over
+noise. Also two things changed at once relative to repro (difficulty AND
+which problems), inherent to the design. **Implication for the program:**
+mixed-group *density* is not a sufficient predictor of eval gain — this
+sharpens Phase C1 (difficulty sweep with eval gain as primary outcome, not
+just dynamics) and directly motivates the learnability-score line (C4).
+The E1 finding-1 framing ("80% wasted compute") stands for *dynamics-per-step*
+but not for *outcome* — revised accordingly.
+
+**Discussion addendum (post-A4): three registered rival explanations for the
++4.5pt.** (1) **Distribution match** — you improve where you practice; the
+test is ~80% easy problems, which only A3 trained on. Predicts filtered
+adapters ≈ base on the easy slice (no harm, just no gain there). The
+parsimony favorite. (2) **Guardrail** — filtered training actively *degrades*
+easy-problem behavior because nothing in its training signal penalizes that;
+easy data in the mix re-enters the gradient the moment a solid problem starts
+failing. Predicts filtered adapters < base on the easy slice; probably needs
+longer/stronger runs than 300-step LoRA to bite. (3) **Polishing** — a
+7-of-8-correct group's advantage mostly *deletes the rare error* (small, safe
+update on verified behavior) while a 1-of-8 group's mostly *amplifies a rare
+success of unknown quality* (large, risky bet); per gradient-carrying step,
+easy-mixed groups are better consistency teachers. Predicts A3's gains
+concentrate on problems where base was right most-but-not-all of the time,
+and an E4-style audit of the A3 adapter shows the same
+boundary-unmoved/sampling-penalty-removed signature. All three require
+per-problem eval outputs to test (see backlog).
+
+---
+
+## E6 — A4: re-seed replication, and the Phase-A dynamics reckoning (2026-07-06)
+
+**Setup:** repro config, seed 1, filtered data. Run
+[`s9orm4g2`](https://wandb.ai/kencoken/qwen-grpo/runs/s9orm4g2). Final greedy
+eval **89.0%**, format 100%.
+
+**Scoring the pre-registered predictions:**
+
+| # | prediction | verdict |
+|---|---|---|
+| 1 | entropy trough mid-run (expect 3/3) | **✗ as stated** — A4 shows a noisy decline with a mid-run bump, no clean trough. What *is* 3/3: entropy declines ~0.20 → ~0.15 |
+| 2 | recovery: measure it | **1/3** (E1 only). Combined with A3 (0/1 on easy data): the "self-stabilization" is best treated as a stochastic excursion, not a phenomenon |
+| 3 | final eval within noise of repro's 91.0% | ✓ (89.0%, Δ2pt) — but barely above base (88.5%) |
+
+KL adds the sharpest replication lesson: end-of-run KL across the three
+same-config-different-kernel/seed runs is **0.016 / 0.032 / 0.062** — a 4×
+spread. Fine KL trajectory structure carries almost no information at this
+power; only coarse magnitude does.
+
+**The Phase-A eval ledger** (greedy, vLLM, same 200 problems):
+
+| run | data | eval | gain vs base |
+|---|---|---|---|
+| base | — | 88.5% | — |
+| E1 adapter | filtered, seed 0 (old stack) | 90.5% | +2.0 |
+| repro | filtered, seed 0 | 91.0% | +2.5 |
+| A4 | filtered, seed 1 | 89.0% | +0.5 |
+| A3 | **unfiltered**, seed 0 | **93.0%** | **+4.5** |
+
+Three filtered runs give mean 90.2%, seed-spread std ≈ 1.0pt — our first
+empirical **noise floor**: single-run endpoint differences under ~2pt are
+not interpretable. A3 sits ~2.8σ above the filtered mean, so "easy data
+matched or beat filtered data" survives the noise-floor test (n=1, confounds
+noted in E5); "filtered beats base" barely survives it (mean +1.7pt).
+
+**Standing revisions after Phase A** (supersedes E1 findings 4–5 and parts
+of E3/E5 phrasing):
+
+1. *Robust:* entropy declines ~25% in every run; zero-variance fraction is
+   set by data difficulty (huge, unmistakable effect); completion length
+   shrinks on filtered data, stays flat on easy data; GRPO gains on this
+   task are consistency, not capability (E4, clean).
+2. *Noise until proven otherwise:* entropy trough timing, late recovery,
+   KL relaxation, and any single-run endpoint difference < 2pt. E1's
+   self-stabilization mechanism story is retired as unconfirmed — the honest
+   epitaph is that GSM8K-on-7B compresses all dynamics into too narrow a band
+   for these effects to be resolved (the core argument for Phase C's
+   difficulty dial, where dynamic range is constructed, not hoped for).
+3. *Open, now with three registered rival explanations for A3's +4.5pt*
+   (see E5 discussion): train/test distribution match (parsimony favorite),
+   guardrail (easy data as self-activating anti-drift regularizer —
+   distinguishable via filtered-adapter-vs-base on the easy slice),
+   polishing (error-deletion vs success-amplification gradient quality —
+   distinguishable via where gains concentrate). All three need per-problem
+   eval outputs (tooling gap) and are properly answered by Phase C1/C4.
+
+---
+
 ## Backlog
 
 Roughly ordered by information-per-GPU-hour. Each Stage-2 run: change one
@@ -340,17 +458,21 @@ write the prediction here before launching the run.
   RL captured ~half the majority-vote headroom.
 - ~~**A2 KL-split analysis**~~ → done, see E2: genuine relaxation, present in
   both strata.
-- **A3 pure-easy control** (~3h run, `a3-easy-control`): repro config on
-  *unfiltered* GSM8K, compute-matched. Pre-registered (post-E3 revision):
-  (1) zero-variance fraction ~70–80% from step 1 (filter histogram: 77%
-  all-pass); (2) entropy declines with **no recovery** and KL grows slowly
-  (few gradient-carrying steps); (3) same-engine eval gain over base 88.5%
-  is ≤ +1pt (vs repro's +2.5pt) — mostly wasted compute.
-- **A4 re-seed replication** (~3h run, `a4-filtered-s1`, seed 1) — upgraded
-  from contingent after E3: trough is 2/2, recovery 1/2; A4 gives n=3.
-  Pre-registered: trough appears mid-run (expect 3/3); recovery explicitly
-  *uncertain* (the point is to measure it); final eval within noise of
-  repro's 91.0%.
+- ~~**A3 pure-easy control**~~ → done, see E5: dynamics predictions held,
+  outcome prediction failed badly (93.0%, best adapter of Phase A).
+- ~~**A4 re-seed replication**~~ → done, see E6: recovery 1/3 (retired as
+  unconfirmed), KL end-values spread 4× across seeds, eval noise floor ≈
+  2pt established.
+
+**Phase-A follow-ups (fold into Phase C design or do opportunistically):**
+- **Per-problem eval outputs** (~10 lines in eval.py): save per-problem
+  correctness to JSON → enables paired McNemar tests and easy/hard slice
+  analysis. Prerequisite for testing the three A3 rivals (E5 addendum).
+- **E4-style pass@k audit of the A3 adapter** (~15 min): polishing predicts
+  boundary unmoved + sampling penalty removed.
+- **A3 seed replicate** (~3h): is 93.0% reproducible? (n=1 currently.)
+- **Easy/hard test-slice comparison** of all Phase-A adapters (needs
+  per-problem outputs): the distribution-match vs guardrail discriminator.
 
 **Phase B — instrumentation:**
 - vLLM path for offline generation in `eval.py`/`filter_data.py` (training

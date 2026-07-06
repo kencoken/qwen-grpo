@@ -36,31 +36,27 @@ groups, entropy-collapse pressure, and its endogenous self-stabilization.
 Left behind: written predictions to test (Phase A) and the conclusion that
 GSM8K has no headroom that isn't reliability-shaped.
 
-## Phase A — close E1's open claims (~2–3 days, mostly cheap)
+## Phase A — close E1's open claims ✅ (2026-07-05/06; E2, E4, E5, E6)
 
-Test our own story before opening new fronts:
+Outcome, in one paragraph: the **sharpening story is confirmed** (E4: pass@64
+unmoved, curves converge by k≈4, RL harvested ~half the majority-vote
+headroom — gains are consistency, not capability). The **dynamics fine
+structure did not survive replication** (E6: entropy recovery 1/3, end-KL
+spread 4× across seeds; E1's "self-stabilization" retired as unconfirmed —
+GSM8K compresses dynamics into too narrow a band to resolve such effects).
+The **outcome story flipped** (E5: the "wasted compute" unfiltered run scored
+93.0%, best of Phase A, against a pre-registered ≤89.5% bar; three registered
+rival explanations — distribution match / guardrail / polishing — await
+per-problem eval tooling). Empirical eval noise floor: seed-spread std ≈ 1pt,
+treat single-run differences < 2pt as noise.
 
-- **A1 pass@k/maj@k audit** (inference-only): base vs E1 adapter at k=1/8/64.
-  Prediction: base maj@8 ≈ trained pass@1; pass@64 unmoved (sharpening, not
-  new capability).
-- **A2 KL-split analysis** (zero GPU): per-step `kl` in run `nfrzmbjv` split
-  by group outcome (zero-var vs mixed) — relaxation vs composition noise.
-- **A3 pure-easy control** (one ~2h run): E1 config on *unfiltered* GSM8K.
-  Prediction: monotone entropy decline, no recovery (no hard-problem force to
-  flip the sign), smaller eval gain.
-- **A4 (contingent)**: re-shuffle rerun with a new seed if A3 leaves the
-  trough-and-recovery story ambiguous.
+## Phase B — instrumentation ✅ (2026-07-05/06; E3)
 
-## Phase B — instrumentation (~1–2 days, before the inference-heavy science)
-
-- **vLLM path for offline generation**: swap the generate helper used by
-  `eval.py`/`filter_data.py` to vLLM (training untouched). Offline scripts
-  have no training state on the GPU, so a bf16 7B fits and runs ~10× faster —
-  bucketing, pass@k, and full-set evals drop from hours to minutes.
-- **Periodic in-training eval** (every ~50 steps → W&B): before/after points
-  become validation curves.
-- **pass@k / maj@k support** in `eval.py`.
-- Then one **GSM8K regression run** to certify the changed tooling.
+vLLM offline generation (~10× on eval/filter passes), pass@k/maj@k doubling
+curve in `eval.py`, periodic in-training eval, `analysis/windows.py`. E3
+regression run certified the driver/torch/tooling stack; same-engine anchors
+established (effect sizes are engine-dependent — only same-engine comparisons
+count).
 
 ## Phase C — Countdown: the difficulty laboratory (~1–2 weeks; the core)
 
@@ -77,9 +73,12 @@ Phase D's job.
 - **C0**: Countdown task module in `data.py`/`rewards.py` + tests; calibrate
   the difficulty dial against initial pass rate on the chosen model.
 - **C1 — the difficulty sweep** (the centerpiece): fixed config, five
-  difficulty levels targeting ~90/70/50/30/10% initial pass rate. Measure
-  reward slope, entropy trajectory, zero-variance fraction, transfer to a
-  held-out difficulty band. Prediction: inverted U in learning, echoing E1.
+  difficulty levels targeting ~90/70/50/30/10% initial pass rate. **Primary
+  outcome: eval gain on a fixed held-out band** (Phase A's E5 showed
+  mixed-group density does not predict outcome — the naive inverted-U in
+  *dynamics* may not be an inverted-U in *gains*); secondary: reward slope,
+  entropy trajectory, zero-variance fraction. Adjudicates the E5 rivals
+  (distribution match / guardrail / polishing) with adequate power.
 - **C2 — knobs at the sweet spot**: group size 4/8/16, temperature 0.7/1.0/1.2,
   `entropy_coef`, clip-higher (`epsilon_high`, the DAPO trick).
 - **C3 — difficulty schedules**: curriculum, anti-curriculum, and *adaptive*
