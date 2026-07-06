@@ -113,11 +113,14 @@ def main():
         beta=cfg.beta,
         max_steps=cfg.max_steps,
         # periodic held-out eval (see Config note); 4 generations per eval
-        # prompt halves the cost vs reusing the training group size
+        # prompt halves the cost vs reusing the training group size. Eval is
+        # generation-only (no optimizer/grad memory), so batch much wider
+        # than training — at batch 4 an eval was 24 min on the 7B; at 16 it's
+        # ~6-8. Must stay divisible by num_generations_eval.
         eval_strategy="steps",
         eval_steps=cfg.eval_steps,
         num_generations_eval=4,
-        per_device_eval_batch_size=cfg.per_device_batch,
+        per_device_eval_batch_size=16,
         # memory: checkpoint activations; the model itself may be 4-bit (below).
         # Generation is HF generate — slow (~1.5-3 min/step on the 7B) but zero
         # extra weight copies. vLLM colocate would be ~5-10x faster generation

@@ -216,7 +216,7 @@ needed. A3's pure-easy control remains the causal test of the mechanism.
 
 ---
 
-## E3 — Phase B certification + regression run (2026-07-05, in progress)
+## E3 — Phase B certification + regression run (2026-07-05/06)
 
 **What changed since E1:** NVIDIA driver 560→595 (CUDA 13.2), torch
 2.12.1+cu126 → 2.11.0+cu130 (relaxed to honor vLLM 0.24.0's exact pin),
@@ -254,7 +254,36 @@ exact E1 config + seed, new stack, periodic eval on):
    same seed on different kernels, that's partial A4 evidence for "dynamics,
    not data order".
 
-_Result: pending._
+**Result** (run [`upkp33jc`](https://wandb.ai/kencoken/qwen-grpo/runs/upkp33jc);
+launch note: two false starts — an eval-batch divisibility crash, then
+24-min evals at batch 4, fixed at batch 16 (~8 min); the skipped smoke test
+would have caught the first one, lesson re-learned):
+
+| expectation | verdict |
+|---|---|
+| 1. statistically equivalent dynamics | **partial** — see below |
+| 2. periodic eval curve works | ✓ (6 evals, eval length dips then recovers) |
+| 3. final greedy within ±2.5% of 90.5%, above 88.5% | ✓ **91.0%** |
+| 4. format ≥ 99.5% | ✓ 100% |
+| 5. same-phase trough = partial A4 evidence | ✓ for the trough |
+
+Dynamics, per 50-step window (E1 → repro): correctness 0.77→0.89 vs
+0.77→0.90 ✓; zero-var 42→64% vs 42→62% ✓; entropy trough at the *same phase*
+(101–150: 0.145 vs 0.131) ✓; **but the late-run relaxation did not
+reproduce** — repro entropy stays in the trough (0.149 final vs E1's
+recovery to 0.188) and KL climbs monotonically to 0.032 (E1 relaxed
+0.027→0.016). Completion length recovered late in *both* runs, now decoupled
+from entropy.
+
+**Verdict: stack and tooling certified** (endpoints, instrumentation, and
+eval anchors all pass; A1/A3 unblocked) — **and E1 finding 4 is revised**:
+the entropy *collapse* and its timing are robust across kernels; the
+*self-stabilization/recovery* is not — it may be a stochastic excursion
+rather than a systematic equilibrium (E2's KL-split showed E1's late drop
+was real *within that run*, but not that it generalizes). A3 (pure-easy
+control) and A4-style replication now carry the burden of settling whether
+the frontier-dominated-gradient mechanism produces recovery reliably,
+sometimes, or rarely.
 
 ---
 
@@ -275,9 +304,10 @@ write the prediction here before launching the run.
 - **A3 pure-easy control** (~2h run): E1 config on *unfiltered* GSM8K.
   Prediction from E1 finding 4: monotone entropy decline with no recovery,
   and a smaller eval gain.
-- **A4 (contingent) re-shuffle rerun** (new seed, same data), only if A3
-  leaves the trough-and-recovery story ambiguous: same training phase
-  (dynamics) or data order (composition)?
+- **A4 re-shuffle rerun** (new seed, same data) — upgraded from contingent
+  after E3: the same-seed repro already shows the recovery is not robust
+  (trough reproduces, relaxation doesn't), so replication variance is now a
+  live question, not a tie-breaker.
 
 **Phase B — instrumentation:**
 - vLLM path for offline generation in `eval.py`/`filter_data.py` (training
