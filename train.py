@@ -22,8 +22,8 @@ from peft import LoraConfig
 from transformers import BitsAndBytesConfig
 from trl import GRPOConfig, GRPOTrainer
 
-from data import load_gsm8k, load_gsm8k_filtered
-from rewards import correctness_reward, format_reward
+from rewards import format_reward
+from tasks.gsm8k import correctness_reward, load_eval, load_train
 
 
 @dataclass
@@ -89,11 +89,8 @@ def main():
     cfg = parse_config()
     os.environ.setdefault("WANDB_PROJECT", "qwen-grpo")
 
-    if cfg.dataset == "filtered":
-        train_dataset = load_gsm8k_filtered(n=cfg.n_train)
-    else:
-        train_dataset = load_gsm8k("train", n=cfg.n_train)
-    eval_dataset = load_gsm8k("test", n=cfg.n_eval)
+    train_dataset = load_train(n=cfg.n_train, variant=cfg.dataset)
+    eval_dataset = load_eval(n=cfg.n_eval)
 
     args = GRPOConfig(
         output_dir=f"runs/{cfg.run_name}",

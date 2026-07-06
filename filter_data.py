@@ -15,9 +15,9 @@ import json
 import os
 from collections import Counter
 
-from data import FILTERED_PATH, load_gsm8k
 from eval import batch_generate, load_model
 from rewards import extract_answer
+from tasks.gsm8k import FILTERED_PATH, load_train
 
 
 def main():
@@ -28,7 +28,7 @@ def main():
     parser.add_argument("--temperature", type=float, default=1.0)
     args = parser.parse_args()
 
-    dataset = load_gsm8k("train", n=args.n_problems)
+    dataset = load_train(n=args.n_problems)
     llm, _ = load_model(args.model)
     completions = batch_generate(
         llm, dataset["prompt"],

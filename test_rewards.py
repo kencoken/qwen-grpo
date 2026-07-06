@@ -1,12 +1,12 @@
-"""Unit tests for the verifier. Run `uv run pytest` before any GPU time:
-a verifier bug means every subsequent GPU-hour optimizes the wrong thing."""
+"""Tests for the shared reward machinery (format contract + parsing helpers).
+Task-specific verifier tests live in test_<task>.py. Run `uv run pytest`
+before any GPU time: a verifier bug means every subsequent GPU-hour
+optimizes the wrong thing."""
 
 import pytest
 
-from data import gold_answer
 from rewards import (
     FORMAT_REWARD,
-    correctness_reward,
     extract_answer,
     format_reward,
     is_formatted,
@@ -76,7 +76,7 @@ def test_is_formatted(text, ok):
     assert is_formatted(text) is ok
 
 
-# --- reward functions ---------------------------------------------------------
+# --- format reward -------------------------------------------------------------
 
 def test_format_reward_values():
     assert format_reward([GOOD, "nope"]) == [FORMAT_REWARD, 0.0]
@@ -85,38 +85,3 @@ def test_format_reward_values():
 def test_format_reward_handles_chat_completions():
     chat = [{"role": "assistant", "content": GOOD}]
     assert format_reward([chat]) == [FORMAT_REWARD]
-
-
-def test_correctness_reward_normalizes_both_sides():
-    completions = [
-        "<think>.</think><answer>$1,000</answer>",  # right, needs normalizing
-        "<think>.</think><answer>999</answer>",     # wrong
-        "no tags at all",                           # unparseable
-    ]
-    assert correctness_reward(completions, ["1000", "1,000", "1000"]) == [1.0, 0.0, 0.0]
-
-
-def test_correctness_reward_logs_metrics():
-    logged = {}
-    completions = [
-        "<think>.</think><answer>4</answer>",
-        "<think>.</think><answer>4</answer>",
-        "<think>.</think><answer>5</answer>",
-        "junk",
-    ]
-    correctness_reward(
-        completions, ["4"] * 4, log_metric=lambda k, v: logged.__setitem__(k, v)
-    )
-    assert logged["accuracy"] == 0.5
-    assert logged["unique_answer_rate"] == 0.75  # {"4", "5", None} of 4
-
-
-# --- GSM8K gold-answer parsing (data.py) --------------------------------------
-
-def test_gold_answer_parses_gsm8k_solution():
-    sol = "She sells 16 - 3 - 4 = <<16-3-4=9>>9 eggs.\n#### 18"
-    assert gold_answer(sol) == "18"
-
-
-def test_gold_answer_strips_commas():
-    assert gold_answer("blah blah\n#### 1,234") == "1234"

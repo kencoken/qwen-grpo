@@ -22,8 +22,8 @@ from math import comb
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 
-from data import load_gsm8k
 from rewards import extract_answer, is_formatted
+from tasks.gsm8k import load_eval
 
 
 def load_model(model_id, adapter=None):
@@ -64,7 +64,7 @@ def main():
     assert args.num_samples == 1 or args.temperature > 0, \
         "k>1 identical greedy samples would be pointless; set --temperature"
 
-    dataset = load_gsm8k("test", n=args.n)
+    dataset = load_eval(n=args.n)
     llm, lora = load_model(args.model, args.adapter)
     completions = batch_generate(
         llm, dataset["prompt"], max_new_tokens=args.max_new_tokens,

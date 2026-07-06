@@ -19,9 +19,9 @@ with reward **+0.2** for correct format and **+1.0** for the exact answer.
 | File | Purpose |
 |---|---|
 | `experiment_log.md` | Lab notebook: one entry per experiment + backlog of ideas |
-| `rewards.py` | The verifier: answer extraction + the two reward functions |
-| `test_rewards.py` | Unit tests for the verifier — run these before burning GPU-hours |
-| `data.py` | GSM8K → (prompt, answer) datasets; the swap point for other tasks |
+| `tasks/` | One module per task = its data + its verifier (contract in `tasks/__init__.py`) |
+| `rewards.py` | Shared reward machinery: the `<think>/<answer>` format contract |
+| `test_*.py` | Verifier tests, one file per task — run before burning GPU-hours |
 | `train.py` | Config + TRL `GRPOTrainer` wiring; every knob commented |
 | `eval.py` | Greedy pass@1 on GSM8K test, before/after training |
 | `filter_data.py` | One-off difficulty filter: keep problems the model sometimes solves |
@@ -30,8 +30,8 @@ with reward **+0.2** for correct format and **+1.0** for the exact answer.
 
 ```bash
 uv sync
-uv run pytest                      # verify the verifier (no GPU)
-uv run python data.py              # print one rendered example
+uv run pytest                      # verify the verifiers (no GPU)
+uv run python -m tasks.gsm8k       # print one rendered example
 
 # Stage 0: smoke test (~15 min, 1.5B bf16 + LoRA)
 uv run python train.py
