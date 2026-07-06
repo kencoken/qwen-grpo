@@ -445,6 +445,88 @@ of E3/E5 phrasing):
 
 ---
 
+## E7 — rivals test battery (2026-07-06, inference-only)
+
+**Question:** which of the three registered explanations for A3's +4.5pt
+(E5 addendum) survives per-problem analysis — and which Phase-A endpoint
+differences are statistically real at all?
+
+**Method:** per-problem outcomes added to `eval.py` (`data/evals/*.json`);
+battery of 7 vLLM evals on the same 200 test problems (base greedy, base k=8
+for difficulty labels, four adapters greedy, A3 k=64); `analysis/e7_rivals.py`
+computes paired McNemar tests, difficulty-slice accuracies (easy = base 8/8,
+mid = 4–7/8, hard = 0–3/8), and the A3 pass@k signature.
+
+**Pre-registered scoring rules** (written before the battery ran):
+
+| rival | supported if |
+|---|---|
+| distribution match | filtered adapters ≈ base on the easy slice (no harm, no gain), A3 gains spread over easy+mid |
+| guardrail | filtered adapters clearly *below* base on the easy slice (degradation) |
+| polishing | A3 gains concentrate in the mid band (4–7/8), and A3 pass@64 ≈ 0.985–0.990 (boundary unmoved) |
+
+Also recorded: McNemar p-values for A3-vs-each-filtered and each-adapter-vs-
+base — the definitive word on Phase-A endpoint claims. A null result (all
+rivals unsupported / differences insignificant) is a recordable outcome:
+it would say A3's edge is seed noise, arbitrated later by C1 or a replicate.
+
+**Results.** First, a methods finding: re-running the *same* greedy evals
+shifted aggregates by ±1–2 problems vs the E6 ledger (base 0.890 vs 0.885,
+repro 0.900 vs 0.910, A3 0.920 vs 0.930) — vLLM greedy is not
+invocation-deterministic (batching/reduction order). Same-invocation
+comparisons only; the noise floor grows again.
+
+**McNemar: no Phase-A endpoint difference is statistically significant.**
+
+| comparison | discordant (+/−) | p |
+|---|---|---|
+| E1 vs base | +9/−6 | 0.61 |
+| repro vs base | +8/−6 | 0.79 |
+| A4 vs base | +9/−10 | 1.00 |
+| **A3 vs base** | **+9/−3** | **0.15** |
+| A3 vs repro | +6/−2 | 0.29 |
+| A3 vs A4 | +10/−3 | 0.09 |
+
+With models agreeing on ~90% of problems, 200 of them leave ~12 discordant
+pairs — hopelessly under-powered. **Even "GRPO improved on the base model"
+is not established by any single Phase-A adapter at n=200.** E5's "falsified
+badly" is tempered to "suggestive": A3-vs-base is the strongest signal in the
+table but p=0.15. E6's "2.8σ" framing is superseded by these paired tests.
+
+**Slices** (greedy accuracy; slice = base pass count over k=8 at t=1.0):
+
+| slice | n | base | E1 | repro | A4 | A3 |
+|---|---|---|---|---|---|---|
+| easy 8/8 | 118 | 0.966 | 0.992 | 0.992 | 0.975 | 0.992 |
+| mid 4–7/8 | 69 | 0.899 | 0.899 | 0.899 | 0.855 | **0.942** |
+| hard 0–3/8 | 13 | 0.154 | 0.154 | 0.077 | 0.231 | 0.154 |
+
+**Scoring the rivals** (each sub-claim individually under-powered; the
+*pattern* is the evidence):
+
+- **Guardrail: unsupported.** Filtered adapters sit *above* base on the easy
+  slice (0.992 vs 0.966), not below — no degradation to guard against at
+  300-step LoRA scale, as suspected.
+- **Distribution match: partially contradicted.** Filtered adapters improved
+  on the easy slice *despite never training on easy problems* — consistency
+  gains generalize across difficulty; "you improve where you practice" is
+  too crude.
+- **Polishing: best supported.** A3's gains concentrate exactly in the mid
+  band (0.899 → 0.942, while both seed-0 filtered adapters got *zero* there),
+  and its pass@k signature matches the prediction: pass@64 0.985 vs base
+  0.990 (boundary unmoved), sampled pass@1 0.868 → 0.903 (penalty removed).
+
+**Verdict:** polishing wins the pattern-match; nothing wins significance.
+The honest summary of Phase A's endpoint story: *GRPO on GSM8K produces
+small consistency gains whose per-comparison significance is beyond a
+200-problem eval's power; the easy-data run's edge is real-looking in
+structure (mid-band concentration) but unproven in magnitude.* Follow-up
+that would settle it at inference prices: full-test-set greedy evals
+(1319 problems, ~20 min each on vLLM) → backlog; C1 remains the
+adequately-powered instrument.
+
+---
+
 ## Backlog
 
 Roughly ordered by information-per-GPU-hour. Each Stage-2 run: change one
@@ -464,15 +546,14 @@ write the prediction here before launching the run.
   unconfirmed), KL end-values spread 4× across seeds, eval noise floor ≈
   2pt established.
 
-**Phase-A follow-ups (fold into Phase C design or do opportunistically):**
-- **Per-problem eval outputs** (~10 lines in eval.py): save per-problem
-  correctness to JSON → enables paired McNemar tests and easy/hard slice
-  analysis. Prerequisite for testing the three A3 rivals (E5 addendum).
-- **E4-style pass@k audit of the A3 adapter** (~15 min): polishing predicts
-  boundary unmoved + sampling penalty removed.
-- **A3 seed replicate** (~3h): is 93.0% reproducible? (n=1 currently.)
-- **Easy/hard test-slice comparison** of all Phase-A adapters (needs
-  per-problem outputs): the distribution-match vs guardrail discriminator.
+**Phase-A follow-ups:**
+- ~~Per-problem eval outputs~~ / ~~A3 pass@k audit~~ / ~~slice comparison~~
+  → done, see E7 (polishing best-supported; nothing significant at n=200).
+- **Full-test-set greedy evals** (1319 problems, ~20 min each on vLLM):
+  6.5× the discordant pairs → the cheap way to give Phase-A endpoint claims
+  real power. Candidate first task alongside Phase C0.
+- **A3 seed replicate** (~3h training): optional overnight filler; C1
+  answers the underlying question with proper power anyway.
 
 **Phase B — instrumentation:**
 - vLLM path for offline generation in `eval.py`/`filter_data.py` (training

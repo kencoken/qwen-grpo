@@ -14,6 +14,8 @@ QLoRA training state, and TRL can't sync LoRA into a quantized engine.
 """
 
 import argparse
+import json
+import os
 from collections import Counter
 from math import comb
 
@@ -101,6 +103,24 @@ def main():
         print(line)
     print(f"  format compliance {format_rate:.3f}")
     print(f"\nsample completion:\n{completions[0][0]}")
+
+    # Per-problem outcomes -> data/evals/. Aggregates hide everything that
+    # matters for comparing runs: paired tests (McNemar) and difficulty-slice
+    # analyses need to know WHICH problems each model got right.
+    os.makedirs("data/evals", exist_ok=True)
+    out_path = f"data/evals/{name.split('/')[-1]}-k{n}-t{args.temperature}.json"
+    with open(out_path, "w") as f:
+        json.dump({
+            "model": args.model, "adapter": args.adapter,
+            "k": n, "temperature": args.temperature,
+            "results": [
+                {"i": i, "gold": g, "extracted": ex,
+                 "n_correct": c, "n_formatted": sum(is_formatted(x) for x in gr)}
+                for i, (g, ex, c, gr) in enumerate(
+                    zip(golds, extracted, corrects, completions))
+            ],
+        }, f)
+    print(f"per-problem results -> {out_path}")
 
     if not args.no_wandb:
         import wandb

@@ -44,11 +44,16 @@ headroom — gains are consistency, not capability). The **dynamics fine
 structure did not survive replication** (E6: entropy recovery 1/3, end-KL
 spread 4× across seeds; E1's "self-stabilization" retired as unconfirmed —
 GSM8K compresses dynamics into too narrow a band to resolve such effects).
-The **outcome story flipped** (E5: the "wasted compute" unfiltered run scored
-93.0%, best of Phase A, against a pre-registered ≤89.5% bar; three registered
-rival explanations — distribution match / guardrail / polishing — await
-per-problem eval tooling). Empirical eval noise floor: seed-spread std ≈ 1pt,
-treat single-run differences < 2pt as noise.
+The **outcome story flipped, then humbled** (E5: the "wasted compute"
+unfiltered run scored 93.0%, best of Phase A; E7's paired McNemar tests then
+showed *no* Phase-A endpoint difference is significant at n=200 — even
+adapter-vs-base). E7's slice analysis leaves **polishing** as the
+best-supported rival (A3's gains concentrate in the mid-difficulty band;
+pass@k boundary unmoved), guardrail unsupported, distribution-match partially
+contradicted (filtered adapters improved on easy problems they never trained
+on). Noise-floor doctrine, final form: seed spread ±1pt, vLLM re-invocation
+wobble ±1pt, and 200-problem evals lack power for <3pt claims — use
+full-test-set evals (1319) for anything that matters.
 
 ## Phase B — instrumentation ✅ (2026-07-05/06; E3)
 
