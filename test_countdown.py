@@ -81,10 +81,11 @@ def test_generated_solutions_verify():
     pass the verifier — 40 random problems across the difficulty dial."""
     rng = random.Random(123)
     for num_numbers in (3, 4, 5, 6):
-        for _ in range(10):
-            numbers, target, expr = _make_problem(rng, num_numbers)
-            assert verify(wrap(expr), numbers=numbers, target=target), (
-                numbers, target, expr)
+        for max_number in (9, 99):
+            for _ in range(5):
+                numbers, target, expr = _make_problem(rng, num_numbers, max_number)
+                assert verify(wrap(expr), numbers=numbers, target=target), (
+                    numbers, target, expr)
 
 
 def test_generator_determinism_and_shape():
@@ -94,3 +95,8 @@ def test_generator_determinism_and_shape():
     assert a["target"] == b["target"] and a["target"] != c["target"]
     assert all(len(ns) == 4 for ns in a["numbers"])
     assert all(1 <= t <= 999 for t in a["target"])
+
+
+def test_max_number_bounds_operands():
+    ds = load_train(20, num_numbers=3, max_number=9, seed=1)
+    assert all(all(1 <= x <= 9 for x in ns) for ns in ds["numbers"])

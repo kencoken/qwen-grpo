@@ -49,11 +49,17 @@ def _random_expression(rng, numbers):
     return f"({left} {OP_CHARS[op]} {right})", OPS[op](lval, rval)
 
 
-def _make_problem(rng, num_numbers):
-    """(numbers, target, one_solution). Integer targets in 1..999 only —
-    rejection-sample until the random expression lands there."""
+def _make_problem(rng, num_numbers, max_number):
+    """(numbers, target, one_solution). Integer targets only, capped at
+    999 — rejection-sample until the random expression lands there.
+
+    Difficulty has two dials: num_numbers (more operands = bigger search)
+    and max_number (bigger operands force multiplication and blow up the
+    search space). Calibration (E8) showed max_number is the finer, more
+    powerful knob — 1..99 puts even 3-number problems at ~7% base pass rate,
+    while small operands reach the easy regime."""
     while True:
-        numbers = [rng.randint(1, 99) for _ in range(num_numbers)]
+        numbers = [rng.randint(1, max_number) for _ in range(num_numbers)]
         shuffled = numbers[:]
         rng.shuffle(shuffled)
         expr, value = _random_expression(rng, shuffled)
@@ -61,11 +67,11 @@ def _make_problem(rng, num_numbers):
             return numbers, int(value), expr
 
 
-def _load(n, num_numbers, seed):
+def _load(n, num_numbers, max_number, seed):
     rng = random.Random(seed)
     rows = []
     for _ in range(n):
-        numbers, target, _ = _make_problem(rng, num_numbers)
+        numbers, target, _ = _make_problem(rng, num_numbers, max_number)
         rows.append({
             "prompt": [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -78,13 +84,13 @@ def _load(n, num_numbers, seed):
     return Dataset.from_list(rows)
 
 
-def load_train(n, num_numbers=4, seed=0, **_):
-    return _load(n, num_numbers, seed)
+def load_train(n, num_numbers=4, max_number=99, seed=0, **_):
+    return _load(n, num_numbers, max_number, seed)
 
 
-def load_eval(n, num_numbers=4, seed=0, **_):
+def load_eval(n, num_numbers=4, max_number=99, seed=0, **_):
     # offset the stream so train/eval never overlap for the same seed
-    return _load(n, num_numbers, seed + 100_000)
+    return _load(n, num_numbers, max_number, seed + 100_000)
 
 
 # --- verification ----------------------------------------------------------------

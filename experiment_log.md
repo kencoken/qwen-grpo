@@ -7,6 +7,63 @@ W&B project: [`kencoken/qwen-grpo`](https://wandb.ai/kencoken/qwen-grpo).
 
 ---
 
+## E8 — Countdown difficulty calibration (2026-07-07)
+
+**Setup:** base Qwen2.5-3B-Instruct, k=8 @ temp 1.0, 200 fresh problems per
+dial. Two dials: `num_numbers` (operands) and `max_number` (operand
+magnitude — added after the first pass showed num_numbers alone was too
+coarse and only spanned the hard end). W&B project `qwen-grpo-countdown`.
+
+**Base pass rates:**
+
+| num_numbers | max_number | pass@1 | pass@8 |
+|---|---|---|---|
+| 3 | 6 | 0.195 | 0.730 |
+| 3 | 12 | 0.171 | 0.680 |
+| 3 | 25 | 0.124 | 0.565 |
+| 3 | 50 | 0.107 | 0.510 |
+| 3 | 99 | 0.071 | 0.405 |
+| 4 | 12 | 0.057 | 0.335 |
+| 4 | 25 | 0.033 | 0.210 |
+| 4 | 50 | 0.021 | 0.130 |
+| 4 | 99 | 0.028 | 0.180 |
+| 5 | 99 | 0.004 | 0.035 |
+| 6 | 99 | 0.001 | 0.005 |
+
+**Load-bearing finding: Countdown-on-3B has no elicitation regime.** Even the
+trivial dial (3 numbers, magnitude ≤6) is only 19.5% pass@1 — the ceiling is
+~20%. The planned 90/70/50/30/10% pass@1 ladder is unreachable. This is the
+correct diagnosis, not a failure: Countdown is a **pure acquisition task**
+(the base model is weak everywhere), which is exactly why it was chosen as
+the contrast to GSM8K's elicitation regime (E4/E5).
+
+**Consequence — measure difficulty by gradient-carrying fraction, not pass@1.**
+For GRPO a group carries gradient iff its rollouts disagree; with all-correct
+groups ~nonexistent here, that fraction ≈ **pass@8**. pass@8 spans a clean
+monotone 73% → 3.5% across the dials — a strong spread in the reward-density
+variable Phase C is actually about. The C1 ladder is therefore defined by
+pass@8, and its central prediction changes: not an inverted-U (there is no
+too-easy end) but a **monotone-or-plateau in eval gain that falls off as the
+gradient-carrying fraction sparsifies** — with the Phase-A "easy data wins"
+result having *no analog*, because the polishing mechanism (error-deletion on
+mostly-correct groups) cannot operate where no group is mostly-correct.
+
+**Chosen C1 levels** (pass@8 ≈ 2× step; D1 uses max 12 not 6 to avoid too
+small a problem space → train/eval overlap):
+
+| level | dial | pass@1 | pass@8 |
+|---|---|---|---|
+| D1 | (3, 12) | 0.171 | 0.68 |
+| D2 | (3, 50) | 0.107 | 0.51 |
+| D3 | (4, 12) | 0.057 | 0.34 |
+| D4 | (4, 50) | 0.021 | 0.13 |
+| D5 | (5, 99) | 0.004 | 0.035 |
+
+Token budget: base completions well under 512 at every dial (format rate
+0.55–0.83, no widespread truncation) → keep `max_completion_length=512`.
+
+---
+
 ## E0 — pipeline smoke test (2026-07-05)
 
 **Setup:** Qwen2.5-1.5B-Instruct, bf16 + LoRA r=16, 20 steps, 64 unfiltered

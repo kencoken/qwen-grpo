@@ -31,7 +31,8 @@ class Config:
     model: str = "Qwen/Qwen2.5-1.5B-Instruct"
     task: str = "gsm8k"          # see tasks/__init__.py for the registry
     dataset: str = "unfiltered"  # gsm8k only: "filtered" needs filter_data.py
-    num_numbers: int = 4         # countdown only: the difficulty dial (3-6)
+    num_numbers: int = 4         # countdown only: coarse difficulty dial (3-6)
+    max_number: int = 99         # countdown only: fine difficulty dial (E8)
     n_train: int = 64            # 512 for Stage 1
     run_name: str = "smoke-1.5b"
     seed: int = 0
@@ -96,7 +97,8 @@ def main():
 
     # tasks ignore loader kwargs they don't use (see tasks/__init__.py)
     task = TASKS[cfg.task]
-    loader_args = dict(variant=cfg.dataset, num_numbers=cfg.num_numbers, seed=cfg.seed)
+    loader_args = dict(variant=cfg.dataset, num_numbers=cfg.num_numbers,
+                       max_number=cfg.max_number, seed=cfg.seed)
     train_dataset = task.load_train(n=cfg.n_train, **loader_args)
     eval_dataset = task.load_eval(n=cfg.n_eval, **loader_args)
 

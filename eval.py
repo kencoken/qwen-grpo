@@ -58,6 +58,7 @@ def main():
     parser.add_argument("--task", default="gsm8k", choices=sorted(TASKS))
     parser.add_argument("--n", type=int, default=200)
     parser.add_argument("--num_numbers", type=int, default=4)  # countdown dial
+    parser.add_argument("--max_number", type=int, default=99)  # countdown dial
     parser.add_argument("--eval_seed", type=int, default=0)
     parser.add_argument("--num_samples", type=int, default=1)
     parser.add_argument("--temperature", type=float, default=0.0)
@@ -72,7 +73,7 @@ def main():
 
     task = TASKS[args.task]
     dataset = task.load_eval(n=args.n, num_numbers=args.num_numbers,
-                             seed=args.eval_seed)
+                             max_number=args.max_number, seed=args.eval_seed)
     llm, lora = load_model(args.model, args.adapter)
     completions = batch_generate(
         llm, dataset["prompt"], max_new_tokens=args.max_new_tokens,
