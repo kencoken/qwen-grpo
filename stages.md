@@ -63,29 +63,32 @@ regression run certified the driver/torch/tooling stack; same-engine anchors
 established (effect sizes are engine-dependent — only same-engine comparisons
 count).
 
-## Phase C — Countdown: the difficulty laboratory (~1–2 weeks; the core)
+## Phase C — Countdown: the gradient-density laboratory (~1–2 weeks; the core)
 
-For the reward-density question, Countdown is the superior instrument, not a
-detour: **difficulty is generative** (number count / target range dial initial
-pass rate by construction — no estimation passes, no stale buckets, no
-regression-to-the-mean like E1's filter), **data is infinite** (no prompt-set
-overfitting confound, fresh eval problems with tight statistics), the
-**verifier is trivial pure Python**, and a **3B/1.5B model with short
-completions** iterates in minutes-to-an-hour per run (possibly vLLM-colocated
-training). What it won't show — long CoT, realistic reasoning failures — is
-Phase D's job.
+The organizing variable is **gradient sparsity** — the fraction g of GRPO
+groups that carry a nonzero gradient (see [`concepts.md`](concepts.md)).
+Countdown is the instrument: **difficulty is generative** (num_numbers ×
+max_number dial g by construction — no estimation passes, no stale buckets),
+**data is infinite** (no prompt-set-overfitting confound, tight eval stats),
+the **verifier is trivial pure Python**. Calibration (E8) showed Countdown is
+a pure *acquisition* task with no elicitation regime — it shows the left arm
+and gradient-rich peak of the g curve, the complement of GSM8K's right arm —
+so **the 7B is used** (spans g 0.05→0.88, learning observable everywhere, and
+holds the model fixed vs Phase A). Long CoT / realistic failures are Phase D's
+job.
 
-- **C0**: Countdown task module in `data.py`/`rewards.py` + tests; calibrate
-  the difficulty dial against initial pass rate on the chosen model.
-- **C1 — the difficulty sweep** (the centerpiece): fixed config, five
-  difficulty levels targeting ~90/70/50/30/10% initial pass rate. **Primary
-  outcome: eval gain on a fixed held-out band** (Phase A's E5 showed
-  mixed-group density does not predict outcome — the naive inverted-U in
-  *dynamics* may not be an inverted-U in *gains*); secondary: reward slope,
-  entropy trajectory, zero-variance fraction. Adjudicates the E5 rivals
-  (distribution match / guardrail / polishing) with adequate power.
-- **C2 — knobs at the sweet spot**: group size 4/8/16, temperature 0.7/1.0/1.2,
-  `entropy_coef`, clip-higher (`epsilon_high`, the DAPO trick).
+- **C0** ✅ (E8): `tasks/countdown.py` + tests; both difficulty dials; the
+  7B g-ladder D1–D5 (g = 0.88 / 0.71 / 0.53 / 0.23 / 0.05).
+- **C1 — the gradient-density sweep** (centerpiece): D1–D5 × 3 seeds, fixed
+  config. **Primary outcome: eval gain** on fixed held-out sets (same-level +
+  full-ladder transfer); secondary: entropy trajectory, zero-variance
+  fraction, KL. Prediction (post-E8, *not* inverted-U — no elicitation end):
+  gain highest at the gradient-rich levels, falling as g sparsifies; Phase A's
+  easy-data advantage has no analog. Caveat: 1-prompt/update amplifies the
+  cost of low g (concepts.md), so the sparse-end falloff is partly batch-size.
+- **C2 — knobs at the best level**: group size 4/8/16, temperature, entropy
+  bonus, clip-higher; **plus prompts-per-update × sparsity** (does a bigger
+  batch rescue the sparse regime — separating task from batch-size effects).
 - **C3 — difficulty schedules**: curriculum, anti-curriculum, and *adaptive*
   (raise difficulty to hold pass rate ≈ 50% — home-made DAPO dynamic
   sampling; only clean on a generative task).

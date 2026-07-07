@@ -1,66 +1,13 @@
 # Experiment log
 
-Living lab notebook. One entry per experiment: setup → results → findings →
-follow-ups. Ideas that haven't been run yet live in the [backlog](#backlog)
-at the bottom; when one is run, it moves up into a numbered entry.
-W&B project: [`kencoken/qwen-grpo`](https://wandb.ai/kencoken/qwen-grpo).
-
----
-
-## E8 — Countdown difficulty calibration (2026-07-07)
-
-**Setup:** base Qwen2.5-3B-Instruct, k=8 @ temp 1.0, 200 fresh problems per
-dial. Two dials: `num_numbers` (operands) and `max_number` (operand
-magnitude — added after the first pass showed num_numbers alone was too
-coarse and only spanned the hard end). W&B project `qwen-grpo-countdown`.
-
-**Base pass rates:**
-
-| num_numbers | max_number | pass@1 | pass@8 |
-|---|---|---|---|
-| 3 | 6 | 0.195 | 0.730 |
-| 3 | 12 | 0.171 | 0.680 |
-| 3 | 25 | 0.124 | 0.565 |
-| 3 | 50 | 0.107 | 0.510 |
-| 3 | 99 | 0.071 | 0.405 |
-| 4 | 12 | 0.057 | 0.335 |
-| 4 | 25 | 0.033 | 0.210 |
-| 4 | 50 | 0.021 | 0.130 |
-| 4 | 99 | 0.028 | 0.180 |
-| 5 | 99 | 0.004 | 0.035 |
-| 6 | 99 | 0.001 | 0.005 |
-
-**Load-bearing finding: Countdown-on-3B has no elicitation regime.** Even the
-trivial dial (3 numbers, magnitude ≤6) is only 19.5% pass@1 — the ceiling is
-~20%. The planned 90/70/50/30/10% pass@1 ladder is unreachable. This is the
-correct diagnosis, not a failure: Countdown is a **pure acquisition task**
-(the base model is weak everywhere), which is exactly why it was chosen as
-the contrast to GSM8K's elicitation regime (E4/E5).
-
-**Consequence — measure difficulty by gradient-carrying fraction, not pass@1.**
-For GRPO a group carries gradient iff its rollouts disagree; with all-correct
-groups ~nonexistent here, that fraction ≈ **pass@8**. pass@8 spans a clean
-monotone 73% → 3.5% across the dials — a strong spread in the reward-density
-variable Phase C is actually about. The C1 ladder is therefore defined by
-pass@8, and its central prediction changes: not an inverted-U (there is no
-too-easy end) but a **monotone-or-plateau in eval gain that falls off as the
-gradient-carrying fraction sparsifies** — with the Phase-A "easy data wins"
-result having *no analog*, because the polishing mechanism (error-deletion on
-mostly-correct groups) cannot operate where no group is mostly-correct.
-
-**Chosen C1 levels** (pass@8 ≈ 2× step; D1 uses max 12 not 6 to avoid too
-small a problem space → train/eval overlap):
-
-| level | dial | pass@1 | pass@8 |
-|---|---|---|---|
-| D1 | (3, 12) | 0.171 | 0.68 |
-| D2 | (3, 50) | 0.107 | 0.51 |
-| D3 | (4, 12) | 0.057 | 0.34 |
-| D4 | (4, 50) | 0.021 | 0.13 |
-| D5 | (5, 99) | 0.004 | 0.035 |
-
-Token budget: base completions well under 512 at every dial (format rate
-0.55–0.83, no widespread truncation) → keep `max_completion_length=512`.
+Living lab notebook — chronological. One entry per experiment: setup →
+results → findings → follow-ups. Ideas that haven't been run yet live in the
+[backlog](#backlog) at the bottom; when one is run, it moves up into a
+numbered entry. The standing mental models these experiments produce live in
+[`concepts.md`](concepts.md) (reference, not chronological).
+W&B: [`qwen-grpo`](https://wandb.ai/kencoken/qwen-grpo) (Phase A/B, GSM8K),
+[`qwen-grpo-countdown`](https://wandb.ai/kencoken/qwen-grpo-countdown)
+(Phase C).
 
 ---
 
@@ -584,6 +531,81 @@ adequately-powered instrument.
 
 ---
 
+# === Phase C: reward density as the controlled variable ===
+
+The framing that motivates all of Phase C — gradient sparsity, p, g(p), the
+two collapse modes, batch structure — lives in [`concepts.md`](concepts.md).
+Read that first; the entries below are the experiments that produced and test
+it.
+
+## E8 — Countdown difficulty calibration (2026-07-07)
+
+**Goal:** find a difficulty ladder for the C1 sweep — five levels spanning a
+wide range of the gradient-carrying fraction **g** (see concepts.md), the
+variable Phase C actually manipulates.
+
+**Setup:** base model, k=8 @ temp 1.0, 200 fresh problems per dial, vLLM.
+Two difficulty dials: `num_numbers` (operands) and `max_number` (operand
+magnitude — added after a first pass showed num_numbers alone was too coarse
+and only reached the hard end). g computed per dial as
+`pass@8 − fraction(all-8-correct)`. W&B project `qwen-grpo-countdown`.
+
+**Finding 1 — Countdown has no elicitation regime, on either model.**
+3B ceilinged at ~20% pass@1 even at the trivial dial. The 7B is much stronger
+(up to 49% pass@1) but its all-8-correct fraction never exceeds 5.5% — it can
+*find* solutions but not *reliably*, so g rises monotonically toward a
+plateau (~0.88) and never turns over. Per concepts.md, collapse-from-above
+needs per-problem p>0.9, which Countdown structurally denies even a strong
+model. **Countdown is a pure acquisition task**; it shows the left arm and
+the gradient-rich peak but not the right (all-correct) arm — the exact
+complement of GSM8K's elicitation regime. To see the whole g curve you must
+cross tasks, which is why Phase A (GSM8K) and Phase C (Countdown) use the
+*same 7B model* — so the contrast is regime, not scale.
+
+**Finding 2 — 7B chosen for C1.** It spans g = 0.05 → 0.88 (vs the 3B's
+0.035 → 0.68), reaches the gradient-rich regime, and keeps pass rates high
+enough that learning is *observable* at every level (the 3B's sparse end,
+0.4% pass@1, would be indistinguishable from a dead run). It also holds the
+model fixed against Phase A. Cost: ~1.5 h/run QLoRA (~2 overnights for 15
+runs) vs ~1 for the 3B; the 3B is retained for C2's high-volume knob sweeps.
+
+**7B g-ladder** (selected rows; full grid in `data/evals/countdown_calibration/`):
+
+| dial (nn, mx) | pass@1 | pass@8 | all-8 | g |
+|---|---|---|---|---|
+| (3, 99) | 0.381 | 0.885 | 0.005 | 0.880 |
+| (4, 6) | 0.348 | 0.845 | 0.005 | 0.840 |
+| (3, 25) | 0.409 | 0.855 | 0.050 | 0.805 |
+| (4, 12) | 0.219 | 0.705 | 0.000 | 0.705 |
+| (4, 25) | 0.161 | 0.580 | 0.000 | 0.580 |
+| (4, 99) | 0.155 | 0.525 | 0.000 | 0.525 |
+| (5, 50) | 0.038 | 0.225 | 0.000 | 0.225 |
+| (5, 99) | 0.031 | 0.190 | 0.000 | 0.190 |
+| (6, 99) | 0.007 | 0.050 | 0.000 | 0.050 |
+
+**Chosen C1 levels** (span 0.88→0.05; the achievable points cluster into a
+rich band and a sparse band with an intrinsic ~0.3–0.5 gap — a first sweep
+tolerates it; D5 is the deliberate "starved" endpoint):
+
+| level | dial (nn, mx) | pass@1 | g | note |
+|---|---|---|---|---|
+| D1 | (3, 99) | 0.381 | 0.880 | gradient-rich peak |
+| D2 | (4, 12) | 0.219 | 0.705 | |
+| D3 | (4, 99) | 0.155 | 0.525 | |
+| D4 | (5, 50) | 0.038 | 0.225 | sparse |
+| D5 | (6, 99) | 0.007 | 0.050 | starved (≈dead in 1-prompt/update) |
+
+**Caveat carried into C1** (from the batch-structure section of concepts.md):
+we train at 1 prompt/update, which maximally punishes low g (a uniform group
+wastes the whole step). So D4/D5's expected weak learning is partly our small
+batch, not only the task — to be stated when interpreting the sweep, and the
+motivation for the C2 batch-size experiment.
+
+**Token budget:** base completions well under 512 at every dial → keep
+`max_completion_length=512`.
+
+---
+
 ## Backlog
 
 Roughly ordered by information-per-GPU-hour. Each Stage-2 run: change one
@@ -620,13 +642,23 @@ write the prediction here before launching the run.
 - pass@k / maj@k support in `eval.py`.
 - GSM8K regression run (E1 config) to certify the changed tooling.
 
-**Phase C — Countdown difficulty laboratory (3B/1.5B, fast sweeps):**
-- C0: task module + tests; calibrate the difficulty dial vs initial pass rate.
-- C1 **difficulty sweep** (centerpiece): five levels targeting ~90/70/50/30/10%
-  initial pass; measure reward slope, entropy trajectory, zero-variance
-  fraction, transfer. Prediction: inverted U, echoing E1.
-- C2 knobs at the sweet spot: group size 4/8/16, temperature 0.7/1.0/1.2,
+**Phase C — Countdown gradient-density laboratory (7B QLoRA; see concepts.md):**
+- ~~C0: task module + calibration~~ → done (E8). tasks/countdown.py, both
+  difficulty dials, the 7B g-ladder D1–D5.
+- C1 **gradient-density sweep** (centerpiece): D1–D5 (g 0.88→0.05) × 3 seeds,
+  fixed config. Primary outcome eval gain; secondary the dynamics fingerprints.
+  Revised prediction (post-E8, not inverted-U — no elicitation regime exists):
+  eval gain highest at the gradient-rich levels and falling as g sparsifies;
+  Phase A's easy-data advantage has no analog (no mostly-correct groups). E9
+  pre-registers the final wording.
+- C2 knobs at the best level: group size 4/8/16, temperature 0.7/1.0/1.2,
   `entropy_coef` > 0, clip-higher (`epsilon_high`, DAPO).
+- **C2-batch — prompts-per-update × sparsity** (from the batch-structure
+  discussion; see concepts.md): fix a sparse level (D4, g≈0.13), vary
+  prompts-per-update ∈ {1, 2, 4} via grad_accum (memory-cheap, ~N× slower),
+  hold problems-seen constant. Prediction: larger batches rescue the sparse
+  regime (smoother reward, lower variance, better final eval) without changing
+  g. Tests whether C1's "falloff at low g" is task or batch-size.
 - C3 difficulty schedules: curriculum vs anti-curriculum vs adaptive (hold
   pass rate ≈ 50% — home-made DAPO dynamic sampling).
 - C4 (stretch) learnability-statistics pilot: does rollout disagreement /
