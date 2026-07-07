@@ -606,6 +606,49 @@ motivation for the C2 batch-size experiment.
 
 ---
 
+## E9 — C1 gradient-density sweep (PRE-REGISTRATION, 2026-07-07)
+
+*Predictions committed before any run. Results will follow in E10.*
+
+**Design:** levels D1–D5 (g = 0.88 / 0.71 / 0.53 / 0.23 / 0.05, dials from
+E8) × seeds {0,1,2} = 15 runs. 7B QLoRA, fixed config: group size 8,
+temp 1.0, lr 1e-5 (const + 10-step warmup), β=1e-3, 300 steps,
+**1 prompt/update**, max_completion 512. Names `c1-D{n}-s{seed}`, project
+`qwen-grpo-countdown`. Periodic in-training eval every 100 steps (n=48).
+
+**Measurement.** Primary outcome = **greedy eval gain** (adapter − base) at
+each level's own difficulty, on a fixed n=500 held-out set, as a function of
+g. Base greedy at each level measured once (5 evals). Per-problem JSONs saved
+→ paired tests; a full transfer matrix (each adapter × each level) is deferred
+to offline analysis of the saved adapters.
+
+**Pre-registered predictions:**
+
+- **P1 (primary, vs the old inverted-U):** because Countdown has no
+  elicitation regime (E8), eval gain is **not** an inverted-U. It is highest
+  at the gradient-rich levels (D1–D2) and falls as g sparsifies; D5 (g=0.05)
+  shows ≈no gain (starved).
+- **P2 (cross-regime vs Phase A):** **no easy-data-wins analog.** All-8-correct
+  ≈ 0 at every level (E8), so no group is mostly-correct and the polishing
+  mechanism (E5/E7) cannot operate. The best level is the gradient-*richest*,
+  not an "easy" one — the opposite of Phase A's A3 result.
+- **P3 (dynamics):** zero-variance fraction tracks (1 − g) — high from step 0
+  at D4/D5; entropy dynamic range across the sweep visibly exceeds GSM8K's
+  compressed 0.13–0.21 band (the reason we came to Countdown).
+- **P4 (format):** format reward *emerges* over training at all levels (base
+  format 0.55–0.83) — the format-emergence dynamic GSM8K-instruct couldn't
+  show (E1 finding 2).
+
+**Caveat pre-stated:** 1-prompt/update maximally punishes low g
+(concepts.md), so P1's sparse-end falloff conflates task difficulty with
+batch size — C2-batch is the disambiguating experiment, not this sweep.
+
+**What counts as informative:** any clear monotone(-ish) gain↔g relationship
+with interpretable dynamics. A flat or inverted relationship would itself be a
+real (and surprising) result.
+
+---
+
 ## Backlog
 
 Roughly ordered by information-per-GPU-hour. Each Stage-2 run: change one
