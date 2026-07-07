@@ -23,16 +23,19 @@ from transformers import BitsAndBytesConfig
 from trl import GRPOConfig, GRPOTrainer
 
 from rewards import format_reward
-from tasks.gsm8k import correctness_reward, load_eval, load_train
+from tasks import TASKS
 
 
 @dataclass
 class Config:
     model: str = "Qwen/Qwen2.5-1.5B-Instruct"
-    dataset: str = "unfiltered"  # "filtered" needs filter_data.py output
+    task: str = "gsm8k"          # see tasks/__init__.py for the registry
+    dataset: str = "unfiltered"  # gsm8k only: "filtered" needs filter_data.py
+    num_numbers: int = 4         # countdown only: the difficulty dial (3-6)
     n_train: int = 64            # 512 for Stage 1
     run_name: str = "smoke-1.5b"
     seed: int = 0
+    wandb_project: str = ""      # default: qwen-grpo / qwen-grpo-<task>
 
     # --- memory strategy -----------------------------------------------------
     # 4-bit NF4 base + LoRA (= QLoRA) is what fits a 7B on 24 GB. use_lora=False
@@ -87,10 +90,15 @@ def parse_config():
 
 def main():
     cfg = parse_config()
-    os.environ.setdefault("WANDB_PROJECT", "qwen-grpo")
+    os.environ["WANDB_PROJECT"] = cfg.wandb_project or (
+        "qwen-grpo" if cfg.task == "gsm8k" else f"qwen-grpo-{cfg.task}"
+    )
 
-    train_dataset = load_train(n=cfg.n_train, variant=cfg.dataset)
-    eval_dataset = load_eval(n=cfg.n_eval)
+    # tasks ignore loader kwargs they don't use (see tasks/__init__.py)
+    task = TASKS[cfg.task]
+    loader_args = dict(variant=cfg.dataset, num_numbers=cfg.num_numbers, seed=cfg.seed)
+    train_dataset = task.load_train(n=cfg.n_train, **loader_args)
+    eval_dataset = task.load_eval(n=cfg.n_eval, **loader_args)
 
     args = GRPOConfig(
         output_dir=f"runs/{cfg.run_name}",
@@ -178,7 +186,7 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         # order matters only for reward_weights; both default to weight 1.0
-        reward_funcs=[format_reward, correctness_reward],
+        reward_funcs=[format_reward, task.correctness_reward],
         peft_config=peft_config,
     )
     trainer.train()

@@ -36,6 +36,13 @@ uv run python -m tasks.gsm8k       # print one rendered example
 # Stage 0: smoke test (~15 min, 1.5B bf16 + LoRA)
 uv run python train.py
 
+# Phase C: countdown (difficulty dial = --num_numbers 3..6; W&B project
+# qwen-grpo-countdown)
+uv run python train.py --task countdown --model Qwen/Qwen2.5-3B-Instruct \
+    --num_numbers 4 --run_name c1-D2-s0
+uv run python eval.py --task countdown --model Qwen/Qwen2.5-3B-Instruct \
+    --num_numbers 4 --n 500
+
 # Stage 1: the real run (7B QLoRA, overnight)
 uv run python filter_data.py       # one-off, ~1-2 h: build difficulty-filtered set
 uv run python eval.py              # baseline accuracy on test

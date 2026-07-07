@@ -2,7 +2,10 @@
 or more W&B runs — entropy, zero-variance fraction, kl, completion length,
 correctness. Used for cross-run comparisons in experiment_log.md.
 
-  uv run python analysis/windows.py upkp33jc a3-run-id ...
+  uv run python analysis/windows.py upkp33jc qwen-grpo-countdown/abc123 ...
+
+Bare run ids default to the qwen-grpo project; prefix with "project/" for
+other projects.
 """
 
 import sys
@@ -18,7 +21,8 @@ WINDOW = 50
 def main():
     api = wandb.Api()
     for run_id in sys.argv[1:]:
-        run = api.run(f"kencoken/qwen-grpo/{run_id}")
+        path = run_id if "/" in run_id else f"qwen-grpo/{run_id}"
+        run = api.run(f"kencoken/{path}")
         h = run.history(samples=10_000, pandas=True)
         rows = h[["train/global_step"] + list(COLS.values())].dropna()
         rows = rows.sort_values("train/global_step")
