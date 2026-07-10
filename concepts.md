@@ -157,7 +157,19 @@ as g sparsifies" is partly a property of our batch size, not only the task.
 (Open experiment: fix g sparse, vary prompts-per-update, measure the rescue —
 backlog C2.)
 
-### Why this is the organizing variable for Phase C
+### Observed: gradient starvation *is* the plateau mechanism (E10)
+
+The D1 convergence study (E10) showed this concept's real payoff — not as a
+design knob (we over-fixated on that) but as the mechanism that *ends*
+learning. As the model got good at Countdown, `frac_reward_zero_std` climbed
+0.04 → 0.61: by the plateau ~half the groups were all-correct, giving zero
+advantage. Learning stopped not at a capability ceiling but when **success
+removed the gradient**. So the eval plateau, the entropy floor, and the
+zero-variance rise are one phenomenon. (Caveat also from E10: this is the
+low-noise *training-side* signal; the held-out eval at n=48 was too noisy to
+read, and we twice mistook its wiggles for trends.)
+
+### Why we tried to make this the organizing variable for Phase C
 
 The "difficulty sweet spot" people chase is just **the peak of g(p)**. So
 Phase C's difficulty sweep is really a *reward-density* sweep: hold everything

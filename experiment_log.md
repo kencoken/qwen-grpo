@@ -649,6 +649,86 @@ real (and surprising) result.
 
 ---
 
+## E10 — C1 partial + D1 convergence study; Phase C wrap & pivot (2026-07-08/10)
+
+We ran C1 seed-major and paused after 3 runs, then studied D1 to convergence.
+The results reshaped the plan more than they confirmed E9 — documented here in
+full because the *methodological* learnings are the main output.
+
+### What ran
+- **C1 s0, levels D1–D3** (300 steps, 7B QLoRA, 1 prompt/update). Greedy
+  eval gain (n=500) vs base:
+
+  | level | dial | g | base | trained | gain |
+  |---|---|---|---|---|---|
+  | D1 | (3,99) | 0.88 | 0.380 | 0.710 | **+33.0** |
+  | D2 | (4,12) | 0.71 | 0.206 | 0.282 | +7.6 |
+  | D3 | (4,99) | 0.53 | 0.162 | 0.246 | +8.4 |
+
+- **D1 convergence run** (`d1-long-s0`, fresh, 823 steps, eval every 100).
+
+### Robust findings (all metrics agree; not noise)
+1. **Two-phase dynamics: fast learning (steps 1–~300) then saturation.**
+   Visible across *every* training channel at once — corr 0.46→0.84,
+   reward-std 0.46→0.18, entropy 0.39→0.13, length 327→238, KL 0.005→0.065 —
+   then flat. The low-noise signal was in the training metrics all along.
+2. **The plateau is gradient starvation *from success*.** `frac_reward_zero_std`
+   climbs 0.04 → 0.61 as the model gets good: by the plateau ~half of groups
+   are all-correct → zero advantage → zero gradient. Learning stops not at a
+   capability ceiling but when success removes the gradient. Same mechanism as
+   E1's zero-variance rise (42→64%), reached from below (all-correct) rather
+   than imposed. This is where the gradient-sparsity concept (concepts.md)
+   actually earns its keep — as the *plateau mechanism*, not a design knob.
+3. **Acquisition timescale ≫ elicitation.** GSM8K (Phase A, elicitation)
+   plateaued by ~step 150 — RL only sharpened existing skill. Countdown
+   (acquisition) is still rising at 300 and plateaus ~300–400 because RL is
+   *building* skill. The 300-step budget (inherited from Phase A) was
+   mismatched to the task type.
+4. **Performance-convergence ≠ policy-convergence.** After the eval plateau,
+   entropy keeps falling (0.13→0.08) and KL keeps rising (0.06→0.085) — the
+   policy is still sharpening/drifting, it just isn't changing what it does.
+5. **RL elicits ~all of the pass@8 latent capability.** D1 trained sampled
+   (~0.86) ≈ base pass@8 (0.885): RL converted "solvable within 8 tries" into
+   per-sample reliability. Near the elicitation ceiling for nn=3.
+
+### Retractions (recorded because the mistakes are the lesson)
+- **"Over-optimization decline" — WITHDRAWN.** I read 4 slightly-declining
+  n=48 eval points (0.875→0.839) as a trend and built a train/eval-divergence
+  story; the next points (0.880, 0.818) showed it was a noisy plateau at
+  ~0.85. Third time (after E1's "recovery") I over-read noise. n=48 eval has
+  ±~3pt noise — it cannot resolve fine structure, full stop.
+- **The C1 design (eval-gain vs g at fixed budget) is confounded and was the
+  wrong instrument.** Since even the fastest level (D1) isn't converged at 300,
+  comparing levels at t=300 measures *convergence speed*, not learnability. The
+  "D1≫D2≈D3" pattern conflates g, num_numbers, base rate, AND convergence time
+  — unattributable. E9's predictions are neither confirmed nor refuted; the
+  experiment couldn't test them cleanly.
+- **We over-fixated on g.** A Phase-A observation got inflated into "the
+  organizing variable" and drove a 15-run design. g is real and useful (finding
+  2) but as a *mechanism*, not a master knob. Corrected.
+
+### Statistics discipline (crystallized)
+- Trust the **training-side trajectory** (corr, zero%, entropy, KL) for gross
+  dynamics — low-noise, single-run-readable.
+- **Never read a wiggle smaller than the series' noise band** (n=48 eval:
+  ±3pt; 1-prompt/step train-corr: larger).
+- Any claim comparing conditions or pinning a level needs **n=500 eval + ≥3
+  seeds**. Run-to-run variance is large: two "identical" D1 runs differed ~10pt
+  at step 300.
+
+### Decision: wrap Phase C, pivot to the toy Conductor
+Vanilla single-turn GRPO dynamics are largely mined — remaining knobs
+(temperature, entropy bonus, KL, group size) are incremental confirmations of
+understood phenomena, and understanding these was always the *means* to being
+ready for the Conductor (hierarchical agentic planning), which is the actual
+goal. Considered a code-RL intermediate and rejected it: its new infra
+(sandbox execution) is orthogonal to the Conductor (whose "workers" are model
+calls we already run); the better on-ramp is a **degenerate-first toy
+Conductor** (1 fixed worker → then real decomposition). Parked, not abandoned
+(see backlog): C1 D4/D5 + seeds, the temperature/knob sweeps, MATH/code phases.
+
+---
+
 ## Backlog
 
 Roughly ordered by information-per-GPU-hour. Each Stage-2 run: change one
@@ -685,17 +765,19 @@ write the prediction here before launching the run.
 - pass@k / maj@k support in `eval.py`.
 - GSM8K regression run (E1 config) to certify the changed tooling.
 
-**Phase C — Countdown gradient-density laboratory (7B QLoRA; see concepts.md):**
-- ~~C0: task module + calibration~~ → done (E8). tasks/countdown.py, both
-  difficulty dials, the 7B g-ladder D1–D5.
-- C1 **gradient-density sweep** (centerpiece): D1–D5 (g 0.88→0.05) × 3 seeds,
-  fixed config. Primary outcome eval gain; secondary the dynamics fingerprints.
-  Revised prediction (post-E8, not inverted-U — no elicitation regime exists):
-  eval gain highest at the gradient-rich levels and falling as g sparsifies;
-  Phase A's easy-data advantage has no analog (no mostly-correct groups). E9
-  pre-registers the final wording.
-- C2 knobs at the best level: group size 4/8/16, temperature 0.7/1.0/1.2,
-  `entropy_coef` > 0, clip-higher (`epsilon_high`, DAPO).
+**Phase C — Countdown (7B QLoRA; see concepts.md) — WRAPPED, see E10:**
+- ~~C0: task module + calibration~~ → done (E8).
+- ~~C1 gradient-density sweep~~ → **partial + retired as designed** (E10):
+  ran D1–D3 s0 + a D1 convergence study. Key output was methodological — the
+  fixed-budget eval-gain-vs-g comparison is confounded by convergence time
+  (nothing converges at 300 steps), so it can't test E9. Robust finding: the
+  plateau is gradient starvation from success (zero% → 0.6). **Parked** (would
+  need redesign to run-to-convergence + n=500 evals + 3 seeds to be valid):
+  C1 D4/D5, the seed reruns, and running levels to convergence.
+- **Parked knob sweeps** (revisit if we return to dynamics): temperature —
+  note 1.0 is already the GRPO default/optimum, so this is exploratory not
+  selection; `entropy_coef`, clip-higher (`epsilon_high`), group size 4/8/16;
+  C2-batch (prompts-per-update × sparsity, below).
 - **C2-batch — prompts-per-update × sparsity** (from the batch-structure
   discussion; see concepts.md): fix a sparse level (D4, g≈0.13), vary
   prompts-per-update ∈ {1, 2, 4} via grad_accum (memory-cheap, ~N× slower),
@@ -710,7 +792,20 @@ write the prediction here before launching the run.
   over a small fixed problem set with periodic eval — train reward climbs
   while held-out stalls. Cheap on Countdown.
 
-**Phase D — MATH transfer test:**
+**Phase E — toy Conductor (NEXT; pivoted here directly, see E10):**
+- Hierarchical agentic planning: a 7B "conductor" emits a plan → local
+  model worker(s) solve sub-tasks → aggregate → verify. Reward = parseable
+  plan + final correctness (our first *composite* reward).
+- Staging (degenerate-first, to isolate bugs): (1) trivial fixed plan → 1
+  worker → verify, on GSM8K (trivial verifier so orchestration is the only
+  new variable); (2) then real ≤2-step decomposition; (3) then worker choice.
+- Open fork for the planning pass: zero-shot bootstrap (try instruct emitting
+  parseable plans, add SFT only if all-zero groups) vs the paper's mandatory
+  SFT warm-start.
+- Reuses: GRPO pipeline, verifiers, eval infra, tasks/ structure, and the
+  statistics discipline (n=500 evals, ≥3 seeds, watch training-side metrics).
+
+**Phase D — MATH transfer test (parked behind Phase E):**
 - D0 **verifier project first**: `math_verify` equivalence checking + test
   suite (fractions, intervals, surds, π), offline, before any training uses
   it. Data via mirrors: `DigitalLearningGmbH/MATH-lighteval` (train),
@@ -718,9 +813,8 @@ write the prediction here before launching the run.
 - D1 baselines: MATH500 greedy + maj@8; pass-rate buckets over MATH-train.
 - D2 one boring baseline run: random sample, 768–1024 tokens,
   `mask_truncated_completions`, periodic eval; watch `clipped_ratio` and
-  length *growth* — the first dynamic earlier phases can't show.
-- D3 bucket runs (easy/median/hard) with Phase-C-derived pre-registered
-  predictions; re-estimate buckets if drift matters.
+  length *growth*.
+- D3 bucket runs with pre-registered predictions.
 
 **Unscheduled / opportunistic (slot in where a phase makes them cheap):**
 - Base model R1-Zero style (7B base, raw-text prompt) — format emergence,

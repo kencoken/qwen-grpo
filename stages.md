@@ -63,7 +63,24 @@ regression run certified the driver/torch/tooling stack; same-engine anchors
 established (effect sizes are engine-dependent — only same-engine comparisons
 count).
 
-## Phase C — Countdown: the gradient-density laboratory (~1–2 weeks; the core)
+## Phase C — Countdown gradient-density laboratory — WRAPPED (E8, E10)
+
+**Status (2026-07-10): wrapped early, pivoted to Phase E.** C0 calibration
+(E8) and a partial C1 + D1 convergence study (E10) delivered the core
+learnings — most importantly the *methodological* ones (see below) — and the
+vanilla single-turn GRPO dynamics vein hit diminishing returns. The C1 sweep
+as designed was retired: comparing eval-gain vs g at a fixed 300-step budget
+is confounded by convergence time (nothing converges that fast on an
+acquisition task), so it couldn't cleanly test the hypothesis. **Robust
+takeaways** carried forward: (1) two-phase learning→saturation; (2) the
+plateau is *gradient starvation from success* (zero-variance fraction → 0.6);
+(3) acquisition timescales ≫ elicitation; (4) a hard statistics discipline —
+trust training-side metrics, never read sub-noise wiggles (n=48 eval ±3pt),
+need n=500 + ≥3 seeds for any comparison. Parked (would need redesign to
+run-to-convergence): C1 D4/D5, seeds, the knob sweeps (temperature is already
+at the GRPO default 1.0, so exploratory not selection).
+
+*Original Phase-C framing retained below for reference.*
 
 The organizing variable is **gradient sparsity** — the fraction g of GRPO
 groups that carry a nonzero gradient (see [`concepts.md`](concepts.md)).
@@ -120,13 +137,20 @@ train, `HuggingFaceH4/MATH-500` eval).
   initial policy and drifts as training sharpens the model — re-estimate or
   acknowledge.
 
-## Phase E — code rewards, then toy Conductor
+## Phase E — toy Conductor (NEXT, pivoted here directly from C; E10)
 
-Deliberately unplanned in detail; Phases C/D should shape it. Sketch: code
-execution rewards (rich partial credit: N tests passed, runtime/syntax
-errors) on LiveCodeBench-easy, then the minimal Conductor (SFT on synthetic
-workflow traces first — mandatory, cold GRPO would produce all-zero groups —
-then tiny GRPO with parseability + correctness rewards, 1–2 local workers).
+Hierarchical agentic planning — the original motivating goal. A 7B
+**conductor** emits a plan → local model **worker(s)** solve sub-tasks →
+aggregate → verify; reward = parseable plan + final correctness (our first
+*composite* reward, and first *multi-step* rollout). Code RL was considered
+as an intermediate and **rejected**: its new infra (code sandbox) is
+orthogonal to the Conductor, whose "workers" are just model calls we already
+run — so it de-risks the wrong plumbing. The right on-ramp is **degenerate-
+first**: (1) trivial fixed plan → 1 worker → verify on GSM8K (orchestration
+is the only new variable); (2) real ≤2-step decomposition; (3) worker choice.
+Open fork for the planning pass: zero-shot bootstrap (instruct emits
+parseable plans; add SFT only if groups come up all-zero) vs the paper's
+mandatory SFT warm-start. A full planning pass precedes any build.
 
 ---
 
