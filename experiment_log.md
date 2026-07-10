@@ -665,31 +665,69 @@ full because the *methodological* learnings are the main output.
   | D2 | (4,12) | 0.71 | 0.206 | 0.282 | +7.6 |
   | D3 | (4,99) | 0.53 | 0.162 | 0.246 | +8.4 |
 
-- **D1 convergence run** (`d1-long-s0`, fresh, 823 steps, eval every 100).
+- **D1 convergence run** (`d1-long-s0`, fresh, 823 steps, eval every 100),
+  full metric trajectory below.
 
-### Robust findings (all metrics agree; not noise)
+### D1 full run — all metrics (80-step training bins)
+
+| steps | corr | rstd | zero% | entropy | uniq | len | clip | KL | grad | loss |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1–80 | 0.46 | 0.46 | 0.04 | 0.39 | 0.67 | 327 | 0.23 | 0.005 | 0.27 | 0.18 |
+| 81–160 | 0.62 | 0.41 | 0.14 | 0.23 | 0.57 | 292 | 0.19 | 0.021 | 0.27 | 0.20 |
+| 161–240 | 0.72 | 0.33 | 0.29 | 0.16 | 0.54 | 278 | 0.15 | 0.037 | 0.23 | 0.16 |
+| 241–320 | 0.79 | 0.24 | 0.43 | 0.13 | 0.55 | 258 | 0.08 | 0.057 | 0.18 | 0.10 |
+| **321–400** | 0.84 | 0.18 | **0.61** | 0.13 | 0.50 | 238 | 0.08 | 0.065 | 0.13 | 0.08 |
+| 401–480 | 0.79 | 0.24 | 0.45 | 0.13 | 0.48 | 261 | 0.12 | 0.067 | 0.18 | 0.12 |
+| 481–560 | 0.81 | 0.25 | 0.46 | 0.11 | 0.48 | 266 | 0.11 | 0.077 | 0.17 | 0.11 |
+| 561–640 | 0.83 | 0.15 | 0.64 | 0.09 | 0.48 | 258 | 0.11 | 0.072 | 0.12 | 0.08 |
+| 641–720 | 0.84 | 0.22 | 0.54 | 0.09 | 0.48 | 257 | 0.11 | 0.085 | 0.16 | 0.11 |
+| 721–800 | 0.80 | 0.22 | 0.50 | 0.09 | 0.48 | 257 | 0.10 | 0.069 | 0.17 | 0.08 |
+| 801–823 | 0.84 | 0.26 | 0.48 | 0.08 | 0.45 | 286 | 0.10 | 0.057 | 0.17 | 0.09 |
+
+Held-out eval (n=48, sampled at train temp), steps 100→800:
+**0.651 · 0.818 · 0.875 · 0.870 · 0.849 · 0.839 · 0.880 · 0.818** — a rapid
+rise to ~0.87 by step ~300, then a **noisy plateau ~0.85** (the ±3pt bounce is
+noise, not trend — see retraction).
+
+### Three robust findings (every metric agrees — not noise)
+
 1. **Two-phase dynamics: fast learning (steps 1–~300) then saturation.**
    Visible across *every* training channel at once — corr 0.46→0.84,
    reward-std 0.46→0.18, entropy 0.39→0.13, length 327→238, KL 0.005→0.065 —
-   then flat. The low-noise signal was in the training metrics all along.
-2. **The plateau is gradient starvation *from success*.** `frac_reward_zero_std`
-   climbs 0.04 → 0.61 as the model gets good: by the plateau ~half of groups
-   are all-correct → zero advantage → zero gradient. Learning stops not at a
-   capability ceiling but when success removes the gradient. Same mechanism as
-   E1's zero-variance rise (42→64%), reached from below (all-correct) rather
-   than imposed. This is where the gradient-sparsity concept (concepts.md)
-   actually earns its keep — as the *plateau mechanism*, not a design knob.
-3. **Acquisition timescale ≫ elicitation.** GSM8K (Phase A, elicitation)
-   plateaued by ~step 150 — RL only sharpened existing skill. Countdown
-   (acquisition) is still rising at 300 and plateaus ~300–400 because RL is
-   *building* skill. The 300-step budget (inherited from Phase A) was
-   mismatched to the task type.
-4. **Performance-convergence ≠ policy-convergence.** After the eval plateau,
+   then flat. The low-noise signal was in the training metrics all along
+   (we'd been squinting at the noisy eval channel instead).
+2. **The plateau is gradient starvation *from success*.** `zero%`
+   (`frac_reward_zero_std`) climbs 0.04 → 0.61 as the model gets good: by the
+   plateau ~half of groups are all-correct → zero advantage → zero gradient.
+   Learning stops not at a capability ceiling but when success removes the
+   gradient. Same mechanism as E1's zero-variance rise (42→64%), reached from
+   below (all-correct) rather than imposed. This is where the gradient-sparsity
+   concept (concepts.md) actually earns its keep — as the *plateau mechanism*,
+   not a design knob.
+3. **Performance-convergence ≠ policy-convergence.** After the eval plateau,
    entropy keeps falling (0.13→0.08) and KL keeps rising (0.06→0.085) — the
-   policy is still sharpening/drifting, it just isn't changing what it does.
-5. **RL elicits ~all of the pass@8 latent capability.** D1 trained sampled
-   (~0.86) ≈ base pass@8 (0.885): RL converted "solvable within 8 tries" into
-   per-sample reliability. Near the elicitation ceiling for nn=3.
+   policy is still sharpening/drifting, it just isn't changing what it *does*.
+   (This is also *why* the eval wiggled and fooled me: a policy still in motion
+   produces eval noise that looks like a trend.)
+
+### Additional (cross-run) observations
+- **Acquisition timescale ≫ elicitation.** GSM8K (Phase A, elicitation)
+  plateaued by ~step 150 — RL only sharpened existing skill. Countdown
+  (acquisition) plateaus ~300–400 because RL is *building* skill. The 300-step
+  budget (inherited from Phase A) was mismatched to the task type.
+- **RL elicits ~all of the pass@8 latent capability.** D1 trained sampled
+  (~0.86) ≈ base pass@8 (0.885): RL converted "solvable within 8 tries" into
+  per-sample reliability. Near the elicitation ceiling for nn=3.
+
+### High-level summary
+GRPO on an acquisition task learns fast, then **saturates itself** — success
+converts groups to all-correct (no variance → no gradient), so learning halts
+at a *starvation* plateau, not a capability ceiling, well before the policy
+stops drifting. The gross dynamics are clean and single-run-readable on the
+training metrics; the held-out eval is too noisy (n=48) to read fine structure
+and burned us three times. Net for the programme: we understand vanilla
+single-turn GRPO dynamics well enough to move on — the plateau mechanism, the
+timescales, and (hardest-won) the discipline to not over-read noise.
 
 ### Retractions (recorded because the mistakes are the lesson)
 - **"Over-optimization decline" — WITHDRAWN.** I read 4 slightly-declining
