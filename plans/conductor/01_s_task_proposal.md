@@ -284,7 +284,7 @@ Stage gates (numeric):
 
 Instrumentation and selection:
 
-- Traces, not metrics: log complete workflow traces as JSONL per checkpoint and derive the long metric list post-hoc, keeping only about four online metrics — parse rate, reward-level frequencies, zero-variance-group fraction, worker-selection entropy.
+- Traces are the source of truth, W&B for learning dynamics. Complete workflow traces are logged as JSONL, and all post-experiment analysis, claims and debugging run off them — anything not logged live is recoverable from them. W&B metrics are the live window: monitoring runs, catching failure modes mid-flight, and watching learning dynamics unfold; log whatever is useful for that. Complex derived diagnostics (e.g. confusion matrices, counterfactual replay) are offline analysis over traces. Claims come from traces plus proper statistics.
 - Checkpoint selection rule: headline numbers come from the best-on-dev checkpoint (dev templates, evaluated every ~25 updates in Stage 4); the test templates are touched once, after selection.
 
 Codebase: implement in this repository as a `tasks/conductor/` package (generator, workers, tools, parser, executor, with the task contract re-exported); worker execution lives inside the reward function. Aim to keep `train.py` thin rather than literally unchanged — expect modest additions for worker model IDs and per-worker token caps, cache and trace locations, eager/lazy worker loading, generation batching, executor shutdown/memory cleanup, and a conductor-specific evaluation mode. Revisit a repository split only if a custom rollout loop becomes necessary or Stage 7’s build–test–debug sandbox lands.
