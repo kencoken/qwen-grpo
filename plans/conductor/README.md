@@ -36,7 +36,9 @@ party (implementation side), `s` = second party (external reviewer).
 | 21 | `21_f_where_we_landed_synthesis.md` | **Agreed synthesis**: wind-tunnel framing, `SELF(answer)` requirement, relaxation ladder, pre-registered dynamics predictions |
 | 30 | `30_f_conductor_cell_specs.md` | Cell specifications v0.1: six executable cell specs, machine-verified fixtures, nine flagged decisions |
 | 31 | `31_s_conductor_cell_specs_critique.md` | Cell-spec critique: observation/request contracts, tagged resource layouts, mediator interventions, ablation rejections, failure propagation, distributions |
-| 32 | `32_f_conductor_cell_specs_rev2.md` | **Cell specifications v0.2 — phase-1 freeze candidate**: all critique items applied; replaced modular fixtures; errata vs rev6 |
+| 32 | `32_f_conductor_cell_specs_rev2.md` | Cell specifications v0.2: observation/request contracts, tagged layouts, mediator interventions, ablation rejections, replaced modular fixtures |
+| 33 | `33_s_conductor_cell_specs_rev2_critique.md` | Rev2 critique: six phase-1 blockers (IR operand refs, scheduler aliasing, semantic fork oracle, baseline executability, single-mutation interventions, audit scope) + pre-screening fixes |
+| 34 | `34_f_conductor_cell_specs_rev3.md` | **Cell specifications v0.3 — phase-1 freeze candidate**: all six blockers fixed; no fixture changes; D15 collision-flag decision; errata proposed for approval |
 
 ## Rule for implementation
 
@@ -49,7 +51,8 @@ format failures). If a contract seems arbitrary or over-strict, its rationale
 is in the critique round listed above. Deviations are design changes requiring
 review, not implementation details.
 
-Next step in the sequence: reviewer sign-off of the cell specifications v0.2
-(`32_f_conductor_cell_specs_rev2.md`) under the two-phase freeze, before any
-generator code is written. The signed-off spec supersedes rev6 on the points
-listed in its errata section (§6).
+Next step in the sequence: reviewer sign-off of the cell specifications v0.3
+(`34_f_conductor_cell_specs_rev3.md`) under the two-phase freeze, before any
+generator code is written. On sign-off the spec supersedes rev6 on the points
+proposed in its errata section (§6), and the D15 collision-flag choice
+becomes frozen with the other rejection-rule kinds.
