@@ -1,17 +1,17 @@
-# Conductor cell specifications — v0.5 (consolidated phase-1 freeze artifact)
+# Conductor cell specifications — rev5 (v0.5, phase-1 freeze candidate)
 
-The single canonical specification: a verbatim consolidation of
-[`plans/conductor/38_f_conductor_cell_specs_rev4_1.md`](plans/conductor/38_f_conductor_cell_specs_rev4_1.md)
+A verbatim consolidation of
+[`38_f_conductor_cell_specs_rev4_1.md`](38_f_conductor_cell_specs_rev4_1.md)
 (v0.4.1) as amended by
-[`plans/conductor/40_f_conductor_cell_specs_rev4_2_errata.md`](plans/conductor/40_f_conductor_cell_specs_rev4_2_errata.md)
-(v0.4.2 errata E1–E8), with the six final corrections of
-[`plans/conductor/41_s_conductor_cell_specs_rev4_2_errata_critique.md`](plans/conductor/41_s_conductor_cell_specs_rev4_2_errata_critique.md)
-folded in (marked **[v0.5]**). Produced per that review's instruction that
-the corrections "can be folded directly into the v0.5 consolidation
-without another architectural revision." Review lineage:
-`plans/conductor/30_f…41_s` (six rounds). Plan contracts: **the rev6
-contract** ([`plans/conductor/13_f_plan_rev6.md`](plans/conductor/13_f_plan_rev6.md));
-§6 errata are proposed for approval at this sign-off.
+[`40_f_conductor_cell_specs_rev4_2_errata.md`](40_f_conductor_cell_specs_rev4_2_errata.md)
+(v0.4.2 errata E1–E8), with the six corrections of
+[`41_s_conductor_cell_specs_rev4_2_errata_critique.md`](41_s_conductor_cell_specs_rev4_2_errata_critique.md)
+folded in (marked **[v0.5]**). Submitted for review like every prior
+revision; only on sign-off does it become the frozen phase-1 contract and
+get copied to the repository root as the canonical implementation
+reference. Review lineage: `30_f…41_s` (six rounds). Plan contracts:
+**the rev6 contract** ([`13_f_plan_rev6.md`](13_f_plan_rev6.md)); §6
+errata are proposed for approval at this sign-off.
 
 **No cell, fixture, renderer string, or grammar production differs from
 v0.2** — four consecutive review rounds changed contracts only. All worked
@@ -1321,7 +1321,7 @@ on construction data (§1.8 ordering).
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | This file: operator semantics; grammars + envelope + global resource procedure + limits; public/private boundaries; observation/request + routing-schema contracts; IR schemas + validity rules; identity/seed derivations; reference functions; rejection-rule kinds (incl. modular exclusions, D15); intervention semantics + positional mapping + paired estimand; oracle/controls/comparator + selection rules; scheduler; renderer strings; baseline + pseudo-worker definitions incl. the shallow-predictor feature contract; caching fingerprints; telemetry contracts; decision register | **pending formal reviewer sign-off (v0.5)** |
+| 1 | This file: operator semantics; grammars + envelope + global resource procedure + limits; public/private boundaries; observation/request + routing-schema contracts; IR schemas + validity rules; identity/seed derivations; reference functions; rejection-rule kinds (incl. modular exclusions, D15); intervention semantics + positional mapping + paired estimand; oracle/controls/comparator + selection rules; scheduler; renderer strings; baseline + pseudo-worker definitions incl. the shallow-predictor feature contract; caching fingerprints; telemetry contracts; decision register | **pending reviewer sign-off of this file (rev5 / v0.5)**; on sign-off, copied verbatim to the repository root as the frozen canonical reference |
 | 2 | Every **(S)** band = the `profile.cells.*` difficulty profile (§1.14) | after the construction screen, before fresh qualification data |
 
 The D16 system-prompt artifact freezes as a reviewed 0A artifact before
