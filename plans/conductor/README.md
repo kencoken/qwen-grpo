@@ -44,7 +44,9 @@ party (implementation side), `s` = second party (external reviewer).
 | 37 | `37_s_conductor_cell_specs_rev4_critique.md` | Rev4 critique ("approve after one small rev4.1 patch"): seed-derivation regression, B2 dual channel, intervention position mapping + estimand, executable tie-breaking, cache/visibility contradiction, pseudo-worker contract |
 | 38 | `38_f_conductor_cell_specs_rev4_1.md` | Cell specifications v0.4.1: seed derivations restored, B2 dual channel, positional interventions, executable tie-breaking, worker-visible cache fingerprint, pseudo-worker contract |
 | 39 | `39_s_conductor_cell_specs_rev4_1_critique.md` | Rev4.1 critique (architecture approved): six final errata — demand-driven resource checks, dual look schedules, restored best-fixed/random/regret controls, sensitivity-score population, profile symbols, edge-label bytes |
-| 40 | `40_f_conductor_cell_specs_rev4_2_errata.md` | **v0.4.2 errata — final phase-1 patch**: exact replacement text for E1–E8; freeze content = 38_f as amended; consolidates to root `conductor_cell_specs.md` v0.5 on sign-off |
+| 40 | `40_f_conductor_cell_specs_rev4_2_errata.md` | v0.4.2 errata: demand-driven resource checks, dual look schedules, restored controls, sensitivity-score population, profile symbols, edge-label bytes |
+| 41 | `41_s_conductor_cell_specs_rev4_2_errata_critique.md` | Errata critique (architecture approved): six contract interactions — cell-scoped bands, global AST precedence, §1.13 schedule sync, signed gap, detector-proxy wording, predictor feature contract |
+| 42 | `42_f_conductor_cell_specs_v0_5_consolidation.md` | **v0.5 consolidation note** — the canonical spec now lives at root [`/conductor_cell_specs.md`](../../conductor_cell_specs.md); awaiting formal phase-1 sign-off |
 
 ## Rule for implementation
 
@@ -57,11 +59,11 @@ format failures). If a contract seems arbitrary or over-strict, its rationale
 is in the critique round listed above. Deviations are design changes requiring
 review, not implementation details.
 
-Next step in the sequence: reviewer sign-off of the cell specifications —
-phase-1 content = v0.4.1 (`38_f`) as amended by the v0.4.2 errata (`40_f`).
-On sign-off the two documents are consolidated verbatim into a frozen
-root-level `conductor_cell_specs.md` (v0.5), the spec supersedes rev6 on the
-points proposed in its errata section, and the D15 collision-flag choice
-freezes with the other rejection-rule kinds. The endpoint system prompts
-(D16) remain a separate reviewed freeze at 0A, before the construction
+The consolidated canonical specification is now the root-level
+[`conductor_cell_specs.md`](../../conductor_cell_specs.md) (v0.5 = 38_f +
+40_f + the 41_s corrections). Next step: formal phase-1 sign-off of that
+file. On sign-off the spec supersedes rev6 on the points proposed in its
+errata section (§6) and the D15 collision-flag choice freezes with the other
+rejection-rule kinds; Stage-0A code then begins, with the endpoint system
+prompts (D16) as a separate reviewed freeze before the construction
 screen.
