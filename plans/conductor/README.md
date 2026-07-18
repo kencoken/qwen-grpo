@@ -34,6 +34,9 @@ party (implementation side), `s` = second party (external reviewer).
 | 13 | `13_f_plan_rev6.md` | **Plan rev6 — the canonical, signed-off build spec** |
 | 20 | `20_s_where_we_landed.md` | Reviewer's answers to the pre-implementation questions (data examples, what is tested, paper mapping, expected dynamics) |
 | 21 | `21_f_where_we_landed_synthesis.md` | **Agreed synthesis**: wind-tunnel framing, `SELF(answer)` requirement, relaxation ladder, pre-registered dynamics predictions |
+| 30 | `30_f_conductor_cell_specs.md` | Cell specifications v0.1: six executable cell specs, machine-verified fixtures, nine flagged decisions |
+| 31 | `31_s_conductor_cell_specs_critique.md` | Cell-spec critique: observation/request contracts, tagged resource layouts, mediator interventions, ablation rejections, failure propagation, distributions |
+| 32 | `32_f_conductor_cell_specs_rev2.md` | **Cell specifications v0.2 — phase-1 freeze candidate**: all critique items applied; replaced modular fixtures; errata vs rev6 |
 
 ## Rule for implementation
 
@@ -46,6 +49,7 @@ format failures). If a contract seems arbitrary or over-strict, its rationale
 is in the critique round listed above. Deviations are design changes requiring
 review, not implementation details.
 
-Next step in the sequence: the six executable cell specifications (this
-directory), for reviewer sign-off under the two-phase freeze, before any
-generator code is written.
+Next step in the sequence: reviewer sign-off of the cell specifications v0.2
+(`32_f_conductor_cell_specs_rev2.md`) under the two-phase freeze, before any
+generator code is written. The signed-off spec supersedes rev6 on the points
+listed in its errata section (§6).
