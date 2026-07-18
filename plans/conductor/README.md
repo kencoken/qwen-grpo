@@ -46,7 +46,9 @@ party (implementation side), `s` = second party (external reviewer).
 | 39 | `39_s_conductor_cell_specs_rev4_1_critique.md` | Rev4.1 critique (architecture approved): six final errata — demand-driven resource checks, dual look schedules, restored best-fixed/random/regret controls, sensitivity-score population, profile symbols, edge-label bytes |
 | 40 | `40_f_conductor_cell_specs_rev4_2_errata.md` | v0.4.2 errata: demand-driven resource checks, dual look schedules, restored controls, sensitivity-score population, profile symbols, edge-label bytes |
 | 41 | `41_s_conductor_cell_specs_rev4_2_errata_critique.md` | Errata critique (architecture approved): six contract interactions — cell-scoped bands, global AST precedence, §1.13 schedule sync, signed gap, detector-proxy wording, predictor feature contract |
-| 42 | `42_f_conductor_cell_specs_rev5.md` | **Cell specifications rev5 (v0.5) — phase-1 freeze candidate**: consolidation of 38_f + 40_f with the six 41_s corrections folded in; awaiting review |
+| 42 | `42_f_conductor_cell_specs_rev5.md` | Cell specifications rev5 (v0.5): consolidation of 38_f + 40_f with the six 41_s corrections folded in |
+| 43 | `43_s_conductor_cell_specs_rev5_critique.md` | Rev5 critique ("approve after two small corrections; targeted diff check sufficient"): observable-subtype provenance leak in B1; profile-domain validation |
+| 44 | `44_f_conductor_cell_specs_rev6.md` | **Cell specifications rev6 (v0.6) — phase-1 freeze candidate**: observable-subtype level lists for B1 controls; profile-domain validation + invalid-profile tests; intervention replacements from tunable value bands; awaiting targeted diff check |
 
 ## Rule for implementation
 
@@ -59,11 +61,12 @@ format failures). If a contract seems arbitrary or over-strict, its rationale
 is in the critique round listed above. Deviations are design changes requiring
 review, not implementation details.
 
-Next step in the sequence: review of the cell specifications rev5
-(`42_f_conductor_cell_specs_rev5.md`, v0.5 = 38_f + 40_f + the 41_s
-corrections consolidated). On sign-off, rev5 is copied verbatim to the
+Next step in the sequence: targeted diff check of the cell specifications
+rev6 (`44_f_conductor_cell_specs_rev6.md`; the diff vs rev5 is confined to
+the `[rev6]` markers). On sign-off, rev6 is copied verbatim to the
 repository root as the frozen canonical `conductor_cell_specs.md`, the spec
-supersedes rev6 on the points proposed in its errata section (§6), and the
-D15 collision-flag choice freezes with the other rejection-rule kinds;
-Stage-0A code then begins, with the endpoint system prompts (D16) as a
-separate reviewed freeze before the construction screen.
+supersedes the rev6 *plan* contract on the points proposed in its errata
+section (§6), and the D15 collision-flag choice freezes with the other
+rejection-rule kinds; Stage-0A code then begins, with the endpoint system
+prompts (D16) as a separate reviewed freeze before the construction
+screen.
