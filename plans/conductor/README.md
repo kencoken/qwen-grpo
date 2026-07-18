@@ -50,7 +50,9 @@ party (implementation side), `s` = second party (external reviewer).
 | 43 | `43_s_conductor_cell_specs_rev5_critique.md` | Rev5 critique ("approve after two small corrections; targeted diff check sufficient"): observable-subtype provenance leak in B1; profile-domain validation |
 | 44 | `44_f_conductor_cell_specs_rev6.md` | Cell specifications rev6 (v0.6): observable-subtype level lists for B1 controls; profile-domain validation; intervention replacements from tunable value bands |
 | 45 | `45_s_conductor_cell_specs_rev6_critique.md` | Rev6 critique ("sign off on a targeted diff after these"): four exactness fixes — validator completeness incl. magnitude support, S⁻ intervention-support set, full_latent_stratum disambiguation, restored expansion batch size |
-| 46 | `46_f_conductor_cell_specs_rev7.md` | **Cell specifications rev7 (v0.7) — phase-1 freeze candidate**: all four fixes applied, diff confined to [rev7] markers; awaiting targeted diff check |
+| 46 | `46_f_conductor_cell_specs_rev7.md` | Cell specifications rev7 (v0.7): validator completeness, S⁻ intervention support, full_latent_stratum, restored expansion batch size |
+| 47 | `47_s_conductor_cell_specs_rev7_critique.md` | Rev7 critique ("sign off after these"): R_MAGNITUDE is instance-level rejection, not load validation (and must cover intervention paths); two full_latent_stratum term replacements |
+| 48 | `48_f_conductor_cell_specs_rev8.md` | **Cell specifications rev8 (v0.8) — phase-1 freeze candidate**: R_MAGNITUDE contract separated and extended to intervention paths; terminology fixes; full self-containment pass (history tables and revision markers removed, decision register carries rationales) |
 
 ## Rule for implementation
 
@@ -63,12 +65,12 @@ format failures). If a contract seems arbitrary or over-strict, its rationale
 is in the critique round listed above. Deviations are design changes requiring
 review, not implementation details.
 
-Next step in the sequence: targeted diff check of the cell specifications
-rev7 (`46_f_conductor_cell_specs_rev7.md`; the diff vs rev6 is confined to
-the `[rev7]` markers). On sign-off, rev7 is copied verbatim to the
-repository root as the frozen canonical `conductor_cell_specs.md`, the spec
-supersedes the rev6 *plan* contract on the points proposed in its errata
-section (§6), and the D15 collision-flag choice freezes with the other
-rejection-rule kinds; Stage-0A code then begins, with the endpoint system
-prompts (D16) as a separate reviewed freeze before the construction
-screen.
+Next step in the sequence: review of the cell specifications rev8
+(`48_f_conductor_cell_specs_rev8.md` — the three 47_s fixes plus a full
+self-containment pass removing revision markers and history tables). On
+sign-off, rev8 is copied verbatim to the repository root as the frozen
+canonical `conductor_cell_specs.md`, the spec supersedes the rev6 *plan*
+contract on the points proposed in its errata section (§6), and the D15
+collision-flag choice freezes with the other rejection-rule kinds;
+Stage-0A code then begins, with the endpoint system prompts (D16) as a
+separate reviewed freeze before the construction screen.
