@@ -38,7 +38,9 @@ party (implementation side), `s` = second party (external reviewer).
 | 31 | `31_s_conductor_cell_specs_critique.md` | Cell-spec critique: observation/request contracts, tagged resource layouts, mediator interventions, ablation rejections, failure propagation, distributions |
 | 32 | `32_f_conductor_cell_specs_rev2.md` | Cell specifications v0.2: observation/request contracts, tagged layouts, mediator interventions, ablation rejections, replaced modular fixtures |
 | 33 | `33_s_conductor_cell_specs_rev2_critique.md` | Rev2 critique: six phase-1 blockers (IR operand refs, scheduler aliasing, semantic fork oracle, baseline executability, single-mutation interventions, audit scope) + pre-screening fixes |
-| 34 | `34_f_conductor_cell_specs_rev3.md` | **Cell specifications v0.3 — phase-1 freeze candidate**: all six blockers fixed; no fixture changes; D15 collision-flag decision; errata proposed for approval |
+| 34 | `34_f_conductor_cell_specs_rev3.md` | Cell specifications v0.3: operand IR refs, factorial scheduler, semantic oracle, executable baselines, single-mutation interventions, D15 collision flag |
+| 35 | `35_s_conductor_cell_specs_rev3_critique.md` | Rev3 critique: four blockers (T3 vs affine schema, block-seed scheduler, six-cell oracle table, node-level collisions) + truncation telemetry split |
+| 36 | `36_f_conductor_cell_specs_rev4.md` | **Cell specifications v0.4 — phase-1 freeze candidate**: `mul_add` op; block-seeded scheduler with golden fixture; node-id oracle for all six cells; node-level analysis-only collision metadata; E_UNCLOSED_ARTIFACT + backend-truncation telemetry; no fixture changes |
 
 ## Rule for implementation
 
@@ -51,8 +53,8 @@ format failures). If a contract seems arbitrary or over-strict, its rationale
 is in the critique round listed above. Deviations are design changes requiring
 review, not implementation details.
 
-Next step in the sequence: reviewer sign-off of the cell specifications v0.3
-(`34_f_conductor_cell_specs_rev3.md`) under the two-phase freeze, before any
+Next step in the sequence: reviewer sign-off of the cell specifications v0.4
+(`36_f_conductor_cell_specs_rev4.md`) under the two-phase freeze, before any
 generator code is written. On sign-off the spec supersedes rev6 on the points
 proposed in its errata section (§6), and the D15 collision-flag choice
 becomes frozen with the other rejection-rule kinds.
