@@ -65,12 +65,13 @@ format failures). If a contract seems arbitrary or over-strict, its rationale
 is in the critique round listed above. Deviations are design changes requiring
 review, not implementation details.
 
-Next step in the sequence: review of the cell specifications rev8
-(`48_f_conductor_cell_specs_rev8.md` — the three 47_s fixes plus a full
-self-containment pass removing revision markers and history tables). On
-sign-off, rev8 is copied verbatim to the repository root as the frozen
-canonical `conductor_cell_specs.md`, the spec supersedes the rev6 *plan*
-contract on the points proposed in its errata section (§6), and the D15
-collision-flag choice freezes with the other rejection-rule kinds;
-Stage-0A code then begins, with the endpoint system prompts (D16) as a
-separate reviewed freeze before the construction screen.
+**Phase 1 signed off (2026-07-18): rev8 (`48_f`) is the approved cell
+specification.** The frozen canonical copy lives at the repository root as
+[`conductor_cell_specs.md`](../../conductor_cell_specs.md); it supersedes
+the rev6 *plan* contract on the points in its errata section (§6), and the
+D15 collision-flag choice is frozen with the other rejection-rule kinds.
+Next step: Stage-0A implementation (`tasks/conductor/` + the CPU
+acceptance battery of spec §4), with the endpoint system prompts (D16) as
+a separate reviewed freeze before the construction screen. Phase 2 (the
+difficulty profile — every (S) band) freezes after the 100-example
+construction screen.
