@@ -48,7 +48,9 @@ party (implementation side), `s` = second party (external reviewer).
 | 41 | `41_s_conductor_cell_specs_rev4_2_errata_critique.md` | Errata critique (architecture approved): six contract interactions — cell-scoped bands, global AST precedence, §1.13 schedule sync, signed gap, detector-proxy wording, predictor feature contract |
 | 42 | `42_f_conductor_cell_specs_rev5.md` | Cell specifications rev5 (v0.5): consolidation of 38_f + 40_f with the six 41_s corrections folded in |
 | 43 | `43_s_conductor_cell_specs_rev5_critique.md` | Rev5 critique ("approve after two small corrections; targeted diff check sufficient"): observable-subtype provenance leak in B1; profile-domain validation |
-| 44 | `44_f_conductor_cell_specs_rev6.md` | **Cell specifications rev6 (v0.6) — phase-1 freeze candidate**: observable-subtype level lists for B1 controls; profile-domain validation + invalid-profile tests; intervention replacements from tunable value bands; awaiting targeted diff check |
+| 44 | `44_f_conductor_cell_specs_rev6.md` | Cell specifications rev6 (v0.6): observable-subtype level lists for B1 controls; profile-domain validation; intervention replacements from tunable value bands |
+| 45 | `45_s_conductor_cell_specs_rev6_critique.md` | Rev6 critique ("sign off on a targeted diff after these"): four exactness fixes — validator completeness incl. magnitude support, S⁻ intervention-support set, full_latent_stratum disambiguation, restored expansion batch size |
+| 46 | `46_f_conductor_cell_specs_rev7.md` | **Cell specifications rev7 (v0.7) — phase-1 freeze candidate**: all four fixes applied, diff confined to [rev7] markers; awaiting targeted diff check |
 
 ## Rule for implementation
 
@@ -62,8 +64,8 @@ is in the critique round listed above. Deviations are design changes requiring
 review, not implementation details.
 
 Next step in the sequence: targeted diff check of the cell specifications
-rev6 (`44_f_conductor_cell_specs_rev6.md`; the diff vs rev5 is confined to
-the `[rev6]` markers). On sign-off, rev6 is copied verbatim to the
+rev7 (`46_f_conductor_cell_specs_rev7.md`; the diff vs rev6 is confined to
+the `[rev7]` markers). On sign-off, rev7 is copied verbatim to the
 repository root as the frozen canonical `conductor_cell_specs.md`, the spec
 supersedes the rev6 *plan* contract on the points proposed in its errata
 section (§6), and the D15 collision-flag choice freezes with the other
