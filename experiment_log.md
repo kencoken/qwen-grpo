@@ -861,3 +861,9 @@ write the prediction here before launching the run.
   changes the dynamics" claim; natural fit alongside Phase C.
 - β=0.04 real-leash arm; LoRA rank 8/16/32; reward shaping via
   `reward_weights`; SFT warm start (mandatory anyway for Phase E Conductor).
+
+## Conductor (Stages 0–1)
+
+Tracked separately in `conductor_log.md` (created at Stage 0A; CE0/CE1
+pre-registered there before GPU spend). Environment code:
+`tasks/conductor/`, branch `conductor_stage_0a`.
