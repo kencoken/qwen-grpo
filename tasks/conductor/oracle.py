@@ -46,6 +46,13 @@ RawSurface = Mapping[Any, Mapping[str, Mapping[str, float]]]
 
 SELECTION_NAMESPACE = "construction"
 
+# Version tag on the source digest. It hashes canonical *surface-result
+# content*, not experiment identity: two independent executions that
+# produce identical payoff tables intentionally share a digest. Pair it
+# with the deferred population and execution-manifest digests when those
+# exist (see GATE_PROVENANCE_REQUIREMENT).
+SURFACE_DIGEST_SCHEMA = "surfdig1"
+
 
 class PayoffSurfaceError(ValueError):
     """A payoff surface is incomplete, unpaired, malformed, or is being
@@ -390,9 +397,11 @@ class ValidatedSurface:
                 f"surface JSON keys must be exactly kind/cell_id/entries, "
                 f"got {sorted(obj)}")
         kind, cell_id = obj["kind"], obj["cell_id"]
-        if kind not in _SURFACE_KINDS:
+        # Type before membership: an unhashable value would raise a raw
+        # TypeError from the `in` test.
+        if not isinstance(kind, str) or kind not in _SURFACE_KINDS:
             raise PayoffSurfaceError(f"unknown surface kind {kind!r}")
-        if cell_id not in CELL_NODES:
+        if not isinstance(cell_id, str) or cell_id not in CELL_NODES:
             raise PayoffSurfaceError(f"unknown cell_id {cell_id!r}")
         entries = obj["entries"]
         expected = _expected_candidates(kind, cell_id)
@@ -645,12 +654,13 @@ class FrozenSelections:
     # so a construction value must never be mistaken for the qualification
     # control (use `CalibrationBundle.random_accuracy()` for that).
     construction_random_accuracy: float
-    source_fingerprint: str
+    source_surface_digest: str
     best_one_call: int | None = None
     best_two_call: tuple[str, tuple[int, int]] | None = None
 
     def __post_init__(self) -> None:
-        if self.cell_id not in CELL_NODES:
+        if not isinstance(self.cell_id, str) \
+                or self.cell_id not in CELL_NODES:
             raise PayoffSurfaceError(f"unknown cell_id {self.cell_id!r}")
         if self.namespace != SELECTION_NAMESPACE:
             raise PayoffSurfaceError(
@@ -691,32 +701,39 @@ class FrozenSelections:
             _check_candidate("two_call", self.best_two_call, self.cell_id)
         _check_probability(self.construction_random_accuracy,
                            "construction_random_accuracy")
-        if not isinstance(self.source_fingerprint, str) \
-                or not self.source_fingerprint:
-            raise PayoffSurfaceError("source_fingerprint must be a non-empty "
+        if not isinstance(self.source_surface_digest, str) \
+                or not self.source_surface_digest:
+            raise PayoffSurfaceError("source_surface_digest must be a non-empty "
                                      "string")
         object.__setattr__(self, "node_runner_ups",
                            MappingProxyType(dict(self.node_runner_ups)))
 
-    def verify_against(self, construction: "CalibrationBundle") -> None:
+    def verify_against(self,
+                       construction: "CalibrationBundle"
+                       ) -> "VerifiedFrozenSelections":
         """Re-derive the selections from their source bundle.
 
         The local invariants above cannot prove a stored candidate really
-        *was* the argmax; this does, by recomputing it. The fingerprint
-        check first ensures we are comparing against the same construction
+        *was* the argmax; this does, by recomputing it. The digest check
+        first ensures we are comparing against the same construction
         surfaces the artifact was frozen from.
+
+        Returns a distinct type because evaluation *requires* it: a
+        side-effect-free method a caller may forget to invoke gives the
+        consuming operation no evidence that verification happened.
         """
         if not isinstance(construction, CalibrationBundle):
             raise PayoffSurfaceError("verify_against needs a CalibrationBundle")
-        expected = construction.fingerprint()
-        if expected != self.source_fingerprint:
+        expected = construction.surface_digest()
+        if expected != self.source_surface_digest:
             raise PayoffSurfaceError(
                 f"selections were frozen from a different construction "
-                f"population ({self.source_fingerprint} != {expected})")
+                f"population ({self.source_surface_digest} != {expected})")
         rederived = construction.freeze_selections()
         if rederived != self:
             raise PayoffSurfaceError(
                 "selections do not match the argmax of their source bundle")
+        return VerifiedFrozenSelections(self)
 
     def __deepcopy__(self, memo: dict) -> "FrozenSelections":
         return self
@@ -730,7 +747,7 @@ class FrozenSelections:
             "node_runner_ups": {node: list(assignment) for node, assignment
                                 in self.node_runner_ups.items()},
             "construction_random_accuracy": self.construction_random_accuracy,
-            "source_fingerprint": self.source_fingerprint,
+            "source_surface_digest": self.source_surface_digest,
             "best_one_call": self.best_one_call,
             "best_two_call": (None if self.best_two_call is None else
                               [self.best_two_call[0],
@@ -746,7 +763,7 @@ class FrozenSelections:
             raise PayoffSurfaceError("selections JSON must be an object")
         required = {"cell_id", "namespace", "deployable",
                     "best_fixed_assignment", "node_runner_ups",
-                    "construction_random_accuracy", "source_fingerprint",
+                    "construction_random_accuracy", "source_surface_digest",
                     "best_one_call", "best_two_call"}
         if set(obj) != required:
             raise PayoffSurfaceError(
@@ -783,8 +800,33 @@ class FrozenSelections:
             deployable=deployable, best_fixed_assignment=best_fixed,
             node_runner_ups=runner_ups,
             construction_random_accuracy=obj["construction_random_accuracy"],
-            source_fingerprint=obj["source_fingerprint"],
+            source_surface_digest=obj["source_surface_digest"],
             best_one_call=obj["best_one_call"], best_two_call=two_call)
+
+
+@dataclass(frozen=True)
+class VerifiedFrozenSelections:
+    """`FrozenSelections` that has been re-derived from its source bundle.
+
+    Evaluation accepts only this type. Verification is otherwise a
+    side-effect-free method a caller can simply forget, which would leave
+    the consuming operation with no evidence that it happened — the
+    artifact would be documented as source-bound without mechanically
+    being so.
+    """
+
+    selections: FrozenSelections
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.selections, FrozenSelections):
+            raise PayoffSurfaceError("expected FrozenSelections")
+
+    def __getattr__(self, name: str) -> Any:
+        # Read-through so callers can use the selections directly.
+        return getattr(self.selections, name)
+
+    def __deepcopy__(self, memo: dict) -> "VerifiedFrozenSelections":
+        return self
 
 
 @dataclass(frozen=True)
@@ -844,7 +886,7 @@ class CalibrationBundle:
     def namespace(self) -> str:
         return self.assignment.namespace
 
-    def fingerprint(self) -> str:
+    def surface_digest(self) -> str:
         """Content address of this bundle's surfaces.
 
         Lets a revived `FrozenSelections` prove it came from *these*
@@ -860,7 +902,7 @@ class CalibrationBundle:
         }
         encoded = json.dumps(payload, sort_keys=True,
                              separators=(",", ":")).encode("utf-8")
-        return "cb-" + hashlib.sha256(encoded).hexdigest()[:32]
+        return f"{SURFACE_DIGEST_SCHEMA}-" + hashlib.sha256(encoded).hexdigest()[:32]
 
     def random_accuracy(self) -> float:
         """§1.8 `random` control on *this* bundle's data — the control is
@@ -883,7 +925,7 @@ class CalibrationBundle:
             node_runner_ups=runner_ups,
             construction_random_accuracy=uniform_random_accuracy(
                 self.assignment),
-            source_fingerprint=self.fingerprint(),
+            source_surface_digest=self.surface_digest(),
             best_one_call=(None if self.one_call is None
                            else select_best_one_call(self.one_call)),
             best_two_call=(None if self.two_call is None
@@ -891,39 +933,45 @@ class CalibrationBundle:
 
     # --- evaluation of frozen choices (no argmax) --------------------------
 
-    def _check_frozen(self, frozen: FrozenSelections) -> FrozenSelections:
-        if not isinstance(frozen, FrozenSelections):
+    def _check_frozen(self, frozen: Any) -> FrozenSelections:
+        """Evaluation requires selections that were verified against their
+        construction bundle — see `FrozenSelections.verify_against`."""
+        if isinstance(frozen, FrozenSelections):
             raise PayoffSurfaceError(
-                "evaluation consumes a FrozenSelections artifact")
+                "evaluation consumes VerifiedFrozenSelections: call "
+                "selections.verify_against(construction_bundle) first, so "
+                "the artifact is mechanically bound to its source")
+        if not isinstance(frozen, VerifiedFrozenSelections):
+            raise PayoffSurfaceError(
+                "evaluation consumes a VerifiedFrozenSelections artifact")
         if frozen.cell_id != self.cell_id:
             raise PayoffSurfaceError(
                 f"selections are for {frozen.cell_id!r}, bundle for "
                 f"{self.cell_id!r}")
         return frozen
 
-    def deployable_accuracy(self, frozen: FrozenSelections) -> float:
+    def deployable_accuracy(self, frozen: VerifiedFrozenSelections) -> float:
         return self.assignment.accuracy(
             self._check_frozen(frozen).deployable)
 
-    def best_fixed_accuracy(self, frozen: FrozenSelections) -> float:
+    def best_fixed_accuracy(self, frozen: VerifiedFrozenSelections) -> float:
         return self.assignment.accuracy(
             self._check_frozen(frozen).best_fixed_assignment)
 
-    def one_call_accuracy(self, frozen: FrozenSelections) -> float:
+    def one_call_accuracy(self, frozen: VerifiedFrozenSelections) -> float:
         self._check_frozen(frozen)
         if self.one_call is None or frozen.best_one_call is None:
             raise PayoffSurfaceError("no one-call surface or selection")
         return self.one_call.accuracy(frozen.best_one_call)
 
-    def two_call_accuracy(self, frozen: FrozenSelections) -> float:
+    def two_call_accuracy(self, frozen: VerifiedFrozenSelections) -> float:
         self._check_frozen(frozen)
         if self.two_call is None or frozen.best_two_call is None:
             raise PayoffSurfaceError("no two-call surface or selection")
         return self.two_call.accuracy(frozen.best_two_call)
 
-    def descriptive_deployable_minus_one_call(self,
-                                              frozen: FrozenSelections
-                                              ) -> float:
+    def descriptive_deployable_minus_one_call(
+            self, frozen: VerifiedFrozenSelections) -> float:
         """Descriptive difference between the construction-frozen oracle
         and the construction-frozen one-call control on this bundle's data.
 
@@ -933,12 +981,12 @@ class CalibrationBundle:
         """
         return self.deployable_accuracy(frozen) - self.one_call_accuracy(frozen)
 
-    def descriptive_deployable_minus_two_call(self,
-                                              frozen: FrozenSelections
-                                              ) -> float:
+    def descriptive_deployable_minus_two_call(
+            self, frozen: VerifiedFrozenSelections) -> float:
         return self.deployable_accuracy(frozen) - self.two_call_accuracy(frozen)
 
-    def gate_report(self, frozen: FrozenSelections) -> dict[str, float]:
+    def gate_report(self, frozen: VerifiedFrozenSelections
+                    ) -> dict[str, float]:
         """Stage-1A gate evaluation — not available at Stage 0A.
 
         This exists so the missing capability is discoverable from the code
@@ -963,13 +1011,19 @@ def semantic_to_positional(assignment: Sequence[int], cell_id: str,
 def signed_deployable_gap(deployable_correct: Mapping[str, Mapping[str, float]],
                           policy_correct: Mapping[str, Mapping[str, float]]
                           ) -> float:
-    """§1.8 primary Stage-2 comparator, paired and cluster-weighted on the
-    same examples; malformed policy actions enter as correctness 0 (callers
-    encode that); unclipped, may be negative. `routing_regret` is a legacy
-    alias for this quantity.
+    """§1.8 signed deployable-assignment gap: paired and cluster-weighted on
+    the same examples; malformed policy actions enter as correctness 0
+    (callers encode that); unclipped, may be negative. `routing_regret` is
+    a legacy alias for this quantity.
 
     Both sides are observation-keyed so the pairing is checked by identity,
     not by count.
+
+    **Scope**: this is a pure point estimator over self-declared mappings.
+    §1.8 requires the schema-valid rate to be reported alongside it, and
+    Stage 2 must wrap it in an authoritative report carrying that rate, the
+    population, and the paired clustered interval — the float alone is not
+    the comparator's result.
     """
     if not deployable_correct or set(deployable_correct) != set(policy_correct):
         raise PayoffSurfaceError("gap must be paired on identical clusters")

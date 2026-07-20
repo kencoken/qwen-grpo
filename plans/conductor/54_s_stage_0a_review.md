@@ -344,4 +344,3 @@ Before Stage 0A sign-off:
 3. make `InterventionReport` recursively immutable and validating;
 4. validate actual directed intervention edges and required gold values; and
 5. add adversarial tests for the exact accepted probes described above.
-

@@ -524,6 +524,14 @@ def draw_intervention(latent: dict[str, Any], u: str, v: str,
                       profile: dict[str, Any]) -> dict[str, Any]:
     """One deterministic replacement per (latent_program_id, edge) (§1.9);
     one mutated execution scored twice (corruption + counterfactual)."""
+    # The public constructor fails closed rather than emitting an invalid
+    # intervention record: ordinary generation iterates the legal table,
+    # but a caller passing (n1, n1) must not get a usable record back.
+    legal = CELL_INTERVENTION_EDGES[latent["cell_id"]]
+    if (u, v) not in legal:
+        raise GenerationError(
+            f"({u}, {v}) is not a dependency edge of {latent['cell_id']}; "
+            f"legal edges are {list(legal)}")
     support = _replacement_support(latent, u, profile)
     if not support:
         raise GenerationError(
@@ -535,6 +543,12 @@ def draw_intervention(latent: dict[str, Any], u: str, v: str,
     registry = registry_from_json(latent["private_registry"])
     mutated = evaluate_reference(latent["reference_program"], registry,
                                  overrides={u: replacement})
+    sink = latent["reference_program"]["sink"]
+    # §3: replacement rules are constructed to provably change the sink.
+    if mutated[sink] == latent["gold_answer"]:
+        raise GenerationError(
+            f"intervention on {u}->{v} for {latent['latent_program_id']} "
+            f"left the sink unchanged ({mutated[sink]})")
     positions = latent["reference_program"]["positions"]
     return {
         "edge": (u, v),

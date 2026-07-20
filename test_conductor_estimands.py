@@ -73,7 +73,8 @@ def test_intervention_report_shares_one_eligible_denominator():
     assert report.n_total == 4 and report.n_eligible == 3
     assert report.intervention_ineligible == 1
     assert report.eligibility_rate == pytest.approx(0.75)
-    assert report.n_clusters == 2
+    assert report.n_eligible_clusters == 2
+    assert report.n_population_clusters == 2
     # §1.9 primary = full-sample over the 3 eligible observations.
     # base = [1, 1, 1] -> 1.0; corrupted = [0, 1, 0] -> 1/3;
     # counterfactual = [1, 0, 1] -> 2/3.
@@ -211,6 +212,59 @@ def test_atomic_cells_have_no_intervention_edges():
     row = outcome("a1", "o1", cell="lookup_atomic")
     with pytest.raises(InfrastructureError, match="not a dependency edge"):
         intervention_report([row])
+
+
+def test_report_covers_one_cell_and_split():
+    """Stage-1 intervention gates are per cell and edge. `lookup_math` and
+    `math_code` both define n1->n2, so a shared edge tuple is not enough to
+    prove one population."""
+    lm = outcome("c1", "o1", cell="lookup_math")
+    mc = outcome("m1", "o2", cell="math_code")
+    with pytest.raises(InfrastructureError, match="one \\(cell, split\\)"):
+        intervention_report([lm, mc])
+
+    qual_cluster = program.generate_latent(
+        "lookup_math", "qualification", 0, PROF).latent["latent_program_id"]
+    cross_split = dataclasses.replace(
+        lm, cluster_id=qual_cluster,
+        observation_id=observation(qual_cluster, "goal_first"))
+    with pytest.raises(InfrastructureError, match="one \\(cell, split\\)"):
+        intervention_report([lm, cross_split])
+
+    report = intervention_report([lm, outcome("c1", "o2")])
+    assert (report.cell_id, report.namespace) == ("lookup_math",
+                                                  "construction")
+
+
+def test_causal_targets_are_cluster_constant():
+    """One replacement is drawn per (latent, edge) and each latent is
+    rendered several ways, so both targets are latent-level constants."""
+    rows = [outcome("c1", "o1", gold=10, cf=20),
+            outcome("c1", "o2", gold=11, cf=21)]
+    with pytest.raises(InfrastructureError, match="latent-level constant"):
+        intervention_report(rows)
+    intervention_report([outcome("c1", "o1", gold=10, cf=20),
+                         outcome("c1", "o2", gold=10, cf=20)])
+
+
+def test_replacement_must_change_the_sink():
+    """§3 replacements provably change the sink. Equal targets would count
+    one execution as both preserving the old answer and following the
+    counterfactual, making the diagnostic uninterpretable."""
+    with pytest.raises(InfrastructureError, match="must change the sink"):
+        intervention_report([outcome("c1", "o1", gold=10, cf=10)])
+
+
+def test_path_success_and_terminal_availability_must_agree():
+    bad = dataclasses.replace(outcome("c1", "o1", followed=True),
+                              mutated_terminal=None)
+    with pytest.raises(InfrastructureError, match="no mutated terminal"):
+        intervention_report([bad])
+    # A failed path with no terminal is consistent and allowed.
+    ok = dataclasses.replace(outcome("c1", "o1", followed=False),
+                             mutated_terminal=None)
+    report = intervention_report([ok])
+    assert report.follow_through is None
 
 
 def test_edge_rows_reject_misfiled_identities():
@@ -643,6 +697,27 @@ def test_statistics_include_clusters_with_no_eligible_observations():
         pytest.approx(report.eligibility_rate)
 
 
+@pytest.mark.parametrize("mutate", [
+    lambda j: j.update(cluster_weighted=None),
+    lambda j: j.update(cluster_successes=None),
+    lambda j: j.update(cluster_observation_counts=[1, 2]),
+    lambda j: j.update(cluster_weighted=["a"]),
+    lambda j: j.update(corruption_drop=[0.5]),
+    lambda j: j.update(cluster_successes={}),
+    lambda j: j.update(cell_id=["lookup_math"]),
+    lambda j: j.update(namespace=None),
+])
+def test_persisted_report_json_is_total(mutate):
+    """Malformed persisted values must be domain errors, not raw
+    TypeError/AttributeError — and a list-valued mapping would stay
+    mutable behind an object claiming to be frozen."""
+    report = intervention_report([outcome("c1", "o1")])
+    payload = json.loads(json.dumps(report.to_json()))
+    mutate(payload)
+    with pytest.raises(InfrastructureError):
+        estimands.InterventionReport.from_json(payload)
+
+
 def test_report_is_recursively_immutable():
     report = intervention_report([outcome("c1", "o1")])
     with pytest.raises(TypeError):   # inner mapping, not just the outer one
@@ -652,14 +727,31 @@ def test_report_is_recursively_immutable():
 
 
 @pytest.mark.parametrize("mutate,match", [
-    (lambda j: j.update(base_accuracy=1.5), "rate in \\[0, 1\\]"),
-    (lambda j: j.update(n_total="3"), "non-negative int"),
-    (lambda j: j.update(n_eligible=99), "!= n_total"),
-    (lambda j: j.update(eligibility_rate=-0.1), "rate in \\[0, 1\\]"),
+    # Every redundant headline field is recomputed from the per-cluster
+    # sufficient statistics and compared, so none of them is forgeable.
+    (lambda j: j.update(base_accuracy=1.5), "base_accuracy is 1.5"),
+    (lambda j: j.update(n_total="3"), "n_total is"),
+    (lambda j: j.update(n_eligible=99), "n_eligible is 99"),
+    (lambda j: j.update(eligibility_rate=-0.1), "eligibility_rate is -0.1"),
+    (lambda j: j.update(corruption_drop=0.123), "corruption_drop is 0.123"),
+    (lambda j: j.update(old_answer_persistence=0.123),
+     "old_answer_persistence is 0.123"),
+    (lambda j: j.update(follow_through_rate=0.123),
+     "follow_through_rate is 0.123"),
+    (lambda j: j.update(n_population_clusters=999),
+     "n_population_clusters is 999"),
+    (lambda j: j.update(n_eligible_clusters=999),
+     "n_eligible_clusters is 999"),
+    (lambda j: j.update(cluster_weighted={"bogus": 1.0}),
+     "cluster_weighted disagrees"),
+    (lambda j: j.update(cluster_observation_counts={"bogus": 999}),
+     "cluster_observation_counts disagrees"),
+    (lambda j: j.update(corruption_accuracy=0.0), "corruption_accuracy is 0.0"),
     (lambda j: j["cluster_successes"].update(bogus={"base": 1}),
-     "sufficient statistics must be"),
-    (lambda j: j.update(corruption_accuracy=0.0), "disagrees with the "
-                                                  "sufficient statistics"),
+     "malformed latent_program_id"),
+    (lambda j: j.update(edge=["n2", "n1"]), "not a dependency edge"),
+    (lambda j: j.update(cell_id="math_code"), "report is math_code"),
+    (lambda j: j.update(namespace="qualification"), "report is"),
 ])
 def test_persisted_report_is_validated_on_load(mutate, match):
     report = intervention_report([outcome("c1", "o1"),

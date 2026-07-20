@@ -617,6 +617,30 @@ def test_construction_inviable_profile_fails_cleanly():
     assert "resampling cap" in str(err.value)
 
 
+def test_draw_intervention_requires_a_legal_directed_edge():
+    """The public constructor fails closed rather than emitting an invalid
+    intervention record."""
+    latent = generate_latent("lookup_math", "construction", 0, PROF).latent
+    program.draw_intervention(latent, "n1", "n2", PROF)   # the legal edge
+    for u, v in (("n1", "n1"), ("n2", "n1"), ("n2", "n2")):
+        with pytest.raises(GenerationError, match="not a dependency edge"):
+            program.draw_intervention(latent, u, v, PROF)
+    atomic = generate_latent("lookup_atomic", "construction", 0, PROF).latent
+    with pytest.raises(GenerationError, match="not a dependency edge"):
+        program.draw_intervention(atomic, "n1", "n1", PROF)
+
+
+def test_drawn_interventions_always_move_the_sink():
+    """§3 replacement rules are constructed to provably change the sink."""
+    for cell in ("lookup_math", "math_code", "fork_join"):
+        for index in range(6):
+            latent = generate_latent(cell, "construction", index,
+                                     PROF).latent
+            for u, v in program.INTERVENTION_EDGES[cell]:
+                iv = program.draw_intervention(latent, u, v, PROF)
+                assert iv["counterfactual_target"] != iv["corruption_target"]
+
+
 def test_s_minus_direct_draw():
     # Minus-form replacement pool is S⁻(p, q) \ {n1}, non-empty for every
     # admitted instance; the drawn replacement satisfies p·r − q ≥ 1.

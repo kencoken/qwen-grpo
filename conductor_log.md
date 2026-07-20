@@ -181,6 +181,34 @@ tests it. Backlog = Stage-2+ entry gates.
   name a real *directed* dependency edge — reversed, self and fork-sibling
   pairs are rejected — with required integer golds. 416 tests green
   (380 → 416), byte fixture unchanged.
+- 2026-07-20 — sixth-round findings
+  (`plans/conductor/55_s_stage_0a_review.md`) addressed; the scope decision
+  above was confirmed sound and the remaining work was concentrated in
+  intervention reporting.
+  **An intervention report now covers exactly one (cell, split, edge)**:
+  `lookup_math` and `math_code` both define `n1->n2`, so a shared edge
+  tuple was not enough to prove one population, and pooling either two
+  cells or two splits silently changed the admission statistic.
+  **Causal targets are enforced across renderings**: one replacement is
+  drawn per (latent, edge) and each latent is rendered several ways, so
+  `gold_answer` and `counterfactual_gold` are latent-level constants, and
+  §3's replacements provably change the sink — a report where they were
+  equal previously claimed old-answer persistence 1.0 *and* counterfactual
+  consistency 1.0 for the same execution. `draw_intervention` now enforces
+  the legal directed edge and asserts the moved sink at the source.
+  **Identity plus per-cluster sufficient statistics are the persisted
+  source of truth**: one `_derive` constructor builds every other field
+  and is used by both live computation and `from_json`, which recomputes
+  and compares all of them, so no headline value is forgeable; the
+  ambiguous `n_clusters` split into `n_population_clusters` and
+  `n_eligible_clusters`.
+  **Frozen-selection verification is mechanically visible**: evaluation
+  accepts only `VerifiedFrozenSelections`, returned by
+  `verify_against(construction_bundle)`, since a side-effect-free method a
+  caller may forget gives the consuming operation no evidence; the digest
+  is renamed `source_surface_digest` with a schema tag, because it hashes
+  surface-result content rather than experiment identity. 440 tests green
+  (416 → 440), byte fixture unchanged.
 
 ### Scope of the calibration guarantees (read before trusting a number)
 
@@ -216,6 +244,15 @@ worse than its absence. Consequently every accuracy and difference
 `GATE_PROVENANCE_REQUIREMENT` rather than dressing a provenance-free float
 as a Stage-1 gate result.
 
+The same scope statement applies to the other pure estimators:
+`estimands.intervention_report` and `oracle.signed_deployable_gap` are
+structural point estimators. Both enforce the invariants Stage 0A *can*
+enforce — one (cell, split, edge) population per report, identity-bound
+rows, cluster-constant causal targets — but neither is a Stage-1 or
+Stage-2 result until the 1A layer supplies the registered population, the
+execution provenance, the paired clustered interval, and (for the Stage-2
+comparator) the schema-valid rate §1.8 requires alongside it.
+
 ### Must block the construction screen
 
 - **D16 review and freeze** against the real 1.5B workers
@@ -247,7 +284,12 @@ as a Stage-1 gate result.
 - CE1 (before qualification data): the Stage-1A gate table (plan §Stage 1A)
   + named unknowns + pre-registered dynamics predictions + alpha-spending
   schedules for both sequential-look plans; one/two-sided boundaries per
-  gate.
+  gate. **Also pre-register the cluster-bootstrap degenerate cases**: how a
+  replicate that draws zero eligible observations is handled, and the same
+  for zero *followed* observations in the secondary follow-through
+  diagnostic. `InterventionReport.cluster_successes` retains zero-eligible
+  clusters precisely so those replicates are drawable rather than silently
+  absent, but the resampling rule itself is a CE1 decision.
 
 ## Entries
 

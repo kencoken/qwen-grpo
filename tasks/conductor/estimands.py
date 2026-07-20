@@ -31,7 +31,7 @@ from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
 from .types import (
-    CELL_INTERVENTION_EDGES, CELL_NODES, VISIBILITY_CONDITIONS,
+    CELL_INTERVENTION_EDGES, CELL_NODES, NAMESPACES, VISIBILITY_CONDITIONS,
     InfrastructureError, parse_latent_program_id, parse_render_instance_id,
 )
 
@@ -164,7 +164,7 @@ def _group(outcomes: Iterable[EdgeOutcome],
 
 @dataclass(frozen=True)
 class InterventionReport:
-    """§1.9 intervention estimates.
+    """§1.9 intervention estimates for **one** (cell, split, edge).
 
     The headline fields are **full-sample eligible-set accuracies**, which
     §1.9 names as the primary metric. That differs deliberately from the
@@ -181,21 +181,38 @@ class InterventionReport:
     worker success depends on the rendered prompt, so the two can diverge on
     well-formed data.
 
+    **Identity and per-cluster sufficient statistics are the source of
+    truth**; every other field is derived from them by `_derive`, which is
+    the only constructor used by both live computation and deserialization.
+    Redundant headline values are still serialized for readability, and
+    `from_json` recomputes and compares *all* of them, so a hand-edited
+    artifact cannot load.
+
+    **Scope**: this is a structural, descriptive point estimator. Binding
+    the rows to the registered population and to one execution environment,
+    and wrapping the estimate in the pre-registered sequential inference,
+    are Stage-1A `calibrate.py` responsibilities (see
+    `oracle.GATE_PROVENANCE_REQUIREMENT`). No number here is a Stage-1 gate
+    result on its own.
+
     **Confidence intervals** (Stage 1A): the cluster bootstrap resamples
     whole latent clusters *with replacement, paired across arms*, and
-    recomputes this same full-sample statistic from the resampled raw rows
-    each time. `cluster_weighted` is a diagnostic for reading the
-    cluster structure, not the statistic the bootstrap resamples;
-    `cluster_observation_counts` is carried so a resampler can reproduce
-    per-cluster weights without re-reading the raw rows.
+    recomputes this same full-sample statistic from the resampled rows.
+    `cluster_successes` carries what that needs, including clusters with
+    zero eligible observations, since resampling draws from the original
+    latent-program population.
     """
 
+    cell_id: str
+    namespace: str
     edge: tuple[str, str]
+    cluster_successes: Mapping[str, Mapping[str, int]]
     n_total: int
     n_eligible: int
     intervention_ineligible: int
     eligibility_rate: float
-    n_clusters: int
+    n_population_clusters: int
+    n_eligible_clusters: int
     base_accuracy: float
     corruption_accuracy: float
     corruption_drop: float
@@ -205,83 +222,31 @@ class InterventionReport:
     follow_through_rate: float
     cluster_weighted: Mapping[str, float]
     cluster_observation_counts: Mapping[str, int]
-    # Per-cluster successes, not just counts: the cluster bootstrap
-    # resamples whole clusters and recomputes the full-sample statistic, so
-    # counts alone are not sufficient statistics for it.
-    cluster_successes: Mapping[str, Mapping[str, int]] = field(
-        default_factory=dict)
 
     def __post_init__(self) -> None:
-        for name in ("cluster_weighted", "cluster_observation_counts"):
-            object.__setattr__(self, name,
-                               MappingProxyType(dict(getattr(self, name))))
-        # Recursive: wrapping only the outer mapping left the inner
-        # per-cluster dicts writable while __deepcopy__ returned self.
         object.__setattr__(self, "cluster_successes", MappingProxyType({
             cluster: MappingProxyType(dict(values))
             for cluster, values in self.cluster_successes.items()}))
-        self._validate()
-
-    def _validate(self) -> None:
-        for name in ("eligibility_rate", "follow_through_rate",
-                     "base_accuracy", "corruption_accuracy",
-                     "old_answer_persistence", "counterfactual_consistency"):
-            _require_rate(getattr(self, name), name)
-        if self.follow_through is not None:
-            _require_rate(self.follow_through, "follow_through")
-        for name in ("n_total", "n_eligible", "intervention_ineligible",
-                     "n_clusters"):
-            _require_count(getattr(self, name), name)
-        if self.n_eligible + self.intervention_ineligible != self.n_total:
-            raise InfrastructureError(
-                "n_eligible + intervention_ineligible != n_total")
-        for cluster, values in self.cluster_successes.items():
-            if set(values) != set(_SUFFICIENT_STATISTIC_FIELDS):
-                raise InfrastructureError(
-                    f"cluster {cluster}: sufficient statistics must be "
-                    f"exactly {sorted(_SUFFICIENT_STATISTIC_FIELDS)}")
-            for key, value in values.items():
-                _require_count(value, f"{cluster}.{key}")
-            if values["n_eligible"] > values["n_total"]:
-                raise InfrastructureError(
-                    f"cluster {cluster}: n_eligible exceeds n_total")
-            for key in ("base", "corrupted", "counterfactual"):
-                if values[key] > values["n_eligible"]:
-                    raise InfrastructureError(
-                        f"cluster {cluster}: {key} exceeds n_eligible")
-            if values["followed_successes"] > values["followed"] \
-                    or values["followed"] > values["n_eligible"]:
-                raise InfrastructureError(
-                    f"cluster {cluster}: inconsistent follow-through counts")
-        # Headline fields are redundant given the statistics; recomputing
-        # them is what makes a hand-edited artifact fail to load.
-        eligible = sum(v["n_eligible"] for v
-                       in self.cluster_successes.values())
-        if eligible:
-            for field_name, key in (("base_accuracy", "base"),
-                                    ("corruption_accuracy", "corrupted"),
-                                    ("counterfactual_consistency",
-                                     "counterfactual")):
-                expected = sum(v[key] for v
-                               in self.cluster_successes.values()) / eligible
-                if abs(getattr(self, field_name) - expected) > 1e-9:
-                    raise InfrastructureError(
-                        f"{field_name} {getattr(self, field_name)} disagrees "
-                        f"with the sufficient statistics ({expected})")
+        for name in ("cluster_weighted", "cluster_observation_counts"):
+            object.__setattr__(self, name,
+                               MappingProxyType(dict(getattr(self, name))))
 
     def __deepcopy__(self, memo: dict) -> "InterventionReport":
-        return self  # immutable; the mapping proxies are unpicklable
+        return self  # every nested mapping is frozen above
 
     def to_json(self) -> dict[str, Any]:
-        """Explicit persistence form (Stage 1 is resumable);
-        `dataclasses.asdict` cannot walk the mapping proxies."""
         return {
+            "cell_id": self.cell_id,
+            "namespace": self.namespace,
             "edge": list(self.edge),
+            "cluster_successes": {cluster: dict(values) for cluster, values
+                                  in self.cluster_successes.items()},
             "n_total": self.n_total,
             "n_eligible": self.n_eligible,
             "intervention_ineligible": self.intervention_ineligible,
             "eligibility_rate": self.eligibility_rate,
-            "n_clusters": self.n_clusters,
+            "n_population_clusters": self.n_population_clusters,
+            "n_eligible_clusters": self.n_eligible_clusters,
             "base_accuracy": self.base_accuracy,
             "corruption_accuracy": self.corruption_accuracy,
             "corruption_drop": self.corruption_drop,
@@ -292,33 +257,168 @@ class InterventionReport:
             "cluster_weighted": dict(self.cluster_weighted),
             "cluster_observation_counts":
                 dict(self.cluster_observation_counts),
-            "cluster_successes": {cluster: dict(values) for cluster, values
-                                  in self.cluster_successes.items()},
         }
 
     @classmethod
     def from_json(cls, obj: Mapping[str, Any]) -> "InterventionReport":
+        """Rebuild from identity + statistics, then require every stored
+        redundant field to equal its derived value."""
         if not isinstance(obj, Mapping):
             raise InfrastructureError("report JSON must be an object")
-        expected = {f.name for f in fields(cls)}
-        if set(obj) != expected:
+        expected_keys = {f.name for f in fields(cls)}
+        if set(obj) != expected_keys:
             raise InfrastructureError(
-                f"report JSON keys must be exactly {sorted(expected)}, got "
-                f"{sorted(obj)}")
+                f"report JSON keys must be exactly {sorted(expected_keys)}, "
+                f"got {sorted(obj)}")
         edge = obj["edge"]
         if not isinstance(edge, (list, tuple)) or len(edge) != 2 \
                 or not all(isinstance(node, str) for node in edge):
             raise InfrastructureError(f"malformed edge {edge!r}")
-        return cls(**{**obj, "edge": tuple(edge)})
+        statistics = obj["cluster_successes"]
+        if not isinstance(statistics, Mapping) or not statistics:
+            raise InfrastructureError(
+                "cluster_successes must be a non-empty object")
+        derived = _derive(obj["cell_id"], obj["namespace"], tuple(edge),
+                          statistics)
+        stored = dict(obj)
+        for name in ("cell_id", "namespace", "cluster_successes", "edge"):
+            stored.pop(name)
+        for name, value in stored.items():
+            expected = getattr(derived, name)
+            if isinstance(expected, Mapping):
+                # Shape first: a null or list-valued mapping would raise a
+                # raw TypeError/AttributeError, and a list would stay
+                # mutable behind an object claiming to be frozen.
+                if not isinstance(value, Mapping) or dict(value) != {
+                        k: v for k, v in expected.items()}:
+                    raise InfrastructureError(
+                        f"{name} disagrees with the sufficient statistics")
+            elif expected is None:
+                if value is not None:
+                    raise InfrastructureError(
+                        f"{name} disagrees with the sufficient statistics")
+            elif isinstance(value, bool) or not isinstance(
+                    value, (int, float)) or abs(value - expected) > 1e-9:
+                raise InfrastructureError(
+                    f"{name} is {value!r}, derived {expected!r}")
+        return derived
 
 
-def _validate_edge_rows(outcomes: Sequence[EdgeOutcome]) -> None:
-    """Total validation of persisted intervention rows.
+def _derive(cell_id: Any, namespace: Any, edge: tuple[str, str],
+            statistics: Mapping[str, Mapping[str, int]]
+            ) -> InterventionReport:
+    """The single constructor: everything but identity and the per-cluster
+    counts is a function of those counts, so consistency is a property of
+    construction rather than a checklist."""
+    if not isinstance(cell_id, str) or cell_id not in CELL_NODES:
+        raise InfrastructureError(f"unknown cell_id {cell_id!r}")
+    if not isinstance(namespace, str) or namespace not in NAMESPACES:
+        raise InfrastructureError(f"unknown namespace {namespace!r}")
+    if edge not in CELL_INTERVENTION_EDGES[cell_id]:
+        raise InfrastructureError(
+            f"edge {edge!r} is not a dependency edge of {cell_id}")
+
+    counts: dict[str, dict[str, int]] = {}
+    for cluster, values in statistics.items():
+        if not isinstance(cluster, str):
+            raise InfrastructureError(f"cluster id {cluster!r} is not a str")
+        try:
+            latent = parse_latent_program_id(cluster)
+        except ValueError as exc:
+            raise InfrastructureError(
+                f"cluster id {cluster!r}: {exc}") from exc
+        if latent.cell_id != cell_id or latent.namespace != namespace:
+            raise InfrastructureError(
+                f"cluster {cluster} is {latent.cell_id}/{latent.namespace}, "
+                f"report is {cell_id}/{namespace}")
+        if not isinstance(values, Mapping) \
+                or set(values) != set(_SUFFICIENT_STATISTIC_FIELDS):
+            raise InfrastructureError(
+                f"cluster {cluster}: sufficient statistics must be exactly "
+                f"{sorted(_SUFFICIENT_STATISTIC_FIELDS)}")
+        for key, value in values.items():
+            _require_count(value, f"{cluster}.{key}")
+        if values["n_eligible"] > values["n_total"]:
+            raise InfrastructureError(
+                f"cluster {cluster}: n_eligible exceeds n_total")
+        for key in ("base", "corrupted", "counterfactual"):
+            if values[key] > values["n_eligible"]:
+                raise InfrastructureError(
+                    f"cluster {cluster}: {key} exceeds n_eligible")
+        if values["followed_successes"] > values["followed"] \
+                or values["followed"] > values["n_eligible"]:
+            raise InfrastructureError(
+                f"cluster {cluster}: inconsistent follow-through counts")
+        counts[cluster] = dict(values)
+
+    n_total = sum(v["n_total"] for v in counts.values())
+    n_eligible = sum(v["n_eligible"] for v in counts.values())
+    if not n_total:
+        raise InfrastructureError("no intervention observations")
+    if not n_eligible:
+        raise InfrastructureError(
+            "no eligible instances; intervention gates are undefined")
+    eligible_clusters = [c for c, v in counts.items() if v["n_eligible"]]
+
+    def full_sample(key: str) -> float:
+        return sum(counts[c][key] for c in counts) / n_eligible
+
+    def clustered(key: str) -> float:
+        return sum(counts[c][key] / counts[c]["n_eligible"]
+                   for c in eligible_clusters) / len(eligible_clusters)
+
+    base_accuracy = full_sample("base")
+    corruption_accuracy = full_sample("corrupted")
+    counterfactual = full_sample("counterfactual")
+    followed = sum(v["followed"] for v in counts.values())
+    follow_through = (sum(v["followed_successes"] for v in counts.values())
+                      / followed) if followed else None
+
+    cluster_weighted = {
+        "base_accuracy": clustered("base"),
+        "corruption_accuracy": clustered("corrupted"),
+        "corruption_drop": clustered("base") - clustered("corrupted"),
+        "old_answer_persistence": clustered("corrupted"),
+        "counterfactual_consistency": clustered("counterfactual"),
+    }
+    followed_clusters = [c for c, v in counts.items() if v["followed"]]
+    if followed_clusters:
+        cluster_weighted["follow_through"] = sum(
+            counts[c]["followed_successes"] / counts[c]["followed"]
+            for c in followed_clusters) / len(followed_clusters)
+
+    return InterventionReport(
+        cell_id=cell_id, namespace=namespace, edge=edge,
+        cluster_successes=counts,
+        n_total=n_total, n_eligible=n_eligible,
+        intervention_ineligible=n_total - n_eligible,
+        eligibility_rate=n_eligible / n_total,
+        n_population_clusters=len(counts),
+        n_eligible_clusters=len(eligible_clusters),
+        base_accuracy=base_accuracy,
+        corruption_accuracy=corruption_accuracy,
+        corruption_drop=base_accuracy - corruption_accuracy,
+        # The same comparison (mutated terminal vs the stored gold) read as
+        # two gates: the drop from baseline, and the residual rate itself.
+        old_answer_persistence=corruption_accuracy,
+        counterfactual_consistency=counterfactual,
+        follow_through=follow_through,
+        follow_through_rate=followed / n_eligible,
+        cluster_weighted=cluster_weighted,
+        cluster_observation_counts={c: counts[c]["n_eligible"]
+                                    for c in eligible_clusters})
+
+
+def _validate_edge_rows(outcomes: Sequence[EdgeOutcome]) -> tuple[str, str]:
+    """Total validation of persisted intervention rows; returns the single
+    (cell_id, namespace) population they describe.
 
     Without it, string values such as `"false"` for `eligible`,
     `override_applied` and `downstream_path_succeeded` all read as true,
     reporting an eligibility rate and follow-through of 1.0.
     """
+    populations, edges = set(), set()
+    by_cluster: dict[str, list[EdgeOutcome]] = {}
     for outcome in outcomes:
         if not isinstance(outcome, EdgeOutcome):
             raise InfrastructureError(
@@ -346,6 +446,46 @@ def _validate_edge_rows(outcomes: Sequence[EdgeOutcome]) -> None:
             _require_int(getattr(outcome, name), name)
         for name in ("base_terminal", "mutated_terminal"):
             _require_optional_int(getattr(outcome, name), name)
+        # §3: the replacement provably changes the sink, so the mutated
+        # target must differ from the original. Equal targets would count
+        # one execution as both preserving the old answer and following
+        # the counterfactual, making the diagnostic uninterpretable.
+        if outcome.counterfactual_gold == outcome.gold_answer:
+            raise InfrastructureError(
+                f"{outcome.cluster_id}: counterfactual_gold equals "
+                f"gold_answer; the replacement must change the sink")
+        # A complete downstream path that produced no terminal is a
+        # contradiction, and would enter the follow-through denominator as
+        # a failure.
+        if outcome.downstream_path_succeeded \
+                and outcome.mutated_terminal is None:
+            raise InfrastructureError(
+                f"{outcome.observation_id}: downstream_path_succeeded with "
+                f"no mutated terminal")
+        populations.add((latent.cell_id, latent.namespace))
+        edges.add(edge)
+        by_cluster.setdefault(outcome.cluster_id, []).append(outcome)
+
+    # Stage-1 intervention gates are per cell and edge; `lookup_math` and
+    # `math_code` both define n1->n2, so a shared edge tuple is not enough
+    # to prove one population.
+    if len(populations) != 1:
+        raise InfrastructureError(
+            f"a report covers one (cell, split): got {sorted(populations)}")
+    if len(edges) != 1:
+        raise InfrastructureError(f"outcomes span several edges: {edges}")
+
+    # One replacement is drawn per (latent_program_id, edge) and each
+    # latent is rendered several ways, so both targets are cluster-level
+    # constants.
+    for cluster, rows in by_cluster.items():
+        for name in ("gold_answer", "counterfactual_gold"):
+            values = {getattr(row, name) for row in rows}
+            if len(values) != 1:
+                raise InfrastructureError(
+                    f"cluster {cluster}: {name} differs between renderings "
+                    f"({sorted(values)}); it is a latent-level constant")
+    return populations.pop()
 
 
 def intervention_report(outcomes: Sequence[EdgeOutcome]
@@ -356,10 +496,8 @@ def intervention_report(outcomes: Sequence[EdgeOutcome]
         raise InfrastructureError("no intervention outcomes")
     # Before anything that hashes or compares the rows: a list-valued edge
     # would otherwise raise a raw TypeError instead of a domain error.
-    _validate_edge_rows(outcomes)
-    edges = {o.edge for o in outcomes}
-    if len(edges) != 1:
-        raise InfrastructureError(f"outcomes span several edges: {edges}")
+    cell_id, namespace = _validate_edge_rows(outcomes)
+    edge = outcomes[0].edge
     seen = {(o.cluster_id, o.observation_id) for o in outcomes}
     if len(seen) != len(outcomes):
         raise InfrastructureError("duplicate (cluster, observation) records")
@@ -376,70 +514,13 @@ def intervention_report(outcomes: Sequence[EdgeOutcome]
     if not eligible:
         raise InfrastructureError(
             "no eligible instances; intervention gates are undefined")
-
-    # One denominator for every reported quantity.
-    base = _group(eligible, lambda o: o.base_terminal == o.gold_answer)
-    corrupted = _group(eligible, lambda o: o.mutated_terminal == o.gold_answer)
-    counterfactual = _group(
-        eligible, lambda o: o.mutated_terminal == o.counterfactual_gold)
-    if not (set(base) == set(corrupted) == set(counterfactual)):
-        raise InfrastructureError("paired estimates lost cluster alignment")
-    for cluster in base:
-        if not (len(base[cluster]) == len(corrupted[cluster])
-                == len(counterfactual[cluster])):
-            raise InfrastructureError(
-                f"cluster {cluster}: unequal denominators across estimates")
-
     followed = [o for o in eligible if o.downstream_path_succeeded]
-    follow_through = None
-    follow_through_clustered = None
-    if followed:
-        followed_group = _group(
-            followed, lambda o: o.mutated_terminal == o.counterfactual_gold)
-        # The conditioned diagnostic uses the same weighting rule as the
-        # primary estimate it is reported alongside.
-        follow_through = _full_sample(followed_group)
-        follow_through_clustered = _cluster_weighted(followed_group)
-
-    base_accuracy = _full_sample(base)
-    # Corruption accuracy and old-answer persistence are the same
-    # comparison (mutated terminal vs the stored gold) read as two gates:
-    # the drop from baseline, and the residual rate itself.
-    corruption_accuracy = _full_sample(corrupted)
-    clustered = {
-        "base_accuracy": _cluster_weighted(base),
-        "corruption_accuracy": _cluster_weighted(corrupted),
-        "corruption_drop": _cluster_weighted(base) - _cluster_weighted(
-            corrupted),
-        "old_answer_persistence": _cluster_weighted(corrupted),
-        "counterfactual_consistency": _cluster_weighted(counterfactual),
-    }
-    if follow_through_clustered is not None:
-        clustered["follow_through"] = follow_through_clustered
-    return InterventionReport(
-        edge=next(iter(edges)),
-        n_total=len(outcomes),
-        n_eligible=len(eligible),
-        intervention_ineligible=len(outcomes) - len(eligible),
-        eligibility_rate=len(eligible) / len(outcomes),
-        n_clusters=len(base),
-        base_accuracy=base_accuracy,
-        corruption_accuracy=corruption_accuracy,
-        corruption_drop=base_accuracy - corruption_accuracy,
-        old_answer_persistence=corruption_accuracy,
-        counterfactual_consistency=_full_sample(counterfactual),
-        follow_through=follow_through,
-        follow_through_rate=len(followed) / len(eligible),
-        cluster_weighted=clustered,
-        cluster_observation_counts={cluster: len(values)
-                                    for cluster, values in base.items()},
-        cluster_successes=_sufficient_statistics(outcomes, eligible,
-                                                 followed, base, corrupted,
-                                                 counterfactual))
+    return _derive(cell_id, namespace, edge,
+                   _sufficient_statistics(outcomes, eligible, followed))
 
 
-def _sufficient_statistics(outcomes, eligible, followed, base, corrupted,
-                           counterfactual) -> dict[str, dict[str, int]]:
+def _sufficient_statistics(outcomes, eligible, followed
+                           ) -> dict[str, dict[str, int]]:
     """Everything a cluster bootstrap needs, per cluster.
 
     Includes latent clusters with **zero** eligible observations: a
@@ -447,23 +528,32 @@ def _sufficient_statistics(outcomes, eligible, followed, base, corrupted,
     dropping them would silently change the eligibility rate it can
     reproduce.
     """
-    totals: dict[str, int] = {}
-    for outcome in outcomes:
-        totals[outcome.cluster_id] = totals.get(outcome.cluster_id, 0) + 1
-    followed_by_cluster: dict[str, list[float]] = {}
-    for outcome in followed:
-        followed_by_cluster.setdefault(outcome.cluster_id, []).append(
-            float(outcome.mutated_terminal == outcome.counterfactual_gold))
+    def tally(rows, predicate=None) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for row in rows:
+            if predicate is None or predicate(row):
+                out[row.cluster_id] = out.get(row.cluster_id, 0) + 1
+        return out
+
+    totals = tally(outcomes)
+    eligible_counts = tally(eligible)
+    followed_counts = tally(followed)
     return {
         cluster: {
             "n_total": totals[cluster],
-            "n_eligible": len(base.get(cluster, ())),
-            "base": int(sum(base.get(cluster, ()))),
-            "corrupted": int(sum(corrupted.get(cluster, ()))),
-            "counterfactual": int(sum(counterfactual.get(cluster, ()))),
-            "followed": len(followed_by_cluster.get(cluster, ())),
-            "followed_successes": int(sum(followed_by_cluster.get(cluster,
-                                                                  ()))),
+            "n_eligible": eligible_counts.get(cluster, 0),
+            "base": tally(eligible, lambda r: r.base_terminal == r.gold_answer
+                          ).get(cluster, 0),
+            "corrupted": tally(
+                eligible,
+                lambda r: r.mutated_terminal == r.gold_answer).get(cluster, 0),
+            "counterfactual": tally(
+                eligible, lambda r: r.mutated_terminal == r.counterfactual_gold
+            ).get(cluster, 0),
+            "followed": followed_counts.get(cluster, 0),
+            "followed_successes": tally(
+                followed, lambda r: r.mutated_terminal == r.counterfactual_gold
+            ).get(cluster, 0),
         }
         for cluster in sorted(totals)}
 
