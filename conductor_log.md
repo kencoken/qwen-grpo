@@ -141,6 +141,31 @@ tests it. Backlog = Stage-2+ entry gates.
   deployable assignment, best-fixed, node runner-ups, best one-call and
   best two-call once, and the qualification API evaluates that artifact
   with no argmax reachable.
+- 2026-07-20 — seventh-round findings
+  (`plans/conductor/56_s_stage_0a_review.md`) addressed, concentrated in
+  intervention reporting. **Impossible sufficient-statistic combinations
+  are rejected**: the count *definitions* impose relationships
+  (`corrupted + counterfactual ≤ followed`, `followed_successes ==
+  counterfactual`, `n_total ≥ 1` so an all-zero cluster cannot pad the
+  bootstrap population), not just per-count ranges. **Row coherence**:
+  `(mutated_terminal is not None) == downstream_path_succeeded` and a base
+  terminal implies eligibility — the executor makes these one fact.
+  **Identity + per-cluster statistics are the single source of truth**:
+  one `_compute_derived_fields` is used by both `_derive` and
+  `__post_init__`, so direct construction and `dataclasses.replace`
+  validate exactly as `from_json` does, and every redundant scalar is
+  recomputed and compared type-exactly (NaN, float-for-count and
+  bool-for-0/1 all rejected; OverflowError guarded). **Frozen-selection
+  verification moved to the consuming boundary** per the architectural
+  note: `VerifiedFrozenSelections` (a publicly constructible, not truly
+  unforgeable marker) was removed, and every evaluation method takes the
+  construction bundle and calls `verify_against` in the same call.
+  `draw_intervention` binds to the latent's own difficulty profile.
+  A changed-lines regression review then found no correctness bugs but two
+  dead helpers (`_require_rate`, `_RATE_FIELDS`/`_SIGNED_FIELDS`) and a
+  hot-loop cost (profile re-hash per intervention edge), all fixed — the
+  public `draw_intervention` validates, the internal `_draw_intervention`
+  skips the repeat. 454 tests green (440 → 454), byte fixture unchanged.
   Also: payoff-surface deserialization is lossless and fail-closed
   (persisted `0.5`, `"1"`, `True` are no longer coerced into valid-looking
   binary observations, and duplicate candidate entries no longer collapse

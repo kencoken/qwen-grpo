@@ -66,11 +66,16 @@ _SUFFICIENT_STATISTIC_FIELDS = ("n_total", "n_eligible", "base", "corrupted",
                                 "followed_successes")
 
 
-def _require_rate(value: Any, field: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) \
-            or not math.isfinite(value) or not 0.0 <= value <= 1.0:
-        raise InfrastructureError(
-            f"{field} must be a finite rate in [0, 1], got {value!r}")
+def _is_finite_number(value: Any) -> bool:
+    """Finite, non-boolean int or float. `math.isfinite` raises
+    OverflowError on an int too large to convert to float, so the guard
+    order matters."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _require_count(value: Any, field: str) -> None:
@@ -223,7 +228,39 @@ class InterventionReport:
     cluster_weighted: Mapping[str, float]
     cluster_observation_counts: Mapping[str, int]
 
+    # Integer-count fields are compared type-exactly (a float or bool must
+    # not pass); everything else is a rate or signed difference, compared
+    # with a finiteness guard and a tolerance.
+    _COUNT_FIELDS = ("n_total", "n_eligible", "intervention_ineligible",
+                     "n_population_clusters", "n_eligible_clusters")
+
     def __post_init__(self) -> None:
+        # __post_init__ is the source of truth: it recomputes every derived
+        # field from identity + cluster_successes and requires the stored
+        # value to match. Direct construction and `dataclasses.replace`
+        # therefore validate exactly as `from_json` does — none is a back
+        # door around `_derive`.
+        expected = _compute_derived_fields(self.cell_id, self.namespace,
+                                           self.edge, self.cluster_successes)
+        for name, want in expected.items():
+            got = getattr(self, name)
+            if isinstance(want, Mapping):
+                if not isinstance(got, Mapping) \
+                        or not _mappings_equal(got, want):
+                    raise InfrastructureError(
+                        f"{name} disagrees with the sufficient statistics")
+            elif want is None:
+                if got is not None:
+                    raise InfrastructureError(
+                        f"{name} is {got!r}, derived None")
+            elif name in self._COUNT_FIELDS:
+                if type(got) is not int or got != want:
+                    raise InfrastructureError(
+                        f"{name} is {got!r}, derived {want}")
+            else:  # rate or signed difference
+                if not _is_finite_number(got) or abs(got - want) > 1e-9:
+                    raise InfrastructureError(
+                        f"{name} is {got!r}, derived {want}")
         object.__setattr__(self, "cluster_successes", MappingProxyType({
             cluster: MappingProxyType(dict(values))
             for cluster, values in self.cluster_successes.items()}))
@@ -261,8 +298,8 @@ class InterventionReport:
 
     @classmethod
     def from_json(cls, obj: Mapping[str, Any]) -> "InterventionReport":
-        """Rebuild from identity + statistics, then require every stored
-        redundant field to equal its derived value."""
+        """Parse shapes, then construct — `__post_init__` recomputes and
+        compares every redundant field, so a forged headline cannot load."""
         if not isinstance(obj, Mapping):
             raise InfrastructureError("report JSON must be an object")
         expected_keys = {f.name for f in fields(cls)}
@@ -275,48 +312,49 @@ class InterventionReport:
                 or not all(isinstance(node, str) for node in edge):
             raise InfrastructureError(f"malformed edge {edge!r}")
         statistics = obj["cluster_successes"]
-        if not isinstance(statistics, Mapping) or not statistics:
-            raise InfrastructureError(
-                "cluster_successes must be a non-empty object")
-        derived = _derive(obj["cell_id"], obj["namespace"], tuple(edge),
-                          statistics)
-        stored = dict(obj)
-        for name in ("cell_id", "namespace", "cluster_successes", "edge"):
-            stored.pop(name)
-        for name, value in stored.items():
-            expected = getattr(derived, name)
-            if isinstance(expected, Mapping):
-                # Shape first: a null or list-valued mapping would raise a
-                # raw TypeError/AttributeError, and a list would stay
-                # mutable behind an object claiming to be frozen.
-                if not isinstance(value, Mapping) or dict(value) != {
-                        k: v for k, v in expected.items()}:
-                    raise InfrastructureError(
-                        f"{name} disagrees with the sufficient statistics")
-            elif expected is None:
-                if value is not None:
-                    raise InfrastructureError(
-                        f"{name} disagrees with the sufficient statistics")
-            elif isinstance(value, bool) or not isinstance(
-                    value, (int, float)) or abs(value - expected) > 1e-9:
-                raise InfrastructureError(
-                    f"{name} is {value!r}, derived {expected!r}")
-        return derived
+        if not isinstance(statistics, Mapping):
+            raise InfrastructureError("cluster_successes must be an object")
+        kwargs = dict(obj)
+        kwargs["edge"] = tuple(edge)
+        return cls(**kwargs)
 
 
-def _derive(cell_id: Any, namespace: Any, edge: tuple[str, str],
-            statistics: Mapping[str, Mapping[str, int]]
-            ) -> InterventionReport:
-    """The single constructor: everything but identity and the per-cluster
-    counts is a function of those counts, so consistency is a property of
-    construction rather than a checklist."""
+def _mappings_equal(got: Mapping, want: Mapping) -> bool:
+    """Exact-key, exact-typed equality — a bool must not pass for 0/1 and a
+    NaN must not pass for a rate."""
+    if set(got) != set(want):
+        return False
+    for key, expected in want.items():
+        value = got[key]
+        if isinstance(expected, bool):
+            if type(value) is not bool or value != expected:
+                return False
+        elif isinstance(expected, int):
+            if type(value) is not int or value != expected:
+                return False
+        elif isinstance(expected, float):
+            if not _is_finite_number(value) or abs(value - expected) > 1e-9:
+                return False
+        elif value != expected:
+            return False
+    return True
+
+
+def _validate_statistics(cell_id: Any, namespace: Any, edge: tuple[str, str],
+                         statistics: Mapping[str, Mapping[str, int]]
+                         ) -> dict[str, dict[str, int]]:
+    """Validate identity and the per-cluster counts, including the
+    relationships the count *definitions* impose. Returns clean counts."""
     if not isinstance(cell_id, str) or cell_id not in CELL_NODES:
         raise InfrastructureError(f"unknown cell_id {cell_id!r}")
     if not isinstance(namespace, str) or namespace not in NAMESPACES:
         raise InfrastructureError(f"unknown namespace {namespace!r}")
-    if edge not in CELL_INTERVENTION_EDGES[cell_id]:
+    if not isinstance(edge, tuple) or edge not in CELL_INTERVENTION_EDGES[cell_id]:
         raise InfrastructureError(
             f"edge {edge!r} is not a dependency edge of {cell_id}")
+    if not isinstance(statistics, Mapping) or not statistics:
+        raise InfrastructureError("cluster_successes must be a non-empty "
+                                  "object")
 
     counts: dict[str, dict[str, int]] = {}
     for cluster, values in statistics.items():
@@ -338,23 +376,49 @@ def _derive(cell_id: Any, namespace: Any, edge: tuple[str, str],
                 f"{sorted(_SUFFICIENT_STATISTIC_FIELDS)}")
         for key, value in values.items():
             _require_count(value, f"{cluster}.{key}")
+        # A cluster represents at least one observation; an all-zero cluster
+        # would inflate the bootstrap population without adding a draw.
+        if values["n_total"] < 1:
+            raise InfrastructureError(
+                f"cluster {cluster}: n_total must be >= 1")
         if values["n_eligible"] > values["n_total"]:
             raise InfrastructureError(
                 f"cluster {cluster}: n_eligible exceeds n_total")
-        for key in ("base", "corrupted", "counterfactual"):
-            if values[key] > values["n_eligible"]:
-                raise InfrastructureError(
-                    f"cluster {cluster}: {key} exceeds n_eligible")
-        if values["followed_successes"] > values["followed"] \
-                or values["followed"] > values["n_eligible"]:
+        # `base` counts eligible base successes; the mutated counts each
+        # require a non-null mutated terminal, i.e. a followed path.
+        if values["base"] > values["n_eligible"]:
             raise InfrastructureError(
-                f"cluster {cluster}: inconsistent follow-through counts")
+                f"cluster {cluster}: base exceeds n_eligible")
+        if values["followed"] > values["n_eligible"]:
+            raise InfrastructureError(
+                f"cluster {cluster}: followed exceeds n_eligible")
+        # Corruption and counterfactual are disjoint (targets differ) and
+        # both entail a followed path, so together they cannot exceed it.
+        if values["corrupted"] + values["counterfactual"] > values["followed"]:
+            raise InfrastructureError(
+                f"cluster {cluster}: corrupted + counterfactual exceeds "
+                f"followed")
+        # Every followed success is by definition a counterfactual success,
+        # and vice versa (a counterfactual success has a non-null terminal,
+        # hence a followed path).
+        if values["followed_successes"] != values["counterfactual"]:
+            raise InfrastructureError(
+                f"cluster {cluster}: followed_successes must equal "
+                f"counterfactual")
         counts[cluster] = dict(values)
+    return counts
 
+
+def _compute_derived_fields(cell_id: Any, namespace: Any,
+                            edge: tuple[str, str],
+                            statistics: Mapping[str, Mapping[str, int]]
+                            ) -> dict[str, Any]:
+    """Every field but identity, as a pure function of the per-cluster
+    counts. Used by both `__post_init__` (to validate) and `_derive` (to
+    build), so consistency is a property of construction, not a checklist."""
+    counts = _validate_statistics(cell_id, namespace, edge, statistics)
     n_total = sum(v["n_total"] for v in counts.values())
     n_eligible = sum(v["n_eligible"] for v in counts.values())
-    if not n_total:
-        raise InfrastructureError("no intervention observations")
     if not n_eligible:
         raise InfrastructureError(
             "no eligible instances; intervention gates are undefined")
@@ -387,26 +451,38 @@ def _derive(cell_id: Any, namespace: Any, edge: tuple[str, str],
             counts[c]["followed_successes"] / counts[c]["followed"]
             for c in followed_clusters) / len(followed_clusters)
 
-    return InterventionReport(
-        cell_id=cell_id, namespace=namespace, edge=edge,
-        cluster_successes=counts,
-        n_total=n_total, n_eligible=n_eligible,
-        intervention_ineligible=n_total - n_eligible,
-        eligibility_rate=n_eligible / n_total,
-        n_population_clusters=len(counts),
-        n_eligible_clusters=len(eligible_clusters),
-        base_accuracy=base_accuracy,
-        corruption_accuracy=corruption_accuracy,
-        corruption_drop=base_accuracy - corruption_accuracy,
+    return {
+        "cluster_successes": counts,
+        "n_total": n_total,
+        "n_eligible": n_eligible,
+        "intervention_ineligible": n_total - n_eligible,
+        "eligibility_rate": n_eligible / n_total,
+        "n_population_clusters": len(counts),
+        "n_eligible_clusters": len(eligible_clusters),
+        "base_accuracy": base_accuracy,
+        "corruption_accuracy": corruption_accuracy,
+        "corruption_drop": base_accuracy - corruption_accuracy,
         # The same comparison (mutated terminal vs the stored gold) read as
         # two gates: the drop from baseline, and the residual rate itself.
-        old_answer_persistence=corruption_accuracy,
-        counterfactual_consistency=counterfactual,
-        follow_through=follow_through,
-        follow_through_rate=followed / n_eligible,
-        cluster_weighted=cluster_weighted,
-        cluster_observation_counts={c: counts[c]["n_eligible"]
-                                    for c in eligible_clusters})
+        "old_answer_persistence": corruption_accuracy,
+        "counterfactual_consistency": counterfactual,
+        "follow_through": follow_through,
+        "follow_through_rate": followed / n_eligible,
+        "cluster_weighted": cluster_weighted,
+        "cluster_observation_counts": {c: counts[c]["n_eligible"]
+                                       for c in eligible_clusters},
+    }
+
+
+def _derive(cell_id: Any, namespace: Any, edge: tuple[str, str],
+            statistics: Mapping[str, Mapping[str, int]]
+            ) -> InterventionReport:
+    """Build a report from identity + per-cluster counts. `__post_init__`
+    re-validates the same way, so this is the only place derived values are
+    computed but not the only guard against a malformed one."""
+    return InterventionReport(cell_id=cell_id, namespace=namespace, edge=edge,
+                              **_compute_derived_fields(cell_id, namespace,
+                                                        edge, statistics))
 
 
 def _validate_edge_rows(outcomes: Sequence[EdgeOutcome]) -> tuple[str, str]:
@@ -454,14 +530,23 @@ def _validate_edge_rows(outcomes: Sequence[EdgeOutcome]) -> tuple[str, str]:
             raise InfrastructureError(
                 f"{outcome.cluster_id}: counterfactual_gold equals "
                 f"gold_answer; the replacement must change the sink")
-        # A complete downstream path that produced no terminal is a
-        # contradiction, and would enter the follow-through denominator as
-        # a failure.
-        if outcome.downstream_path_succeeded \
-                and outcome.mutated_terminal is None:
+        # The executor makes terminal availability and path success the
+        # same fact: `terminal` is non-null exactly when the sink executed
+        # successfully. A row where they disagree could count as a
+        # counterfactual success in the primary estimate while being
+        # dropped from the follow-through denominator (or the reverse).
+        if (outcome.mutated_terminal is not None) \
+                != outcome.downstream_path_succeeded:
             raise InfrastructureError(
-                f"{outcome.observation_id}: downstream_path_succeeded with "
-                f"no mutated terminal")
+                f"{outcome.observation_id}: mutated_terminal availability "
+                f"must match downstream_path_succeeded")
+        # A successful base sink entails its required parents succeeded, so
+        # a row with a base terminal cannot be ineligible (§1.9 decides
+        # eligibility from those parents).
+        if outcome.base_terminal is not None and not outcome.eligible:
+            raise InfrastructureError(
+                f"{outcome.observation_id}: base_terminal present but the "
+                f"row is ineligible")
         populations.add((latent.cell_id, latent.namespace))
         edges.add(edge)
         by_cluster.setdefault(outcome.cluster_id, []).append(outcome)

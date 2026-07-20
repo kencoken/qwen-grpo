@@ -630,6 +630,19 @@ def test_draw_intervention_requires_a_legal_directed_edge():
         program.draw_intervention(atomic, "n1", "n1", PROF)
 
 
+def test_draw_intervention_requires_the_latents_own_profile():
+    """The replacement support comes from the profile, so a mis-wired but
+    individually valid profile must not silently change the counterfactual
+    target for a resumed run."""
+    latent = generate_latent("lookup_math", "construction", 0, PROF).latent
+    program.draw_intervention(latent, "n1", "n2", PROF)   # matching profile
+    import copy
+    other = copy.deepcopy(PROF)
+    other["cells"]["lookup_math"]["value_band"] = [10, 199]  # different digest
+    with pytest.raises(GenerationError, match="does not match the latent"):
+        program.draw_intervention(latent, "n1", "n2", other)
+
+
 def test_drawn_interventions_always_move_the_sink():
     """§3 replacement rules are constructed to provably change the sink."""
     for cell in ("lookup_math", "math_code", "fork_join"):

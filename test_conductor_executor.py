@@ -556,8 +556,7 @@ def test_calibration_bundle_requires_one_shared_population():
     frozen = bundle.freeze_selections()
     assert frozen.deployable == (0, 0, 0)
     assert frozen.best_one_call == 0
-    verified = frozen.verify_against(bundle)
-    assert bundle.descriptive_deployable_minus_one_call(verified) == \
+    assert bundle.descriptive_deployable_minus_one_call(frozen, bundle) == \
         pytest.approx(0.5)
 
     # A control scored on a disjoint population would silently invalidate
@@ -602,14 +601,15 @@ def test_qualification_evaluates_the_frozen_choice_not_its_own_argmax():
     construction_bundle = oracle.CalibrationBundle(assignment=construction)
     frozen = construction_bundle.freeze_selections()
     assert frozen.deployable == (0, 0)
-    verified = frozen.verify_against(construction_bundle)
 
     # Fresh qualification data where a different assignment happens to win.
     qualification = _surface_for("lookup_math", "qualification", (2, 2), 2)
     bundle = oracle.CalibrationBundle(assignment=qualification)
-    # The frozen choice is evaluated as-is: 0.0 here, not the 1.0 that
+    # Evaluation verifies the frozen choice against its construction bundle
+    # in the same call, then evaluates it as-is: 0.0 here, not the 1.0 that
     # reselecting on qualification outcomes would have reported.
-    assert bundle.deployable_accuracy(verified) == pytest.approx(0.0)
+    assert bundle.deployable_accuracy(frozen, construction_bundle) == \
+        pytest.approx(0.0)
     assert qualification.accuracy((2, 2)) == pytest.approx(1.0)
     assert not hasattr(bundle, "deployable")  # no argmax on the eval path
 
@@ -693,7 +693,7 @@ def test_frozen_selections_are_bound_to_their_source_bundle():
     construction = _surface_for("lookup_math", "construction", (0, 0), 2)
     bundle = oracle.CalibrationBundle(assignment=construction)
     frozen = bundle.freeze_selections()
-    frozen.verify_against(bundle)                      # round-trips
+    frozen.verify_against(bundle)                      # raises if not argmax
     assert frozen.source_surface_digest == bundle.surface_digest()
 
     other = oracle.CalibrationBundle(
@@ -746,9 +746,9 @@ def test_stage_1_gate_evaluation_is_explicitly_unavailable():
     a gate result must fail loudly rather than accept a bare float."""
     surface = _surface_for("lookup_math", "construction", (0, 0), 2)
     bundle = oracle.CalibrationBundle(assignment=surface)
-    frozen = bundle.freeze_selections().verify_against(bundle)
+    frozen = bundle.freeze_selections()
     with pytest.raises(oracle.PayoffSurfaceError, match="Stage-1A gate"):
-        bundle.gate_report(frozen)
+        bundle.gate_report(frozen, bundle)
     # The descriptive helpers are named so they cannot be mistaken for it.
     assert hasattr(bundle, "descriptive_deployable_minus_one_call")
     assert not hasattr(bundle, "deployable_vs_one_call")
@@ -758,11 +758,27 @@ def test_stage_1_gate_evaluation_is_explicitly_unavailable():
 def test_evaluation_rejects_selections_from_another_cell():
     construction = _surface_for("lookup_math", "construction", (0, 0), 2)
     source = oracle.CalibrationBundle(assignment=construction)
-    verified = source.freeze_selections().verify_against(source)
+    frozen = source.freeze_selections()
     other = _surface_for("math_code", "construction", (0, 0), 2)
     with pytest.raises(oracle.PayoffSurfaceError, match="selections are for"):
         oracle.CalibrationBundle(assignment=other).deployable_accuracy(
-            verified)
+            frozen, source)
+
+
+def test_evaluation_verifies_against_the_construction_bundle_in_one_call():
+    """A locally valid but forged artifact cannot be evaluated: there is no
+    wrappable 'verified' marker, and evaluation re-derives the argmax from
+    the construction bundle it is handed."""
+    construction = oracle.CalibrationBundle(
+        assignment=_surface_for("lookup_math", "construction", (0, 0), 2))
+    qualification = oracle.CalibrationBundle(
+        assignment=_surface_for("lookup_math", "qualification", (2, 2), 2))
+    forged = _selections(cell="lookup_math", deployable=(2, 2),
+                         best_fixed_assignment=(2, 2),
+                         node_runner_ups={"n1": (0, 2), "n2": (2, 0)},
+                         source_surface_digest=construction.surface_digest())
+    with pytest.raises(oracle.PayoffSurfaceError, match="do not match"):
+        qualification.deployable_accuracy(forged, construction)
 
 
 def test_calibration_bundle_rejects_cross_cell_controls():
@@ -777,13 +793,13 @@ def test_calibration_bundle_rejects_cross_cell_controls():
 def test_calibration_bundle_reports_missing_controls():
     assignment = oracle.validate_payoff_surface(TOY_RAW, "lookup_math")
     bundle = oracle.CalibrationBundle(assignment=assignment)
-    frozen = bundle.freeze_selections().verify_against(bundle)
+    frozen = bundle.freeze_selections()
     assert frozen.best_one_call is None and frozen.best_two_call is None
     for call in (bundle.one_call_accuracy, bundle.two_call_accuracy,
                  bundle.descriptive_deployable_minus_one_call,
                  bundle.descriptive_deployable_minus_two_call):
         with pytest.raises(oracle.PayoffSurfaceError, match="no .*surface"):
-            call(frozen)
+            call(frozen, bundle)
 
 
 # --- §4 agreement command coverage accounting -------------------------------

@@ -523,10 +523,29 @@ def _replacement_support(latent: dict[str, Any], u: str,
 def draw_intervention(latent: dict[str, Any], u: str, v: str,
                       profile: dict[str, Any]) -> dict[str, Any]:
     """One deterministic replacement per (latent_program_id, edge) (§1.9);
-    one mutated execution scored twice (corruption + counterfactual)."""
-    # The public constructor fails closed rather than emitting an invalid
-    # intervention record: ordinary generation iterates the legal table,
-    # but a caller passing (n1, n1) must not get a usable record back.
+    one mutated execution scored twice (corruption + counterfactual).
+
+    The public entry point validates that `profile` is the profile the
+    latent was generated under — the replacement support is drawn from it,
+    so a mis-wired but individually valid profile would silently change the
+    counterfactual target on a resumed run. Internal generation calls
+    `_draw_intervention` directly, having validated the profile once at the
+    top of `generate_latent`, so this hash is not repeated per edge.
+    """
+    validate_profile(profile)
+    if profile_version(profile) != latent["difficulty_profile_version"]:
+        raise GenerationError(
+            f"intervention profile {profile_version(profile)} does not match "
+            f"the latent's {latent['difficulty_profile_version']}")
+    return _draw_intervention(latent, u, v, profile)
+
+
+def _draw_intervention(latent: dict[str, Any], u: str, v: str,
+                       profile: dict[str, Any]) -> dict[str, Any]:
+    """Core: assumes `profile` is valid and is the latent's own profile."""
+    # Fail closed rather than emit an invalid record: ordinary generation
+    # iterates the legal table, but a caller passing (n1, n1) must not get a
+    # usable record back.
     legal = CELL_INTERVENTION_EDGES[latent["cell_id"]]
     if (u, v) not in legal:
         raise GenerationError(
@@ -953,8 +972,11 @@ def generate_latent(cell_id: str, namespace: str, latent_index: int,
             }
             # §1.14 R_MAGNITUDE: base path was checked during evaluation;
             # now check every deterministically drawn intervention path.
+            # The profile was validated at the top of this function and the
+            # latent carries its version, so use the unchecked core rather
+            # than re-hashing the profile per edge per resample attempt.
             for u, v in INTERVENTION_EDGES[cell_id]:
-                draw_intervention(latent, u, v, profile)
+                _draw_intervention(latent, u, v, profile)
             if latent["gold_answer"] < 1:
                 raise GenerationError(
                     f"gold < 1 escaped rejection rules for {lp_id}")

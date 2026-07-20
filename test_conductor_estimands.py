@@ -44,13 +44,23 @@ def observation(cluster_id, renderer="resource_first", visibility="private"):
 _RENDERERS = ("resource_first", "goal_first", "bound_var")
 
 
+_AUTO = object()
+
+
 def outcome(cluster_label, observation_label, *, eligible=True, override=True,
-            gold=10, cf=20, base=10, mutated=20, followed=True,
+            gold=10, cf=20, base=_AUTO, mutated=_AUTO, followed=True,
             cell="lookup_math"):
     cluster_id = cluster(cluster_label, cell)
     # Deterministic across runs (unlike hash()): distinct labels within a
     # cluster map onto distinct real renderings.
     renderer = _RENDERERS[sum(map(ord, observation_label)) % len(_RENDERERS)]
+    # Defaults respect the executor's coherence contract: an ineligible row
+    # has no base terminal, and a row's mutated terminal is present exactly
+    # when its downstream path succeeded.
+    if base is _AUTO:
+        base = gold if eligible else None
+    if mutated is _AUTO:
+        mutated = cf if followed else None
     return EdgeOutcome(cluster_id=cluster_id,
                        observation_id=observation(cluster_id, renderer),
                        edge=("n1", "n2"), eligible=eligible,
@@ -135,7 +145,7 @@ def test_ineligible_instances_may_lack_override():
 def test_follow_through_is_secondary_and_conditioned():
     outcomes = [
         outcome("c1", "o1", mutated=20, followed=True),
-        outcome("c1", "o2", mutated=99, followed=False),  # path failed
+        outcome("c1", "o2", followed=False),  # path failed -> no terminal
     ]
     report = intervention_report(outcomes)
     assert report.counterfactual_consistency == pytest.approx(0.5)
@@ -256,15 +266,31 @@ def test_replacement_must_change_the_sink():
 
 
 def test_path_success_and_terminal_availability_must_agree():
-    bad = dataclasses.replace(outcome("c1", "o1", followed=True),
-                              mutated_terminal=None)
-    with pytest.raises(InfrastructureError, match="no mutated terminal"):
-        intervention_report([bad])
+    # The executor makes these one fact, so a row where they disagree in
+    # either direction is rejected.
+    succeeded_no_terminal = dataclasses.replace(
+        outcome("c1", "o1", followed=True), mutated_terminal=None)
+    with pytest.raises(InfrastructureError,
+                       match="must match downstream_path_succeeded"):
+        intervention_report([succeeded_no_terminal])
+    failed_with_terminal = dataclasses.replace(
+        outcome("c1", "o1", followed=False), mutated_terminal=20)
+    with pytest.raises(InfrastructureError,
+                       match="must match downstream_path_succeeded"):
+        intervention_report([failed_with_terminal])
     # A failed path with no terminal is consistent and allowed.
-    ok = dataclasses.replace(outcome("c1", "o1", followed=False),
-                             mutated_terminal=None)
-    report = intervention_report([ok])
+    report = intervention_report([outcome("c1", "o1", followed=False)])
     assert report.follow_through is None
+
+
+def test_ineligible_row_cannot_have_a_base_terminal():
+    """A successful base sink entails its required parents succeeded, so
+    such a row cannot be ineligible."""
+    bad = dataclasses.replace(
+        outcome("c1", "o1", eligible=False, override=False),
+        base_terminal=10)
+    with pytest.raises(InfrastructureError, match="base_terminal present"):
+        intervention_report([bad, outcome("c1", "o2")])
 
 
 def test_edge_rows_reject_misfiled_identities():
@@ -714,6 +740,95 @@ def test_persisted_report_json_is_total(mutate):
     report = intervention_report([outcome("c1", "o1")])
     payload = json.loads(json.dumps(report.to_json()))
     mutate(payload)
+    with pytest.raises(InfrastructureError):
+        estimands.InterventionReport.from_json(payload)
+
+
+def _stats_report(cluster_stats, cell="lookup_math"):
+    """Build report JSON directly from per-cluster counts (bypassing rows),
+    to probe impossible sufficient-statistic tables."""
+    c = cluster("stats", cell)
+    stats = {c: cluster_stats}
+    return {
+        "cell_id": cell, "namespace": "construction", "edge": ["n1", "n2"],
+        "cluster_successes": stats,
+        # Deliberately-wrong placeholders; from_json recomputes and would
+        # only reach the statistics check if these happened to match.
+        "n_total": 0, "n_eligible": 0, "intervention_ineligible": 0,
+        "eligibility_rate": 0.0, "n_population_clusters": 0,
+        "n_eligible_clusters": 0, "base_accuracy": 0.0,
+        "corruption_accuracy": 0.0, "corruption_drop": 0.0,
+        "old_answer_persistence": 0.0, "counterfactual_consistency": 0.0,
+        "follow_through": None, "follow_through_rate": 0.0,
+        "cluster_weighted": {}, "cluster_observation_counts": {},
+    }
+
+
+_GOOD_STATS = {"n_total": 2, "n_eligible": 2, "base": 2, "corrupted": 1,
+               "counterfactual": 1, "followed": 2, "followed_successes": 1}
+
+
+@pytest.mark.parametrize("stats,match", [
+    # Targets differ, so one terminal cannot be both corrupted and
+    # counterfactual: corrupted + counterfactual > followed.
+    ({**_GOOD_STATS, "n_eligible": 1, "n_total": 1, "base": 1,
+      "corrupted": 1, "counterfactual": 1, "followed": 1,
+      "followed_successes": 1}, "corrupted \\+ counterfactual exceeds"),
+    # Every followed success is a counterfactual success.
+    ({**_GOOD_STATS, "counterfactual": 0, "followed_successes": 1},
+     "followed_successes must equal"),
+    ({"n_total": 0, "n_eligible": 0, "base": 0, "corrupted": 0,
+      "counterfactual": 0, "followed": 0, "followed_successes": 0},
+     "n_total must be >= 1"),
+    ({**_GOOD_STATS, "followed": 3}, "followed exceeds n_eligible"),
+    ({**_GOOD_STATS, "base": 3}, "base exceeds n_eligible"),
+])
+def test_impossible_statistic_tables_are_rejected(stats, match):
+    with pytest.raises(InfrastructureError, match=match):
+        estimands.InterventionReport.from_json(_stats_report(stats))
+
+
+def test_all_zero_cluster_cannot_pad_the_bootstrap_population():
+    """A zero-count cluster would raise n_population_clusters without
+    representing an observation the bootstrap can resample."""
+    good = cluster("real")
+    zero = cluster("zero")
+    payload = intervention_report([outcome("real", "o1")]).to_json()
+    payload["cluster_successes"][zero] = {
+        "n_total": 0, "n_eligible": 0, "base": 0, "corrupted": 0,
+        "counterfactual": 0, "followed": 0, "followed_successes": 0}
+    with pytest.raises(InfrastructureError, match="n_total must be >= 1"):
+        estimands.InterventionReport.from_json(payload)
+
+
+def test_direct_construction_and_replace_validate_like_from_json():
+    """__post_init__ is the source of truth: direct construction and
+    dataclasses.replace recompute and compare, so neither is a back door
+    around _derive."""
+    report = intervention_report([outcome("c1", "o1")])
+    with pytest.raises(InfrastructureError):
+        dataclasses.replace(report, n_total=999)
+    with pytest.raises(InfrastructureError):
+        dataclasses.replace(report, corruption_accuracy=0.123)
+    # A contradictory hand-built report cannot be constructed at all.
+    kwargs = report.to_json()
+    kwargs["edge"] = tuple(kwargs["edge"])
+    kwargs["eligibility_rate"] = float("nan")
+    with pytest.raises(InfrastructureError):
+        estimands.InterventionReport(**kwargs)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("n_total", 1.0),                       # float where a count is required
+    ("eligibility_rate", float("nan")),     # NaN passes abs()-based compares
+    ("base_accuracy", float("inf")),
+    ("corruption_drop", 10 ** 400),         # OverflowError in isfinite
+])
+def test_numeric_fields_are_type_exact_and_finite(field, value):
+    report = intervention_report([outcome("c1", "o1"),
+                                  outcome("c1", "o2", mutated=10)])
+    payload = report.to_json()
+    payload[field] = value
     with pytest.raises(InfrastructureError):
         estimands.InterventionReport.from_json(payload)
 

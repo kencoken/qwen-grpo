@@ -99,8 +99,16 @@ def _expected_candidates(kind: str, cell_id: str) -> list[Any]:
 
 
 def _check_probability(value: Any, field_name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) \
-            or not math.isfinite(value) or not 0.0 <= value <= 1.0:
+    # `math.isfinite` raises OverflowError on an int too large to convert
+    # to float, so the finiteness test must be guarded, not reached after a
+    # bare `math.isfinite(value)`.
+    bad = isinstance(value, bool) or not isinstance(value, (int, float))
+    if not bad:
+        try:
+            bad = not math.isfinite(value) or not 0.0 <= value <= 1.0
+        except OverflowError:
+            bad = True
+    if bad:
         raise PayoffSurfaceError(
             f"{field_name} must be a finite number in [0, 1], got {value!r}")
     return float(value)
@@ -515,7 +523,7 @@ def validate_payoff_surface(raw: RawSurface, cell_id: str
     """Validate a 3^S assignment surface for a named cell. `cell_id` is
     required: inferring S from the data cannot catch a surface built for
     the wrong cell."""
-    if cell_id not in CELL_NODES:
+    if not isinstance(cell_id, str) or cell_id not in CELL_NODES:
         raise PayoffSurfaceError(f"unknown cell_id {cell_id!r}")
     return _validate(raw, "assignment", cell_id,
                      _expected_candidates("assignment", cell_id))
@@ -526,7 +534,7 @@ def validate_one_call_surface(raw: RawSurface, cell_id: str
     """Best one-call whole-task control (§1.11 B5). Pair it with its
     assignment surface through a `CalibrationBundle` — that is what
     enforces the shared population."""
-    if cell_id not in CELL_NODES:
+    if not isinstance(cell_id, str) or cell_id not in CELL_NODES:
         raise PayoffSurfaceError(f"unknown cell_id {cell_id!r}")
     return _validate(raw, "one_call", cell_id, list(ENDPOINT_IDS))
 
@@ -534,7 +542,7 @@ def validate_one_call_surface(raw: RawSurface, cell_id: str
 def validate_two_call_surface(raw: RawSurface, cell_id: str
                               ) -> ValidatedSurface:
     """The 18-workflow contraction family (D12) — fork/join only."""
-    if cell_id not in CELL_NODES:
+    if not isinstance(cell_id, str) or cell_id not in CELL_NODES:
         raise PayoffSurfaceError(f"unknown cell_id {cell_id!r}")
     return _validate(raw, "two_call", cell_id,
                      _expected_candidates("two_call", cell_id))
@@ -708,19 +716,21 @@ class FrozenSelections:
         object.__setattr__(self, "node_runner_ups",
                            MappingProxyType(dict(self.node_runner_ups)))
 
-    def verify_against(self,
-                       construction: "CalibrationBundle"
-                       ) -> "VerifiedFrozenSelections":
-        """Re-derive the selections from their source bundle.
+    def verify_against(self, construction: "CalibrationBundle") -> None:
+        """Re-derive the selections from their source bundle; raise if they
+        are not its argmax.
 
         The local invariants above cannot prove a stored candidate really
         *was* the argmax; this does, by recomputing it. The digest check
         first ensures we are comparing against the same construction
         surfaces the artifact was frozen from.
 
-        Returns a distinct type because evaluation *requires* it: a
-        side-effect-free method a caller may forget to invoke gives the
-        consuming operation no evidence that verification happened.
+        Verification is done *at the consuming boundary* — every evaluation
+        method takes the construction bundle and calls this in the same
+        call. A returned "verified" object would only be evidence that
+        wrapping happened, not that verification did, and nothing in Python
+        makes such a wrapper truly unforgeable; requiring the source bundle
+        at the point of use is the honest guarantee.
         """
         if not isinstance(construction, CalibrationBundle):
             raise PayoffSurfaceError("verify_against needs a CalibrationBundle")
@@ -733,7 +743,6 @@ class FrozenSelections:
         if rederived != self:
             raise PayoffSurfaceError(
                 "selections do not match the argmax of their source bundle")
-        return VerifiedFrozenSelections(self)
 
     def __deepcopy__(self, memo: dict) -> "FrozenSelections":
         return self
@@ -802,31 +811,6 @@ class FrozenSelections:
             construction_random_accuracy=obj["construction_random_accuracy"],
             source_surface_digest=obj["source_surface_digest"],
             best_one_call=obj["best_one_call"], best_two_call=two_call)
-
-
-@dataclass(frozen=True)
-class VerifiedFrozenSelections:
-    """`FrozenSelections` that has been re-derived from its source bundle.
-
-    Evaluation accepts only this type. Verification is otherwise a
-    side-effect-free method a caller can simply forget, which would leave
-    the consuming operation with no evidence that it happened — the
-    artifact would be documented as source-bound without mechanically
-    being so.
-    """
-
-    selections: FrozenSelections
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.selections, FrozenSelections):
-            raise PayoffSurfaceError("expected FrozenSelections")
-
-    def __getattr__(self, name: str) -> Any:
-        # Read-through so callers can use the selections directly.
-        return getattr(self.selections, name)
-
-    def __deepcopy__(self, memo: dict) -> "VerifiedFrozenSelections":
-        return self
 
 
 @dataclass(frozen=True)
@@ -932,46 +916,51 @@ class CalibrationBundle:
                            else select_best_two_call(self.two_call)))
 
     # --- evaluation of frozen choices (no argmax) --------------------------
+    #
+    # Evaluation takes the construction bundle and verifies the selections
+    # against it in the same call. Verification is thus mechanically part
+    # of consuming the artifact — not a wrappable marker a caller might
+    # forget or forge (see FrozenSelections.verify_against).
 
-    def _check_frozen(self, frozen: Any) -> FrozenSelections:
-        """Evaluation requires selections that were verified against their
-        construction bundle — see `FrozenSelections.verify_against`."""
-        if isinstance(frozen, FrozenSelections):
+    def _check_frozen(self, frozen: Any,
+                      construction: "CalibrationBundle") -> FrozenSelections:
+        if not isinstance(frozen, FrozenSelections):
             raise PayoffSurfaceError(
-                "evaluation consumes VerifiedFrozenSelections: call "
-                "selections.verify_against(construction_bundle) first, so "
-                "the artifact is mechanically bound to its source")
-        if not isinstance(frozen, VerifiedFrozenSelections):
-            raise PayoffSurfaceError(
-                "evaluation consumes a VerifiedFrozenSelections artifact")
+                "evaluation consumes a FrozenSelections artifact")
         if frozen.cell_id != self.cell_id:
             raise PayoffSurfaceError(
                 f"selections are for {frozen.cell_id!r}, bundle for "
                 f"{self.cell_id!r}")
+        frozen.verify_against(construction)
         return frozen
 
-    def deployable_accuracy(self, frozen: VerifiedFrozenSelections) -> float:
+    def deployable_accuracy(self, frozen: FrozenSelections,
+                            construction: "CalibrationBundle") -> float:
         return self.assignment.accuracy(
-            self._check_frozen(frozen).deployable)
+            self._check_frozen(frozen, construction).deployable)
 
-    def best_fixed_accuracy(self, frozen: VerifiedFrozenSelections) -> float:
+    def best_fixed_accuracy(self, frozen: FrozenSelections,
+                            construction: "CalibrationBundle") -> float:
         return self.assignment.accuracy(
-            self._check_frozen(frozen).best_fixed_assignment)
+            self._check_frozen(frozen, construction).best_fixed_assignment)
 
-    def one_call_accuracy(self, frozen: VerifiedFrozenSelections) -> float:
-        self._check_frozen(frozen)
+    def one_call_accuracy(self, frozen: FrozenSelections,
+                          construction: "CalibrationBundle") -> float:
+        self._check_frozen(frozen, construction)
         if self.one_call is None or frozen.best_one_call is None:
             raise PayoffSurfaceError("no one-call surface or selection")
         return self.one_call.accuracy(frozen.best_one_call)
 
-    def two_call_accuracy(self, frozen: VerifiedFrozenSelections) -> float:
-        self._check_frozen(frozen)
+    def two_call_accuracy(self, frozen: FrozenSelections,
+                          construction: "CalibrationBundle") -> float:
+        self._check_frozen(frozen, construction)
         if self.two_call is None or frozen.best_two_call is None:
             raise PayoffSurfaceError("no two-call surface or selection")
         return self.two_call.accuracy(frozen.best_two_call)
 
     def descriptive_deployable_minus_one_call(
-            self, frozen: VerifiedFrozenSelections) -> float:
+            self, frozen: FrozenSelections,
+            construction: "CalibrationBundle") -> float:
         """Descriptive difference between the construction-frozen oracle
         and the construction-frozen one-call control on this bundle's data.
 
@@ -979,14 +968,17 @@ class CalibrationBundle:
         this quantity *plus* a registered population, bound execution
         provenance, and a paired clustered interval. See `gate_report()`.
         """
-        return self.deployable_accuracy(frozen) - self.one_call_accuracy(frozen)
+        return (self.deployable_accuracy(frozen, construction)
+                - self.one_call_accuracy(frozen, construction))
 
     def descriptive_deployable_minus_two_call(
-            self, frozen: VerifiedFrozenSelections) -> float:
-        return self.deployable_accuracy(frozen) - self.two_call_accuracy(frozen)
+            self, frozen: FrozenSelections,
+            construction: "CalibrationBundle") -> float:
+        return (self.deployable_accuracy(frozen, construction)
+                - self.two_call_accuracy(frozen, construction))
 
-    def gate_report(self, frozen: VerifiedFrozenSelections
-                    ) -> dict[str, float]:
+    def gate_report(self, frozen: FrozenSelections,
+                    construction: "CalibrationBundle") -> dict[str, float]:
         """Stage-1A gate evaluation — not available at Stage 0A.
 
         This exists so the missing capability is discoverable from the code
