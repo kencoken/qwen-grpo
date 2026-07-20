@@ -366,6 +366,17 @@ CELL_NODES: dict[str, tuple[str, ...]] = {
     "fork_join": ("n1", "n2", "n3"),
 }
 
+# §1.9/§3: the fixed directed dependency edges an intervention may target.
+# Direction matters — an intervention overrides a parent and measures the
+# effect on its child — so a reversed pair, a self-edge, or a fork sibling
+# pair is not an intervention edge at all.
+CELL_INTERVENTION_EDGES: dict[str, tuple[tuple[str, str], ...]] = {
+    "lookup_atomic": (), "math_atomic": (), "code_atomic": (),
+    "lookup_math": (("n1", "n2"),),
+    "math_code": (("n1", "n2"),),
+    "fork_join": (("n1", "n3"), ("n2", "n3")),
+}
+
 # Plan contract 2: legal v0 access patterns by step count.
 LEGAL_ACCESS_PATTERNS = {
     1: ("none",),

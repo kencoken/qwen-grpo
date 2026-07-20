@@ -32,8 +32,20 @@ class InstanceRegistry:
                 or set(manifest) != set(registry_json):
             raise InfrastructureError("manifest keys != registry keys")
         self.manifest = list(manifest)
-        self._resources = {h: resource_from_json(obj)
-                           for h, obj in registry_json.items()}
+        # A null or incomplete resource object would otherwise surface as a
+        # raw AttributeError/KeyError from the deserializer, without saying
+        # which handle was at fault.
+        resources = {}
+        for handle, obj in registry_json.items():
+            if not isinstance(obj, dict):
+                raise InfrastructureError(
+                    f"{handle}: resource must be an object, got {obj!r}")
+            try:
+                resources[handle] = resource_from_json(obj)
+            except (ValueError, KeyError, TypeError, AttributeError) as exc:
+                raise InfrastructureError(
+                    f"{handle}: malformed resource ({exc})") from exc
+        self._resources = resources
 
     def resolve(self, handle: str) -> Resource | None:
         """None for any handle outside this instance (world failure, 0.5)."""

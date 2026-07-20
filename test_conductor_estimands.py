@@ -179,6 +179,10 @@ def test_report_rejects_degenerate_inputs():
     ("edge", ["n1", "n2"]),                 # list instead of a tuple
     ("edge", ("n1",)),
     ("edge", ("n1", "n9")),                 # node outside the cell
+    ("edge", ("n2", "n1")),                 # reversed: direction matters
+    ("edge", ("n1", "n1")),                 # self-edge
+    ("gold_answer", None),                  # golds are always recorded
+    ("counterfactual_gold", None),
 ])
 def test_edge_rows_are_totally_validated(field, value):
     """Without this, `"false"` for the three booleans reports an
@@ -187,6 +191,26 @@ def test_edge_rows_are_totally_validated(field, value):
     bad = dataclasses.replace(rows[0], **{field: value})
     with pytest.raises(InfrastructureError):
         intervention_report([bad] + rows[1:])
+
+
+def test_fork_sibling_and_reversed_edges_are_not_intervention_edges():
+    """fork_join's dependency edges are n1->n3 and n2->n3; a sibling pair
+    or a reversed edge is not an edge an intervention can target."""
+    rows = [outcome("f1", "o1", cell="fork_join"),
+            outcome("f1", "o2", cell="fork_join")]
+    for bad_edge in (("n1", "n2"), ("n3", "n1"), ("n2", "n2")):
+        bad = dataclasses.replace(rows[0], edge=bad_edge)
+        with pytest.raises(InfrastructureError, match="not a dependency edge"):
+            intervention_report([bad] + rows[1:])
+    for good_edge in (("n1", "n3"), ("n2", "n3")):
+        intervention_report([dataclasses.replace(r, edge=good_edge)
+                             for r in rows])
+
+
+def test_atomic_cells_have_no_intervention_edges():
+    row = outcome("a1", "o1", cell="lookup_atomic")
+    with pytest.raises(InfrastructureError, match="not a dependency edge"):
+        intervention_report([row])
 
 
 def test_edge_rows_reject_misfiled_identities():
@@ -589,12 +613,61 @@ def test_report_carries_bootstrap_sufficient_statistics():
                                   outcome("c2", "o3")])
     stats = report.cluster_successes
     assert set(stats) == {cluster("c1"), cluster("c2")}
-    assert stats[cluster("c1")] == {"base": 2, "corrupted": 1,
-                                    "counterfactual": 1, "n": 2}
-    # The full-sample primary is recoverable from the sufficient statistics.
-    total = sum(s["n"] for s in stats.values())
-    assert sum(s["corrupted"] for s in stats.values()) / total == \
+    assert stats[cluster("c1")] == {
+        "n_total": 2, "n_eligible": 2, "base": 2, "corrupted": 1,
+        "counterfactual": 1, "followed": 2, "followed_successes": 1}
+    # Every reported quantity is recoverable from the statistics alone.
+    eligible = sum(s["n_eligible"] for s in stats.values())
+    assert sum(s["corrupted"] for s in stats.values()) / eligible == \
         pytest.approx(report.corruption_accuracy)
+    assert eligible / sum(s["n_total"] for s in stats.values()) == \
+        pytest.approx(report.eligibility_rate)
+    assert sum(s["followed_successes"] for s in stats.values()) / \
+        sum(s["followed"] for s in stats.values()) == \
+        pytest.approx(report.follow_through)
+
+
+def test_statistics_include_clusters_with_no_eligible_observations():
+    """A bootstrap resamples the original latent-program population, so a
+    fully ineligible cluster must still appear."""
+    report = intervention_report([
+        outcome("c1", "o1"),
+        outcome("c2", "o3", eligible=False, override=False)])
+    stats = report.cluster_successes
+    assert set(stats) == {cluster("c1"), cluster("c2")}
+    assert stats[cluster("c2")] == {
+        "n_total": 1, "n_eligible": 0, "base": 0, "corrupted": 0,
+        "counterfactual": 0, "followed": 0, "followed_successes": 0}
+    assert sum(s["n_eligible"] for s in stats.values()) / \
+        sum(s["n_total"] for s in stats.values()) == \
+        pytest.approx(report.eligibility_rate)
+
+
+def test_report_is_recursively_immutable():
+    report = intervention_report([outcome("c1", "o1")])
+    with pytest.raises(TypeError):   # inner mapping, not just the outer one
+        report.cluster_successes[cluster("c1")]["base"] = 999
+    with pytest.raises(TypeError):
+        report.cluster_weighted["base_accuracy"] = 0.0
+
+
+@pytest.mark.parametrize("mutate,match", [
+    (lambda j: j.update(base_accuracy=1.5), "rate in \\[0, 1\\]"),
+    (lambda j: j.update(n_total="3"), "non-negative int"),
+    (lambda j: j.update(n_eligible=99), "!= n_total"),
+    (lambda j: j.update(eligibility_rate=-0.1), "rate in \\[0, 1\\]"),
+    (lambda j: j["cluster_successes"].update(bogus={"base": 1}),
+     "sufficient statistics must be"),
+    (lambda j: j.update(corruption_accuracy=0.0), "disagrees with the "
+                                                  "sufficient statistics"),
+])
+def test_persisted_report_is_validated_on_load(mutate, match):
+    report = intervention_report([outcome("c1", "o1"),
+                                  outcome("c1", "o2", mutated=10)])
+    payload = json.loads(json.dumps(report.to_json()))
+    mutate(payload)
+    with pytest.raises(InfrastructureError, match=match):
+        estimands.InterventionReport.from_json(payload)
 
 
 def test_surface_json_round_trip_for_control_kinds():

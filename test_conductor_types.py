@@ -68,6 +68,36 @@ def test_keyed_record_requires_an_ordered_rectangular_grid(payload, why):
         IntegerRecord(layout="keyed", payload=payload)
 
 
+@pytest.mark.parametrize("registry_json,match", [
+    ({"R-1A1": None}, "must be an object"),
+    ({"R-1A1": {}}, "malformed resource"),
+    ({"R-1A1": {"kind": "integer_list"}}, "malformed resource"),
+    ({"R-1A1": {"kind": "bogus", "payload": []}}, "malformed resource"),
+    ({"R-1A1": {"kind": "integer_record", "payload": []}},
+     "malformed resource"),
+])
+def test_registry_translates_malformed_resources(registry_json, match):
+    """A null or incomplete resource object must name the handle at fault
+    rather than leaking a raw AttributeError/KeyError."""
+    from tasks.conductor.resources import InstanceRegistry
+    from tasks.conductor.types import InfrastructureError as IE
+    with pytest.raises(IE, match=match):
+        InstanceRegistry(["R-1A1"], registry_json)
+
+
+@pytest.mark.parametrize("manifest", [
+    [["R-1A1"]],            # unhashable element: set() would raise TypeError
+    [None],
+    [7],
+    "R-1A1",
+])
+def test_registry_validates_manifest_element_types(manifest):
+    from tasks.conductor.resources import InstanceRegistry
+    from tasks.conductor.types import InfrastructureError as IE
+    with pytest.raises(IE):
+        InstanceRegistry(manifest, {})
+
+
 def test_registry_rejects_a_manifest_repeating_a_handle():
     from tasks.conductor.resources import InstanceRegistry
     from tasks.conductor.types import InfrastructureError as IE

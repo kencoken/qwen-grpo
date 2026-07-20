@@ -27,7 +27,8 @@ from .profiles import (
     validate_profile,
 )
 from .types import (
-    CELL_NODES, ENTITY_POOL, FIELD_POOL, MAX_ABS_VALUE, NAMESPACES,
+    CELL_INTERVENTION_EDGES, CELL_NODES, ENTITY_POOL, FIELD_POOL,
+    MAX_ABS_VALUE, NAMESPACES,
     OP_SCHEMAS, OPERAND_NAME_MATCHED_OPS, PUBLIC_NUMERIC_PARAMS, RENDERER_IDS,
     VISIBILITY_CONDITIONS, InfrastructureError, IntegerList, IntegerRecord,
     PublicParams, Resource, format_latent_program_id,
@@ -492,12 +493,7 @@ def node_resource(program: dict[str, Any], node_id: str) -> str | None:
 
 # --- §1.9 + §3: interventions ----------------------------------------------
 
-INTERVENTION_EDGES: dict[str, tuple[tuple[str, str], ...]] = {
-    "lookup_atomic": (), "math_atomic": (), "code_atomic": (),
-    "lookup_math": (("n1", "n2"),),
-    "math_code": (("n1", "n2"),),
-    "fork_join": (("n1", "n3"), ("n2", "n3")),
-}
+INTERVENTION_EDGES = CELL_INTERVENTION_EDGES  # single definition, §1.9
 
 
 def _replacement_support(latent: dict[str, Any], u: str,

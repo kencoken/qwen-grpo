@@ -153,30 +153,68 @@ tests it. Backlog = Stage-2+ entry gates.
   (`"false"` no longer reads as true); and the report carries per-cluster
   sufficient statistics for the bootstrap. 380 tests green (359 → 380),
   byte fixture unchanged.
+- 2026-07-20 — fifth-round findings
+  (`plans/conductor/54_s_stage_0a_review.md`) addressed. The review offered
+  two acceptable scopes; **Stage 0A takes the minimal one**, because the
+  authoritative provenance layer depends on artifacts that do not exist
+  yet (0B fingerprints) and on registration logic that belongs with the
+  look schedules in 1A `calibrate.py`. The partial `PopulationManifest`
+  added last round was therefore removed rather than extended — it read
+  like a provenance check while establishing neither the registered
+  population nor a shared execution environment, and its execution fields
+  were all `None`. See "Scope of the calibration guarantees" above for
+  what is and is not guaranteed, and `GATE_PROVENANCE_REQUIREMENT` in
+  `oracle.py` for the same statement in code.
+  Persistence and semantics, which the review required under either scope:
+  `FrozenSelections` now validates the *meaning* of its fields (constant
+  best-fixed, exactly-one-node runner-ups covering every node, two-call
+  only for fork/join, finite accuracies), is content-addressed to its
+  source bundle with `verify_against()` re-deriving the argmax, renames
+  the frozen random control `construction_random_accuracy` (the control is
+  defined on the surface being evaluated, so qualification uses
+  `CalibrationBundle.random_accuracy()`), and parses JSON totally — an
+  overlong `best_two_call` is no longer silently truncated.
+  `InterventionReport` is recursively immutable, carries complete
+  per-cluster sufficient statistics (including clusters with zero eligible
+  observations, which a bootstrap over the latent population needs), and
+  recomputes its redundant headline fields at load. Intervention rows must
+  name a real *directed* dependency edge — reversed, self and fork-sibling
+  pairs are rejected — with required integer golds. 416 tests green
+  (380 → 416), byte fixture unchanged.
 
-### Scope of the calibration guarantees (read before trusting a gate)
+### Scope of the calibration guarantees (read before trusting a number)
 
-`CalibrationBundle` proves that its assignment and control surfaces carry
-**the same self-declared cluster and observation identities**, and every
-surface is bound by identity to one cell and one split. That is a
-structural same-population check, and it is not on its own sufficient to
-make a Stage-1 gate valid:
+**Stage 0A ships the structural half of calibration only.** What is
+mechanically guaranteed here:
 
-- Supplying a `PopulationManifest` is what proves a surface is the
-  *registered* population rather than a cherry-picked or partially resumed
-  subset.
-- The manifest's execution fields — runtime-profile fingerprint, endpoint
-  fingerprints, prompt revision — are **`None` at Stage 0A**, because the
-  artifacts they fingerprint do not exist until 0B/1A.
-  `PopulationManifest.require_execution_provenance()` fails until they are
-  bound. Until then, two arms run under different model revisions, system
-  prompts, or token caps can carry identical observation ids and pass the
-  bundle.
+- Selection is construction-only: every argmax refuses a non-construction
+  surface, and qualification consumes a persisted `FrozenSelections`
+  artifact exposing no argmax (§1.8, plan contract 7 — "frozen, never
+  reselected"). Those selections are semantically validated (constant
+  best-fixed, one-node runner-ups, two-call only where the family is
+  defined) and content-addressed to their source bundle, so a revived
+  artifact can be re-derived from the surfaces it claims to come from.
+- `CalibrationBundle` proves its assignment and control arms carry the
+  same cluster and observation identities, and each surface is bound by
+  identity to one cell and one split.
 
-Selection is construction-only and mechanically enforced: every argmax
-refuses a non-construction surface, and qualification consumes a persisted
-`FrozenSelections` artifact that exposes no argmax (§1.8, plan contract 7 —
-"frozen, never reselected").
+What is **not** established, and is therefore deferred:
+
+- That a surface is the *registered* population — namespace caps,
+  deterministic prefixes, the pre-registered look schedule, three-renderer
+  crossing, the scheduled visible slice. That registration logic belongs
+  with the look schedules in Stage-1A `calibrate.py`.
+- That the arms ran under one *execution* environment — runtime-profile
+  fingerprint, endpoint fingerprints, D16 prompt revision. Those artifacts
+  do not exist until Stage 0B.
+
+A partial manifest was implemented and then removed: it read like a
+provenance check while establishing none of those properties, which is
+worse than its absence. Consequently every accuracy and difference
+`CalibrationBundle` returns is **descriptive** (and named so —
+`descriptive_deployable_minus_one_call`), and `gate_report()` raises
+`GATE_PROVENANCE_REQUIREMENT` rather than dressing a provenance-free float
+as a Stage-1 gate result.
 
 ### Must block the construction screen
 
@@ -191,11 +229,15 @@ refuses a non-construction surface, and qualification consumes a persisted
   bytes during Stage 0B.
 - **A canonical population + execution manifest bound to every calibration
   artifact** before the construction screen or the first qualification
-  look: registered latent/render ids including renderer and visible-slice
-  support, generator and difficulty-profile versions (all available now),
-  plus the runtime-profile fingerprint, endpoint fingerprints and prompt
-  revision (Stage 0B). Without it a clean same-identity bundle can still
-  represent an incomplete population or arms run under different systems.
+  look — a Stage-1A `calibrate.py` deliverable, deliberately not stubbed
+  at 0A. It must establish: registered latent/render ids including
+  renderer crossing and visible-slice support, namespace caps and
+  deterministic prefixes, the pre-registered look schedule, generator and
+  difficulty-profile versions, plus the runtime-profile fingerprint,
+  endpoint fingerprints and D16 prompt revision (Stage 0B), compared
+  **across arms** so assignment and control surfaces cannot come from
+  different environments. Until it exists, `CalibrationBundle.gate_report()`
+  raises and no Stage-1 gate may be reported.
 
 ## Backlog (Stage-2+ entry gates)
 

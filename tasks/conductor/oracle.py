@@ -28,7 +28,10 @@ node).
 
 from __future__ import annotations
 
+import hashlib
 import itertools
+import json
+import math
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
@@ -86,6 +89,26 @@ def _expected_candidates(kind: str, cell_id: str) -> list[Any]:
                 f"the two-call shortcut family is not defined for {cell_id}")
         return enumerate_two_call_workflows()
     raise PayoffSurfaceError(f"unknown surface kind {kind!r}")
+
+
+def _check_probability(value: Any, field_name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not math.isfinite(value) or not 0.0 <= value <= 1.0:
+        raise PayoffSurfaceError(
+            f"{field_name} must be a finite number in [0, 1], got {value!r}")
+    return float(value)
+
+
+def _int_list_from_json(value: Any, field_name: str) -> tuple[int, ...]:
+    """Shape first: `tuple(...)` on a malformed value would either raise a
+    raw TypeError or silently accept the wrong arity."""
+    if not isinstance(value, (list, tuple)):
+        raise PayoffSurfaceError(f"{field_name} must be a list of ints")
+    for entry in value:
+        if type(entry) is not int:
+            raise PayoffSurfaceError(
+                f"{field_name} contains a non-int entry {entry!r}")
+    return tuple(value)
 
 
 # --- candidate typing -------------------------------------------------------
@@ -154,42 +177,29 @@ def _check_observation_belongs(observation_id: Any, cluster_id: str,
     return render_id
 
 
-@dataclass(frozen=True)
-class PopulationManifest:
-    """The registered calibration population, and (from Stage 0B) the
-    execution provenance of the runs that produced it.
+# --- deferred: the authoritative calibration provenance layer --------------
+#
+# Binding a surface to the *registered* population (namespace caps,
+# deterministic prefixes, the pre-registered look schedule, three-renderer
+# crossing, the scheduled visible slice) and to one *execution* environment
+# (runtime-profile fingerprint, endpoint fingerprints, D16 prompt revision)
+# is a Stage-1A `calibrate.py` responsibility built on Stage-0B artifacts.
+# None of those fingerprints exist yet, and the population registration
+# logic lives with the look schedules in calibration.
+#
+# A partial manifest here would be worse than none: it would read like a
+# provenance check while establishing none of those properties. So Stage 0A
+# ships the structural half only, and says so — see `CalibrationBundle` and
+# the "Scope of the calibration guarantees" section of `conductor_log.md`.
 
-    Same-identity pairing across arms proves the arms agree with each
-    other; it does not prove they are the *registered* population, nor that
-    they were executed under one runtime profile. Supplying a manifest
-    turns both into checked properties.
-
-    The execution fields are `None` at Stage 0A because the artifacts they
-    fingerprint (runtime profile, NF4 worker pool, frozen D16 prompts) do
-    not exist until 0B/1A. `require_execution_provenance()` is the gate
-    that must pass before any qualification result depends on a surface.
-    """
-
-    cell_id: str
-    namespace: str
-    clusters: tuple[str, ...]
-    observations: Mapping[str, tuple[str, ...]]
-    generator_version: str
-    difficulty_profile_version: str
-    runtime_profile_fingerprint: str | None = None
-    endpoint_fingerprints: Mapping[str, str] | None = None
-    prompt_revision: str | None = None
-
-    def require_execution_provenance(self) -> None:
-        missing = [name for name in ("runtime_profile_fingerprint",
-                                     "endpoint_fingerprints",
-                                     "prompt_revision")
-                   if getattr(self, name) is None]
-        if missing:
-            raise PayoffSurfaceError(
-                f"execution provenance is unrecorded ({', '.join(missing)}); "
-                f"these are Stage-0B artifacts and must be bound before a "
-                f"qualification gate depends on this population")
+GATE_PROVENANCE_REQUIREMENT = (
+    "Stage-1A gate evaluation requires a canonical population manifest "
+    "(registered clusters/renderings, generator and difficulty-profile "
+    "versions) and execution provenance (runtime-profile fingerprint, "
+    "endpoint fingerprints, D16 prompt revision). Those are Stage-0B/1A "
+    "artifacts and are not implemented at Stage 0A; the helpers here are "
+    "structural and descriptive only."
+)
 
 
 @dataclass(frozen=True)
@@ -210,12 +220,13 @@ class ValidatedSurface:
     observations: Mapping[str, tuple[str, ...]]  # cluster -> observation ids
     data: Mapping[Any, Mapping[str, Mapping[str, float]]]
     namespace: str = ""
-    manifest: PopulationManifest | None = None
 
     def __post_init__(self) -> None:
-        if self.kind not in _SURFACE_KINDS:
+        # Type before membership: an unhashable cell_id (a list, say) would
+        # raise a raw TypeError from the `in` test.
+        if not isinstance(self.kind, str) or self.kind not in _SURFACE_KINDS:
             raise PayoffSurfaceError(f"unknown surface kind {self.kind!r}")
-        if self.cell_id not in CELL_NODES:
+        if not isinstance(self.cell_id, str) or self.cell_id not in CELL_NODES:
             raise PayoffSurfaceError(f"unknown cell_id {self.cell_id!r}")
         expected = _expected_candidates(self.kind, self.cell_id)
         for candidate in self.candidates:
@@ -305,9 +316,6 @@ class ValidatedSurface:
                     {o: float(values[o]) for o in frozen_obs[cluster]})
             frozen_data[candidate] = MappingProxyType(per_cluster)
 
-        if self.manifest is not None:
-            self._check_manifest(namespace, frozen_obs)
-
         # Re-freeze every nested collection: a caller keeping a reference
         # to the dictionaries it passed in must not be able to change a
         # validated surface afterwards.
@@ -317,24 +325,6 @@ class ValidatedSurface:
                            MappingProxyType(dict(frozen_obs)))
         object.__setattr__(self, "data", MappingProxyType(frozen_data))
         object.__setattr__(self, "namespace", namespace)
-
-    def _check_manifest(self, namespace: str,
-                        observations: Mapping[str, tuple[str, ...]]) -> None:
-        manifest = self.manifest
-        assert manifest is not None
-        if manifest.cell_id != self.cell_id or manifest.namespace != namespace:
-            raise PayoffSurfaceError(
-                f"surface is {self.cell_id}/{namespace}, manifest registers "
-                f"{manifest.cell_id}/{manifest.namespace}")
-        if tuple(manifest.clusters) != tuple(self.clusters):
-            raise PayoffSurfaceError(
-                "surface clusters are not the registered population")
-        for cluster in self.clusters:
-            if tuple(manifest.observations.get(cluster, ())) != \
-                    observations[cluster]:
-                raise PayoffSurfaceError(
-                    f"cluster {cluster}: observations are not the registered "
-                    f"renderings")
 
     @property
     def num_nodes(self) -> int:
@@ -384,9 +374,7 @@ class ValidatedSurface:
         }
 
     @classmethod
-    def from_json(cls, obj: Mapping[str, Any],
-                  manifest: PopulationManifest | None = None
-                  ) -> "ValidatedSurface":
+    def from_json(cls, obj: Mapping[str, Any]) -> "ValidatedSurface":
         """Fail-closed deserialization.
 
         Persisted values are never coerced — `int(0.5)`, `int("1")` and
@@ -442,7 +430,7 @@ class ValidatedSurface:
                 # __post_init__ is what accepts or rejects them.
                 per_cluster[cluster] = dict(values)
             raw[candidate] = per_cluster
-        return _validate(raw, kind, cell_id, expected, manifest)
+        return _validate(raw, kind, cell_id, expected)
 
 
 def _candidate_to_json(kind: str, candidate: Any) -> Any:
@@ -471,8 +459,7 @@ def _candidate_from_json(kind: str, value: Any) -> Any:
 
 
 def _validate(raw: RawSurface, kind: str, cell_id: str,
-              candidates: Sequence[Any],
-              manifest: PopulationManifest | None = None) -> ValidatedSurface:
+              candidates: Sequence[Any]) -> ValidatedSurface:
     if not isinstance(raw, Mapping) or not raw:
         raise PayoffSurfaceError("payoff surface is empty")
     expected = list(candidates)
@@ -511,12 +498,10 @@ def _validate(raw: RawSurface, kind: str, cell_id: str,
         observations[cluster] = tuple(sorted(values))
     return ValidatedSurface(kind=kind, cell_id=cell_id,
                             candidates=tuple(expected), clusters=clusters,
-                            observations=observations, data=raw,
-                            manifest=manifest)
+                            observations=observations, data=raw)
 
 
-def validate_payoff_surface(raw: RawSurface, cell_id: str,
-                            manifest: PopulationManifest | None = None
+def validate_payoff_surface(raw: RawSurface, cell_id: str
                             ) -> ValidatedSurface:
     """Validate a 3^S assignment surface for a named cell. `cell_id` is
     required: inferring S from the data cannot catch a surface built for
@@ -524,28 +509,26 @@ def validate_payoff_surface(raw: RawSurface, cell_id: str,
     if cell_id not in CELL_NODES:
         raise PayoffSurfaceError(f"unknown cell_id {cell_id!r}")
     return _validate(raw, "assignment", cell_id,
-                     _expected_candidates("assignment", cell_id), manifest)
+                     _expected_candidates("assignment", cell_id))
 
 
-def validate_one_call_surface(raw: RawSurface, cell_id: str,
-                              manifest: PopulationManifest | None = None
+def validate_one_call_surface(raw: RawSurface, cell_id: str
                               ) -> ValidatedSurface:
     """Best one-call whole-task control (§1.11 B5). Pair it with its
     assignment surface through a `CalibrationBundle` — that is what
     enforces the shared population."""
     if cell_id not in CELL_NODES:
         raise PayoffSurfaceError(f"unknown cell_id {cell_id!r}")
-    return _validate(raw, "one_call", cell_id, list(ENDPOINT_IDS), manifest)
+    return _validate(raw, "one_call", cell_id, list(ENDPOINT_IDS))
 
 
-def validate_two_call_surface(raw: RawSurface, cell_id: str,
-                              manifest: PopulationManifest | None = None
+def validate_two_call_surface(raw: RawSurface, cell_id: str
                               ) -> ValidatedSurface:
     """The 18-workflow contraction family (D12) — fork/join only."""
     if cell_id not in CELL_NODES:
         raise PayoffSurfaceError(f"unknown cell_id {cell_id!r}")
     return _validate(raw, "two_call", cell_id,
-                     _expected_candidates("two_call", cell_id), manifest)
+                     _expected_candidates("two_call", cell_id))
 
 
 def _require_surface(surface: Any, kind: str) -> ValidatedSurface:
@@ -657,27 +640,83 @@ class FrozenSelections:
     deployable: tuple[int, ...]
     best_fixed_assignment: tuple[int, ...]
     node_runner_ups: Mapping[str, tuple[int, ...]]
-    random_accuracy: float
+    # Diagnostic, and named for the split it was computed on: the `random`
+    # control is the exact uniform mean over *the surface being evaluated*,
+    # so a construction value must never be mistaken for the qualification
+    # control (use `CalibrationBundle.random_accuracy()` for that).
+    construction_random_accuracy: float
+    source_fingerprint: str
     best_one_call: int | None = None
     best_two_call: tuple[str, tuple[int, int]] | None = None
 
     def __post_init__(self) -> None:
+        if self.cell_id not in CELL_NODES:
+            raise PayoffSurfaceError(f"unknown cell_id {self.cell_id!r}")
         if self.namespace != SELECTION_NAMESPACE:
             raise PayoffSurfaceError(
                 f"selections must come from {SELECTION_NAMESPACE} data")
         _check_candidate("assignment", self.deployable, self.cell_id)
         _check_candidate("assignment", self.best_fixed_assignment,
                          self.cell_id)
-        for node, assignment in self.node_runner_ups.items():
-            if node not in CELL_NODES[self.cell_id]:
-                raise PayoffSurfaceError(f"unknown node {node!r}")
+        # `best_fixed` is the best *constant* assignment (§1.8): it is the
+        # control that separates heterogeneous selection from the benefit
+        # of making several context-partitioned calls, so a heterogeneous
+        # tuple stored under that label would be a different quantity.
+        if len(set(self.best_fixed_assignment)) != 1:
+            raise PayoffSurfaceError(
+                f"best_fixed_assignment {self.best_fixed_assignment} is not "
+                f"constant")
+        nodes = CELL_NODES[self.cell_id]
+        if set(self.node_runner_ups) != set(nodes):
+            raise PayoffSurfaceError(
+                f"node_runner_ups must cover exactly {list(nodes)}, got "
+                f"{sorted(self.node_runner_ups)}")
+        for index, node in enumerate(nodes):
+            assignment = self.node_runner_ups[node]
             _check_candidate("assignment", assignment, self.cell_id)
+            # A runner-up differs from the deployable assignment at its own
+            # node and nowhere else (§1.8).
+            differing = [i for i, (a, b) in
+                         enumerate(zip(assignment, self.deployable)) if a != b]
+            if differing != [index]:
+                raise PayoffSurfaceError(
+                    f"runner-up for {node} must change exactly that node: "
+                    f"{assignment} vs deployable {self.deployable}")
         if self.best_one_call is not None:
             _check_candidate("one_call", self.best_one_call, self.cell_id)
         if self.best_two_call is not None:
+            if self.cell_id not in TWO_CALL_CELLS:
+                raise PayoffSurfaceError(
+                    f"the two-call family is not defined for {self.cell_id}")
             _check_candidate("two_call", self.best_two_call, self.cell_id)
+        _check_probability(self.construction_random_accuracy,
+                           "construction_random_accuracy")
+        if not isinstance(self.source_fingerprint, str) \
+                or not self.source_fingerprint:
+            raise PayoffSurfaceError("source_fingerprint must be a non-empty "
+                                     "string")
         object.__setattr__(self, "node_runner_ups",
                            MappingProxyType(dict(self.node_runner_ups)))
+
+    def verify_against(self, construction: "CalibrationBundle") -> None:
+        """Re-derive the selections from their source bundle.
+
+        The local invariants above cannot prove a stored candidate really
+        *was* the argmax; this does, by recomputing it. The fingerprint
+        check first ensures we are comparing against the same construction
+        surfaces the artifact was frozen from.
+        """
+        if not isinstance(construction, CalibrationBundle):
+            raise PayoffSurfaceError("verify_against needs a CalibrationBundle")
+        expected = construction.fingerprint()
+        if expected != self.source_fingerprint:
+            raise PayoffSurfaceError(
+                f"selections were frozen from a different construction "
+                f"population ({self.source_fingerprint} != {expected})")
+        rederived = construction.freeze_selections()
+        if rederived != self:
+            raise PayoffSurfaceError(
+                "selections do not match the argmax of their source bundle")
 
     def __deepcopy__(self, memo: dict) -> "FrozenSelections":
         return self
@@ -690,7 +729,8 @@ class FrozenSelections:
             "best_fixed_assignment": list(self.best_fixed_assignment),
             "node_runner_ups": {node: list(assignment) for node, assignment
                                 in self.node_runner_ups.items()},
-            "random_accuracy": self.random_accuracy,
+            "construction_random_accuracy": self.construction_random_accuracy,
+            "source_fingerprint": self.source_fingerprint,
             "best_one_call": self.best_one_call,
             "best_two_call": (None if self.best_two_call is None else
                               [self.best_two_call[0],
@@ -699,25 +739,52 @@ class FrozenSelections:
 
     @classmethod
     def from_json(cls, obj: Mapping[str, Any]) -> "FrozenSelections":
+        """Total shape validation before any conversion: an overlong
+        `best_two_call` list must not be silently truncated by `tuple()`,
+        and malformed values must not leak raw TypeError/IndexError."""
         if not isinstance(obj, Mapping):
             raise PayoffSurfaceError("selections JSON must be an object")
         required = {"cell_id", "namespace", "deployable",
                     "best_fixed_assignment", "node_runner_ups",
-                    "random_accuracy", "best_one_call", "best_two_call"}
+                    "construction_random_accuracy", "source_fingerprint",
+                    "best_one_call", "best_two_call"}
         if set(obj) != required:
             raise PayoffSurfaceError(
-                f"selections JSON keys must be exactly {sorted(required)}")
-        two_call = obj["best_two_call"]
+                f"selections JSON keys must be exactly {sorted(required)}, "
+                f"got {sorted(obj) if isinstance(obj, Mapping) else obj!r}")
+        deployable = _int_list_from_json(obj["deployable"], "deployable")
+        best_fixed = _int_list_from_json(obj["best_fixed_assignment"],
+                                         "best_fixed_assignment")
+        runner_ups_json = obj["node_runner_ups"]
+        if not isinstance(runner_ups_json, Mapping):
+            raise PayoffSurfaceError("node_runner_ups must be an object")
+        runner_ups = {}
+        for node, assignment in runner_ups_json.items():
+            if not isinstance(node, str):
+                raise PayoffSurfaceError(f"node id {node!r} is not a str")
+            runner_ups[node] = _int_list_from_json(
+                assignment, f"node_runner_ups[{node}]")
+        two_call_json = obj["best_two_call"]
+        two_call = None
+        if two_call_json is not None:
+            if not isinstance(two_call_json, (list, tuple)) \
+                    or len(two_call_json) != 2 \
+                    or not isinstance(two_call_json[0], str):
+                raise PayoffSurfaceError(
+                    f"best_two_call must be [orientation, [e, e]], got "
+                    f"{two_call_json!r}")
+            pair = _int_list_from_json(two_call_json[1], "best_two_call pair")
+            if len(pair) != 2:
+                raise PayoffSurfaceError(
+                    "best_two_call endpoint pair must have exactly 2 entries")
+            two_call = (two_call_json[0], pair)
         return cls(
             cell_id=obj["cell_id"], namespace=obj["namespace"],
-            deployable=tuple(obj["deployable"]),
-            best_fixed_assignment=tuple(obj["best_fixed_assignment"]),
-            node_runner_ups={node: tuple(a) for node, a
-                             in obj["node_runner_ups"].items()},
-            random_accuracy=obj["random_accuracy"],
-            best_one_call=obj["best_one_call"],
-            best_two_call=(None if two_call is None
-                           else (two_call[0], tuple(two_call[1]))))
+            deployable=deployable, best_fixed_assignment=best_fixed,
+            node_runner_ups=runner_ups,
+            construction_random_accuracy=obj["construction_random_accuracy"],
+            source_fingerprint=obj["source_fingerprint"],
+            best_one_call=obj["best_one_call"], best_two_call=two_call)
 
 
 @dataclass(frozen=True)
@@ -729,11 +796,14 @@ class CalibrationBundle:
     surface was scored on the *same* clusters and renderings — validating
     each surface in isolation cannot establish that.
 
-    **Scope of that guarantee**: this is a same-identity structural check.
-    It proves the arms agree with one another. Only a `PopulationManifest`
-    on the surfaces proves they are the registered population, and only its
-    execution fields (Stage 0B) prove the arms ran under one runtime
-    profile, prompt revision, and endpoint set.
+    **Scope of that guarantee — read before using a number from here.**
+    This is a same-identity *structural* check: it proves the arms agree
+    with one another. It does not prove they are the registered population,
+    nor that they were executed under one runtime profile, prompt revision,
+    and endpoint set. Those checks need the Stage-0B/1A artifacts described
+    in `GATE_PROVENANCE_REQUIREMENT`, so every accuracy and difference this
+    class returns is **descriptive**, and `gate_report()` refuses rather
+    than dressing a provenance-free float as a Stage-1 gate result.
     """
 
     assignment: ValidatedSurface
@@ -774,6 +844,30 @@ class CalibrationBundle:
     def namespace(self) -> str:
         return self.assignment.namespace
 
+    def fingerprint(self) -> str:
+        """Content address of this bundle's surfaces.
+
+        Lets a revived `FrozenSelections` prove it came from *these*
+        construction surfaces rather than a same-cell bundle from another
+        experiment.
+        """
+        payload = {
+            "assignment": self.assignment.to_json(),
+            "one_call": (None if self.one_call is None
+                         else self.one_call.to_json()),
+            "two_call": (None if self.two_call is None
+                         else self.two_call.to_json()),
+        }
+        encoded = json.dumps(payload, sort_keys=True,
+                             separators=(",", ":")).encode("utf-8")
+        return "cb-" + hashlib.sha256(encoded).hexdigest()[:32]
+
+    def random_accuracy(self) -> float:
+        """§1.8 `random` control on *this* bundle's data — the control is
+        defined on the surface being evaluated, so qualification must use
+        its own value, not the construction diagnostic."""
+        return uniform_random_accuracy(self.assignment)
+
     def freeze_selections(self) -> FrozenSelections:
         """Select every downstream candidate, once, on construction data."""
         _require_selection_phase(self.assignment)
@@ -787,7 +881,9 @@ class CalibrationBundle:
             deployable=deployable,
             best_fixed_assignment=best_fixed(self.assignment),
             node_runner_ups=runner_ups,
-            random_accuracy=uniform_random_accuracy(self.assignment),
+            construction_random_accuracy=uniform_random_accuracy(
+                self.assignment),
+            source_fingerprint=self.fingerprint(),
             best_one_call=(None if self.one_call is None
                            else select_best_one_call(self.one_call)),
             best_two_call=(None if self.two_call is None
@@ -825,13 +921,32 @@ class CalibrationBundle:
             raise PayoffSurfaceError("no two-call surface or selection")
         return self.two_call.accuracy(frozen.best_two_call)
 
-    def deployable_vs_one_call(self, frozen: FrozenSelections) -> float:
-        """Oracle advantage over the best single whole-task call, both
-        chosen on construction data (the Stage-1A ≥ +20 point gate)."""
+    def descriptive_deployable_minus_one_call(self,
+                                              frozen: FrozenSelections
+                                              ) -> float:
+        """Descriptive difference between the construction-frozen oracle
+        and the construction-frozen one-call control on this bundle's data.
+
+        Named descriptively on purpose: the Stage-1A "≥ +20 points" gate is
+        this quantity *plus* a registered population, bound execution
+        provenance, and a paired clustered interval. See `gate_report()`.
+        """
         return self.deployable_accuracy(frozen) - self.one_call_accuracy(frozen)
 
-    def deployable_vs_two_call(self, frozen: FrozenSelections) -> float:
+    def descriptive_deployable_minus_two_call(self,
+                                              frozen: FrozenSelections
+                                              ) -> float:
         return self.deployable_accuracy(frozen) - self.two_call_accuracy(frozen)
+
+    def gate_report(self, frozen: FrozenSelections) -> dict[str, float]:
+        """Stage-1A gate evaluation — not available at Stage 0A.
+
+        This exists so the missing capability is discoverable from the code
+        rather than only from `conductor_log.md`: anything that reaches for
+        a gate result fails loudly instead of silently accepting a
+        descriptive number.
+        """
+        raise PayoffSurfaceError(GATE_PROVENANCE_REQUIREMENT)
 
 
 def semantic_to_positional(assignment: Sequence[int], cell_id: str,
