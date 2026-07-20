@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
-from .types import InfrastructureError
+from .types import VISIBILITY_CONDITIONS, InfrastructureError
 
 
 # --- §1.9 intervention estimand ---------------------------------------------
@@ -112,6 +112,14 @@ class InterventionReport:
     genuinely differ between renderings of one latent program, because base
     worker success depends on the rendered prompt, so the two can diverge on
     well-formed data.
+
+    **Confidence intervals** (Stage 1A): the cluster bootstrap resamples
+    whole latent clusters *with replacement, paired across arms*, and
+    recomputes this same full-sample statistic from the resampled raw rows
+    each time. `cluster_weighted` is a diagnostic for reading the
+    cluster structure, not the statistic the bootstrap resamples;
+    `cluster_observation_counts` is carried so a resampler can reproduce
+    per-cluster weights without re-reading the raw rows.
     """
 
     edge: tuple[str, str]
@@ -129,6 +137,31 @@ class InterventionReport:
     follow_through_rate: float
     cluster_weighted: Mapping[str, float]
     cluster_observation_counts: Mapping[str, int]
+
+    def __deepcopy__(self, memo: dict) -> "InterventionReport":
+        return self  # immutable; the mapping proxies are unpicklable
+
+    def to_json(self) -> dict[str, Any]:
+        """Explicit persistence form (Stage 1 is resumable);
+        `dataclasses.asdict` cannot walk the mapping proxies."""
+        return {
+            "edge": list(self.edge),
+            "n_total": self.n_total,
+            "n_eligible": self.n_eligible,
+            "intervention_ineligible": self.intervention_ineligible,
+            "eligibility_rate": self.eligibility_rate,
+            "n_clusters": self.n_clusters,
+            "base_accuracy": self.base_accuracy,
+            "corruption_accuracy": self.corruption_accuracy,
+            "corruption_drop": self.corruption_drop,
+            "old_answer_persistence": self.old_answer_persistence,
+            "counterfactual_consistency": self.counterfactual_consistency,
+            "follow_through": self.follow_through,
+            "follow_through_rate": self.follow_through_rate,
+            "cluster_weighted": dict(self.cluster_weighted),
+            "cluster_observation_counts":
+                dict(self.cluster_observation_counts),
+        }
 
 
 def intervention_report(outcomes: Sequence[EdgeOutcome]
@@ -239,19 +272,51 @@ class SensitivityScores:
 
 
 def _validate_workflow_rows(outcomes: Sequence[WorkflowOutcome]) -> None:
-    """Reject replayed traces and cluster-inconsistent latent metadata.
+    """Totally validate persisted rows before any population filtering.
 
-    A duplicated row would silently move the cluster mean and the reported
-    observation count while every same-population assertion still passed;
-    and collision status is a property of the *latent* program, so renderer
-    rows disagreeing about it would let part of a supposedly no-collision
-    cluster into the headline population.
+    Filtering silently drops whatever it does not recognise, so a malformed
+    row must fail here rather than quietly leaving or entering the headline
+    population: `correct=2` would produce a headline above 1.0, and
+    `visibility_condition="Private"` would be excluded as though it were a
+    visible observation.
     """
+    if not outcomes:
+        raise InfrastructureError("no workflow outcomes")
+    for outcome in outcomes:
+        if not isinstance(outcome, WorkflowOutcome):
+            raise InfrastructureError(
+                f"expected WorkflowOutcome rows, got {type(outcome).__name__}")
+        for field in ("cluster_id", "observation_id"):
+            value = getattr(outcome, field)
+            if not isinstance(value, str) or not value:
+                raise InfrastructureError(
+                    f"{field} must be a non-empty str, got {value!r}")
+        if outcome.visibility_condition not in VISIBILITY_CONDITIONS:
+            raise InfrastructureError(
+                f"visibility_condition {outcome.visibility_condition!r} is "
+                f"not one of {VISIBILITY_CONDITIONS}")
+        # `type(...) is bool` rather than isinstance: 0/1 are valid ints
+        # but would let `correct=2` through the same door.
+        for field in ("public_numeric_collision", "correct",
+                      "answer_in_subtask_detected"):
+            value = getattr(outcome, field)
+            if type(value) is not bool:
+                raise InfrastructureError(
+                    f"{field} must be a bool, got {value!r}")
+
     seen = {(o.cluster_id, o.observation_id) for o in outcomes}
     if len(seen) != len(outcomes):
         raise InfrastructureError(
             "duplicate (cluster_id, observation_id) rows: a replayed trace "
             "would change the cluster mean silently")
+    # An observation belongs to exactly one latent cluster.
+    owners: dict[str, set[str]] = {}
+    for outcome in outcomes:
+        owners.setdefault(outcome.observation_id, set()).add(outcome.cluster_id)
+    shared = sorted(o for o, clusters in owners.items() if len(clusters) > 1)
+    if shared:
+        raise InfrastructureError(
+            f"observation ids filed under more than one cluster: {shared}")
     by_cluster: dict[str, set] = {}
     for outcome in outcomes:
         by_cluster.setdefault(outcome.cluster_id, set()).add(

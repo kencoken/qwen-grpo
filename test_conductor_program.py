@@ -3,6 +3,7 @@ scheduler, metamorphic, provenance no-leakage, split isolation, collision,
 sampler/R_MAGNITUDE fixtures (§4)."""
 
 import copy
+import time
 
 import numpy as np
 import pytest
@@ -563,6 +564,41 @@ def test_r_magnitude_intervention_path_checked():
     assert evaluate_reference(prog, reg)["n2"] == 63
     with pytest.raises(RMagnitude):
         evaluate_reference(prog, reg, overrides={"n1": 500_000_000_001})
+
+
+def test_t1_congruence_sampling_is_analytic_not_enumerated():
+    """A wide c band whose congruence class is empty must fail fast: the
+    old enumeration scanned the whole band on every one of the 1000
+    resampling attempts."""
+    profile = copy.deepcopy(PROF)
+    profile["cells"]["math_atomic"].update(
+        a_band=[1_000_000, 1_000_000], b_band=[99, 99],
+        c_band=[1, 1_000_000])
+    profile["cells"]["math_atomic"]["t1"]["d_band"] = [10**9, 10**9]
+    profiles.validate_profile(profile)
+    dpv = profiles.profile_version(profile)
+    t1_index = next(
+        i for i in range(6)
+        if program.factor_assignment(program.GENERATOR_VERSION, dpv,
+                                     "construction", "math_atomic",
+                                     i)["template"] == "T1")
+    start = time.monotonic()
+    with pytest.raises(GenerationError, match="resampling cap"):
+        generate_latent("math_atomic", "construction", t1_index, profile)
+    assert time.monotonic() - start < 5.0
+
+
+def test_congruent_sampler_matches_enumeration():
+    rng = np.random.default_rng(0)
+    for lo, hi, residue, modulus in [(1, 20, 3, 6), (5, 5, 5, 1),
+                                     (1, 100, 0, 7), (10, 30, 2, 5)]:
+        expected = [c for c in range(lo, hi + 1) if c % modulus == residue
+                    % modulus]
+        drawn = {program._sample_congruent(rng, (lo, hi), residue, modulus)
+                 for _ in range(200)}
+        assert drawn <= set(expected) and drawn  # never outside the support
+    with pytest.raises(program.SampleRejected):
+        program._sample_congruent(rng, (1, 5), 0, 100)  # empty class
 
 
 def test_construction_inviable_profile_fails_cleanly():

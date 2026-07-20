@@ -25,7 +25,10 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
-from .types import CELL_NODES, ENDPOINT_IDS
+from .types import (
+    CELL_NODES, ENDPOINT_IDS, parse_latent_program_id,
+    parse_render_instance_id,
+)
 
 # Raw, unvalidated input shape.
 RawSurface = Mapping[Any, Mapping[str, Mapping[str, float]]]
@@ -59,6 +62,76 @@ def enumerate_two_call_workflows() -> list[tuple[str, tuple[int, int]]]:
             for pair in itertools.product(ENDPOINT_IDS, repeat=2)]
 
 
+_SURFACE_KINDS = ("assignment", "one_call", "two_call")
+
+
+def _candidate_to_json(kind: str, candidate: Any) -> Any:
+    if kind == "assignment":
+        return list(candidate)
+    if kind == "one_call":
+        return candidate
+    return [candidate[0], list(candidate[1])]
+
+
+def _candidate_from_json(kind: str, value: Any) -> Any:
+    if kind == "assignment":
+        return tuple(value)
+    if kind == "one_call":
+        return value
+    return (value[0], tuple(value[1]))
+
+# The 18-workflow contraction family is defined only for the fork/join
+# cell (D12); there is no two-call shortcut for a one- or two-step cell.
+TWO_CALL_CELLS = ("fork_join",)
+
+
+def _expected_candidates(kind: str, cell_id: str) -> list[Any]:
+    if kind == "assignment":
+        return enumerate_assignments(len(CELL_NODES[cell_id]))
+    if kind == "one_call":
+        return list(ENDPOINT_IDS)
+    if kind == "two_call":
+        if cell_id not in TWO_CALL_CELLS:
+            raise PayoffSurfaceError(
+                f"the two-call shortcut family is not defined for {cell_id}")
+        return enumerate_two_call_workflows()
+    raise PayoffSurfaceError(f"unknown surface kind {kind!r}")
+
+
+def _check_cluster_belongs(cluster_id: Any, cell_id: str) -> None:
+    """Cluster ids are `latent_program_id`s, which name their own cell —
+    so a surface can be bound to its cell by identity rather than by node
+    arity alone (the three atomic cells all have one node)."""
+    try:
+        latent = parse_latent_program_id(cluster_id)
+    except ValueError as exc:
+        raise PayoffSurfaceError(
+            f"cluster id {cluster_id!r} is not a latent_program_id: "
+            f"{exc}") from exc
+    if latent.cell_id != cell_id:
+        raise PayoffSurfaceError(
+            f"cluster {cluster_id!r} belongs to cell {latent.cell_id!r}, "
+            f"not {cell_id!r}")
+
+
+def _check_observation_belongs(observation_id: Any, cluster_id: str,
+                               cell_id: str) -> None:
+    try:
+        render_id = parse_render_instance_id(observation_id)
+    except ValueError as exc:
+        raise PayoffSurfaceError(
+            f"observation id {observation_id!r} is not a "
+            f"render_instance_id: {exc}") from exc
+    if render_id.latent.cell_id != cell_id:
+        raise PayoffSurfaceError(
+            f"observation {observation_id!r} belongs to cell "
+            f"{render_id.latent.cell_id!r}, not {cell_id!r}")
+    if render_id.latent_program_id != cluster_id:
+        raise PayoffSurfaceError(
+            f"observation {observation_id!r} is filed under cluster "
+            f"{cluster_id!r} but names {render_id.latent_program_id!r}")
+
+
 @dataclass(frozen=True)
 class ValidatedSurface:
     """A complete, observation-paired payoff surface over a candidate set.
@@ -66,6 +139,11 @@ class ValidatedSurface:
     `candidates` is the enumerated candidate list **in frozen tie order**,
     so argmax ties resolve by iteration order without re-deriving the rule
     at each call site.
+
+    Build these with `validate_*_surface`. The invariants are re-checked in
+    `__post_init__` so that a directly constructed instance — including one
+    revived by a deserializer — cannot smuggle an unvalidated surface past
+    the selectors.
     """
 
     kind: str                                   # assignment | one_call | two_call
@@ -74,6 +152,49 @@ class ValidatedSurface:
     clusters: tuple[str, ...]
     observations: Mapping[str, tuple[str, ...]]  # cluster -> observation ids
     data: Mapping[Any, Mapping[str, Mapping[str, float]]]
+
+    def __post_init__(self) -> None:
+        if self.kind not in _SURFACE_KINDS:
+            raise PayoffSurfaceError(f"unknown surface kind {self.kind!r}")
+        if self.cell_id not in CELL_NODES:
+            raise PayoffSurfaceError(f"unknown cell_id {self.cell_id!r}")
+        expected = _expected_candidates(self.kind, self.cell_id)
+        if tuple(self.candidates) != tuple(expected):
+            raise PayoffSurfaceError(
+                f"{self.kind} surface candidates are not the frozen "
+                f"enumeration for {self.cell_id}")
+        if set(self.data) != set(expected):
+            raise PayoffSurfaceError("surface data does not cover every "
+                                     "candidate exactly once")
+        if not self.clusters:
+            raise PayoffSurfaceError("surface has no clusters")
+        if set(self.observations) != set(self.clusters):
+            raise PayoffSurfaceError("observation index does not match "
+                                     "the cluster list")
+        for cluster in self.clusters:
+            _check_cluster_belongs(cluster, self.cell_id)
+            if not self.observations[cluster]:
+                raise PayoffSurfaceError(f"cluster {cluster}: no observations")
+            for observation_id in self.observations[cluster]:
+                _check_observation_belongs(observation_id, cluster,
+                                           self.cell_id)
+        for candidate in expected:
+            outcomes = self.data[candidate]
+            if set(outcomes) != set(self.clusters):
+                raise PayoffSurfaceError(
+                    f"{candidate!r}: cluster support differs from the "
+                    f"surface index")
+            for cluster in self.clusters:
+                values = outcomes[cluster]
+                if tuple(sorted(values)) != tuple(self.observations[cluster]):
+                    raise PayoffSurfaceError(
+                        f"{candidate!r}/{cluster}: observation ids differ "
+                        f"from the surface index")
+                for observation_id, value in values.items():
+                    if isinstance(value, bool) or value not in (0, 1):
+                        raise PayoffSurfaceError(
+                            f"{candidate!r}/{cluster}/{observation_id}: "
+                            f"terminal correctness must be 0 or 1")
 
     @property
     def num_nodes(self) -> int:
@@ -92,6 +213,33 @@ class ValidatedSurface:
         return sum(
             sum(outcomes[cluster].values()) / len(outcomes[cluster])
             for cluster in self.clusters) / len(self.clusters)
+
+    def __deepcopy__(self, memo: dict) -> "ValidatedSurface":
+        return self  # immutable; the mapping proxies are unpicklable
+
+    def to_json(self) -> dict[str, Any]:
+        """Explicit persistence form (Stage 1 is resumable). Candidates are
+        not JSON object keys — they are tuples — so the surface serializes
+        as a list of (candidate, outcomes) entries."""
+        return {
+            "kind": self.kind,
+            "cell_id": self.cell_id,
+            "entries": [
+                {"candidate": _candidate_to_json(self.kind, candidate),
+                 "outcomes": {cluster: dict(self.data[candidate][cluster])
+                              for cluster in self.clusters}}
+                for candidate in self.candidates],
+        }
+
+    @classmethod
+    def from_json(cls, obj: Mapping[str, Any]) -> "ValidatedSurface":
+        kind, cell_id = obj["kind"], obj["cell_id"]
+        raw = {_candidate_from_json(kind, entry["candidate"]):
+               {cluster: {o: int(v) for o, v in values.items()}
+                for cluster, values in entry["outcomes"].items()}
+               for entry in obj["entries"]}
+        return _validate(raw, kind, cell_id,
+                         _expected_candidates(kind, cell_id))
 
     def full_sample_accuracy(self, candidate: Any) -> float:
         """Unweighted mean over every observation — reported as a
@@ -118,6 +266,10 @@ def _validate(raw: RawSurface, kind: str, cell_id: str,
             f"{kind} surface is not the full enumeration of "
             f"{len(expected)} candidates (missing {missing}, unexpected "
             f"{unexpected})")
+    # Key equality alone is not identity: `False` and `0.0` hash and
+    # compare equal to `0`, so an endpoint key of the wrong type would
+    # satisfy the enumeration check above.
+    _check_candidate_types(kind, raw)
 
     reference_clusters: tuple[str, ...] | None = None
     reference_obs: dict[str, tuple[str, ...]] | None = None
@@ -127,12 +279,15 @@ def _validate(raw: RawSurface, kind: str, cell_id: str,
         outcomes = raw[candidate]
         if not isinstance(outcomes, Mapping) or not outcomes:
             raise PayoffSurfaceError(f"{candidate!r}: no cluster observations")
+        # Type-check keys before sorting: heterogeneous keys would raise a
+        # raw TypeError from sorted() instead of PayoffSurfaceError.
+        for cluster in outcomes:
+            if not isinstance(cluster, str):
+                raise PayoffSurfaceError(f"cluster id {cluster!r} is not a str")
         clusters = tuple(sorted(outcomes))
         per_cluster: dict[str, Mapping[str, float]] = {}
         obs_ids: dict[str, tuple[str, ...]] = {}
         for cluster in clusters:
-            if not isinstance(cluster, str):
-                raise PayoffSurfaceError(f"cluster id {cluster!r} is not a str")
             values = outcomes[cluster]
             if not isinstance(values, Mapping) or not values:
                 raise PayoffSurfaceError(
@@ -177,6 +332,24 @@ def _validate(raw: RawSurface, kind: str, cell_id: str,
         data=MappingProxyType(frozen))
 
 
+def _check_candidate_types(kind: str, raw: Mapping) -> None:
+    for candidate in raw:
+        if kind == "one_call":
+            if type(candidate) is not int:
+                raise PayoffSurfaceError(
+                    f"one-call candidate {candidate!r} must be an int "
+                    f"endpoint id (bools and floats alias integer keys)")
+        elif kind == "two_call":
+            if (not isinstance(candidate, tuple) or len(candidate) != 2
+                    or not isinstance(candidate[0], str)
+                    or not isinstance(candidate[1], tuple)
+                    or len(candidate[1]) != 2
+                    or any(type(e) is not int for e in candidate[1])):
+                raise PayoffSurfaceError(
+                    f"two-call candidate {candidate!r} must be "
+                    f"(orientation, (endpoint, endpoint))")
+
+
 def _check_assignment(assignment: Any, num_nodes: int) -> None:
     if not isinstance(assignment, tuple):
         raise PayoffSurfaceError(
@@ -210,14 +383,93 @@ def validate_payoff_surface(raw: RawSurface, cell_id: str) -> ValidatedSurface:
 def validate_one_call_surface(raw: RawSurface, cell_id: str
                               ) -> ValidatedSurface:
     """Best one-call whole-task control (§1.11 B5): one candidate per
-    endpoint, on the same observation support as the assignment surface."""
+    endpoint. Pair it with its assignment surface through a
+    `CalibrationBundle` — that is what enforces the shared population."""
+    if cell_id not in CELL_NODES:
+        raise PayoffSurfaceError(f"unknown cell_id {cell_id!r}")
     return _validate(raw, "one_call", cell_id, list(ENDPOINT_IDS))
 
 
 def validate_two_call_surface(raw: RawSurface, cell_id: str
                               ) -> ValidatedSurface:
-    """The 18-workflow contraction family (D12)."""
-    return _validate(raw, "two_call", cell_id, enumerate_two_call_workflows())
+    """The 18-workflow contraction family (D12) — fork/join only."""
+    if cell_id not in CELL_NODES:
+        raise PayoffSurfaceError(f"unknown cell_id {cell_id!r}")
+    return _validate(raw, "two_call", cell_id,
+                     _expected_candidates("two_call", cell_id))
+
+
+@dataclass(frozen=True)
+class CalibrationBundle:
+    """Assignment surface plus its controls, proven to share one population.
+
+    Stage-1 gates compare the deployable oracle against the best one-call
+    and two-call controls. Those comparisons are only meaningful if every
+    surface was scored on the *same* clusters and renderings — validating
+    each surface in isolation cannot establish that, so the comparison is
+    only ever taken from a bundle.
+    """
+
+    assignment: ValidatedSurface
+    one_call: ValidatedSurface | None = None
+    two_call: ValidatedSurface | None = None
+
+    def __post_init__(self) -> None:
+        _require_surface(self.assignment, "assignment")
+        for name, surface, kind in (("one_call", self.one_call, "one_call"),
+                                    ("two_call", self.two_call, "two_call")):
+            if surface is None:
+                continue
+            _require_surface(surface, kind)
+            if surface.cell_id != self.assignment.cell_id:
+                raise PayoffSurfaceError(
+                    f"{name} surface is for cell {surface.cell_id!r}, the "
+                    f"assignment surface for {self.assignment.cell_id!r}")
+            if surface.clusters != self.assignment.clusters:
+                raise PayoffSurfaceError(
+                    f"{name} surface uses different clusters from the "
+                    f"assignment surface (gates would compare populations)")
+            for cluster in self.assignment.clusters:
+                if surface.observations[cluster] != \
+                        self.assignment.observations[cluster]:
+                    raise PayoffSurfaceError(
+                        f"{name} surface/{cluster}: different observation "
+                        f"ids from the assignment surface")
+
+    @property
+    def cell_id(self) -> str:
+        return self.assignment.cell_id
+
+    def deployable(self) -> tuple[int, ...]:
+        return select_deployable(self.assignment)
+
+    def best_one_call(self) -> int:
+        if self.one_call is None:
+            raise PayoffSurfaceError("bundle has no one-call surface")
+        return select_best_one_call(self.one_call)
+
+    def best_two_call(self) -> tuple[str, tuple[int, int]]:
+        if self.two_call is None:
+            raise PayoffSurfaceError("bundle has no two-call surface")
+        return select_best_two_call(self.two_call)
+
+    def deployable_vs_one_call(self) -> float:
+        """Oracle advantage over the best single whole-task call, on the
+        shared population (the Stage-1A ≥ +20 point gate)."""
+        return (self.assignment.accuracy(self.deployable())
+                - self.one_call.accuracy(self.best_one_call())
+                if self.one_call is not None
+                else _no_control("one-call"))
+
+    def deployable_vs_two_call(self) -> float:
+        return (self.assignment.accuracy(self.deployable())
+                - self.two_call.accuracy(self.best_two_call())
+                if self.two_call is not None
+                else _no_control("two-call"))
+
+
+def _no_control(name: str) -> float:
+    raise PayoffSurfaceError(f"bundle has no {name} surface")
 
 
 def _require_surface(surface: Any, kind: str) -> ValidatedSurface:

@@ -30,7 +30,9 @@ from .types import (
     CELL_NODES, ENTITY_POOL, FIELD_POOL, MAX_ABS_VALUE, NAMESPACES,
     OP_SCHEMAS, OPERAND_NAME_MATCHED_OPS, PUBLIC_NUMERIC_PARAMS, RENDERER_IDS,
     VISIBILITY_CONDITIONS, InfrastructureError, IntegerList, IntegerRecord,
-    PublicParams, Resource, public_projection, resource_from_json,
+    PublicParams, Resource, format_latent_program_id,
+    format_render_instance_id, is_handle, public_projection,
+    resource_from_json,
 )
 
 SEP = "\x1f"  # §1.13 separator ␟
@@ -100,11 +102,13 @@ def substream(material: str, label: str) -> np.random.Generator:
 
 def latent_program_id(cell_id: str, namespace: str, latent_index: int,
                       material: str) -> str:
-    return f"{cell_id}:{namespace}:{latent_index:05d}:{hex8(material)}"
+    # Formatting lives with parsing in types.py so the two cannot drift.
+    return format_latent_program_id(cell_id, namespace, latent_index,
+                                    hex8(material))
 
 
 def render_instance_id(lp_id: str, renderer_id: str, visibility: str) -> str:
-    return f"{lp_id}:{renderer_id}:{visibility}"
+    return format_render_instance_id(lp_id, renderer_id, visibility)
 
 
 def intervention_seed(lp_id: str, u: str, v: str) -> int:
@@ -288,6 +292,13 @@ def validate_reference_program(program: dict[str, Any],
                                manifest: list[str],
                                registry: dict[str, Resource]) -> None:
     """Every §1.3 IR validity rule; raises LoadError on violation."""
+    # Same boundary discipline as InstanceRegistry: cardinality and handle
+    # shape before the set comparison, which a repeated handle would pass.
+    if len(set(manifest)) != len(manifest):
+        raise LoadError(f"duplicate handles in manifest {manifest}")
+    for handle in manifest:
+        if not is_handle(handle):
+            raise LoadError(f"malformed handle {handle!r} in manifest")
     if set(manifest) != set(registry):
         raise LoadError("manifest keys != registry keys")
     nodes = program["nodes"]
@@ -626,6 +637,24 @@ def _propose_lookup_atomic(rngs, cell_profile, assignment):
     return params, {h: rec}, program
 
 
+def _sample_congruent(rng: np.random.Generator, value_band: tuple[int, int],
+                      residue: int, modulus: int) -> int:
+    """Uniform draw from {c ∈ value_band : c ≡ residue (mod modulus)}.
+
+    Solved arithmetically rather than by materializing the feasible set:
+    the band can legitimately span a million values while the congruence
+    admits few or none, and the enumeration would then be repeated for
+    every one of the resampling attempts.
+    """
+    lo, hi = value_band
+    # First value ≥ lo that is congruent to `residue` modulo `modulus`.
+    first = lo + ((residue - lo) % modulus)
+    if first > hi:
+        raise SampleRejected("t1_constructive_empty")
+    count = (hi - first) // modulus + 1
+    return first + modulus * int(rng.integers(0, count))
+
+
 def _propose_math_atomic(rngs, cell_profile, assignment):
     template = assignment["template"]
     a = _uniform(rngs["values"], band(cell_profile, "a_band"))
@@ -633,11 +662,7 @@ def _propose_math_atomic(rngs, cell_profile, assignment):
     c_band = band(cell_profile, "c_band")
     if template == "T1":
         d = _uniform(rngs["values"], band(cell_profile, "t1", "d_band"))
-        feasible = [c for c in range(c_band[0], c_band[1] + 1)
-                    if (a * b - c) % d == 0]  # c ≡ a·b (mod d), constructive
-        if not feasible:
-            raise SampleRejected("t1_constructive_empty")
-        c = feasible[int(rngs["values"].integers(0, len(feasible)))]
+        c = _sample_congruent(rngs["values"], c_band, (a * b) % d, d)
         names, op, extra = ("a", "b", "c", "d"), "ratio", d
     elif template == "T2":
         m = _uniform(rngs["values"], band(cell_profile, "t2", "m_band"))
@@ -948,18 +973,17 @@ def workflow_steps(latent: dict[str, Any]) -> list[dict[str, Any]]:
             for idx, node_id in enumerate(positions)]
 
 
-def observation_for(latent: dict[str, Any], instance: dict[str, Any],
-                    registry: Any) -> str:
+def observation_for(latent: dict[str, Any],
+                    instance: dict[str, Any]) -> str:
     """Canonical Conductor observation for a rendered instance (§1.5).
 
-    Disclosure follows `instance["visibility_condition"]` alone; the steps
+    Disclosure follows the instance's own identity and registry; the steps
     come from the reference topology in `positions` order.
     """
     if instance["latent_program_id"] != latent["latent_program_id"]:
         raise InfrastructureError(
             "instance and latent describe different latent programs")
-    return render.build_observation(instance, registry,
-                                    workflow_steps(latent))
+    return render.build_observation(instance, workflow_steps(latent))
 
 
 def render_instance(latent: dict[str, Any], renderer_id: str,

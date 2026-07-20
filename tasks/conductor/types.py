@@ -408,6 +408,47 @@ def public_param_keys(cell_id: str, params: Mapping[str, Any]
     return PUBLIC_PARAM_KEYS[cell_id]
 
 
+def _pv_handle(cell_id: str, key: str, value: Any) -> None:
+    if not isinstance(value, str) or not is_handle(value):
+        raise InfrastructureError(
+            f"{cell_id}.{key}: expected a resource handle, got {value!r}")
+
+
+def _pv_name(cell_id: str, key: str, value: Any) -> None:
+    if not isinstance(value, str) or not _NAME_RE.fullmatch(value):
+        raise InfrastructureError(
+            f"{cell_id}.{key}: expected an entity/field name, got {value!r}")
+
+
+def _pv_enum(*allowed: str):
+    def check(cell_id: str, key: str, value: Any) -> None:
+        if value not in allowed:
+            raise InfrastructureError(
+                f"{cell_id}.{key}: expected one of {allowed}, got {value!r}")
+    return check
+
+
+def _pv_numeric(cell_id: str, key: str, value: Any) -> None:
+    # `type(...) is int` rather than isinstance: bool subclasses int, and
+    # `p=True` would render as "True" in a prompt.
+    if type(value) is not int or not 0 <= value <= 999_999_999_999:
+        raise InfrastructureError(
+            f"{cell_id}.{key}: expected a nonnegative 12-digit-bounded "
+            f"integer, got {value!r}")
+
+
+_PUBLIC_VALUE_VALIDATORS = {
+    "H": _pv_handle, "H1": _pv_handle, "H2": _pv_handle,
+    "key": _pv_name, "field": _pv_name,
+    "template": _pv_enum("T1", "T2", "T3"),
+    "shape": _pv_enum("count", "select"),
+    "sign": _pv_enum("+", "-"),
+    "branch_order": _pv_enum("lookup_first", "code_first"),
+    "p": _pv_numeric, "q": _pv_numeric, "t": _pv_numeric,
+    "k": _pv_numeric, "i": _pv_numeric,
+}
+
+
 class PublicParams(Mapping):
     """A genuinely immutable projection holding *only* a cell's public
     parameters.
@@ -424,11 +465,21 @@ class PublicParams(Mapping):
     __slots__ = ("_cell_id", "_values")
 
     def __init__(self, cell_id: str, values: Mapping[str, Any]) -> None:
+        # One-shot: re-running __init__ on a live instance would swap the
+        # backing mapping despite the immutability guarantee.
+        if hasattr(self, "_values"):
+            raise InfrastructureError("PublicParams is already initialised")
         expected = set(public_param_keys(cell_id, values))
         if set(values) != expected:
             raise InfrastructureError(
                 f"{cell_id}: public projection keys {sorted(values)} != "
                 f"{sorted(expected)}")
+        # Values are type-checked, not merely present: an unvalidated
+        # mapping could carry `p=True` (a bool that renders as "True") or a
+        # mutable list whose later mutation would change rendered bytes
+        # while the projection's identity stayed the same.
+        for key, value in values.items():
+            _PUBLIC_VALUE_VALIDATORS[key](cell_id, key, value)
         object.__setattr__(self, "_cell_id", cell_id)
         object.__setattr__(self, "_values", MappingProxyType(dict(values)))
 
@@ -456,6 +507,23 @@ class PublicParams(Mapping):
 
     def __repr__(self) -> str:
         return f"PublicParams({self._cell_id}, {dict(self._values)!r})"
+
+    def __deepcopy__(self, memo: dict) -> "PublicParams":
+        # Genuinely immutable, and the backing proxy is unpicklable, so a
+        # deep copy is the object itself.
+        return self
+
+    def __reduce__(self):
+        return (PublicParams, (self._cell_id, dict(self._values)))
+
+    def to_json(self) -> dict[str, Any]:
+        """Explicit persistence form — Stage 1 is resumable, so these
+        objects are round-tripped rather than generically serialized."""
+        return {"cell_id": self._cell_id, "values": dict(self._values)}
+
+    @classmethod
+    def from_json(cls, obj: Mapping[str, Any]) -> "PublicParams":
+        return cls(obj["cell_id"], obj["values"])
 
     def numeric_features(self) -> dict[str, int]:
         """The §1.16 public *semantic* parameters, derived here rather than
@@ -506,3 +574,76 @@ NAMESPACES = ("construction", "qualification", "train", "dev", "test")
 RENDERER_IDS = ("resource_first", "goal_first", "bound_var")
 
 VISIBILITY_CONDITIONS = ("private", "visible")
+
+
+# --- §1.13 identity grammar (formatting and parsing in one place) ----------
+#
+# latent_program_id  = "{cell_id}:{namespace}:{index:05d}:{hex8}"
+# render_instance_id = latent_program_id + ":{renderer_id}:{visibility}"
+#
+# Parsing matters as much as formatting: an id carries the cell, split and
+# visibility of the thing it names, so boundaries can check that a payoff
+# surface or an observation really belongs to the population it claims.
+
+_HEX8_RE = re.compile(r"[0-9a-f]{8}\Z")
+_INDEX_RE = re.compile(r"[0-9]{5}\Z")
+
+
+@dataclass(frozen=True)
+class LatentId:
+    cell_id: str
+    namespace: str
+    latent_index: int
+    hex8: str
+
+
+@dataclass(frozen=True)
+class RenderId:
+    latent: LatentId
+    latent_program_id: str
+    renderer_id: str
+    visibility_condition: str
+
+
+def format_latent_program_id(cell_id: str, namespace: str,
+                             latent_index: int, hex8: str) -> str:
+    return f"{cell_id}:{namespace}:{latent_index:05d}:{hex8}"
+
+
+def format_render_instance_id(latent_program_id: str, renderer_id: str,
+                              visibility_condition: str) -> str:
+    return f"{latent_program_id}:{renderer_id}:{visibility_condition}"
+
+
+def parse_latent_program_id(value: Any) -> LatentId:
+    if not isinstance(value, str):
+        raise ValueError(f"latent_program_id must be a str, got {value!r}")
+    parts = value.split(":")
+    if len(parts) != 4:
+        raise ValueError(f"malformed latent_program_id {value!r}")
+    cell_id, namespace, index, hex8 = parts
+    if cell_id not in CELL_IDS:
+        raise ValueError(f"unknown cell_id in {value!r}")
+    if namespace not in NAMESPACES:
+        raise ValueError(f"unknown namespace in {value!r}")
+    if not _INDEX_RE.fullmatch(index):
+        raise ValueError(f"malformed latent index in {value!r}")
+    if not _HEX8_RE.fullmatch(hex8):
+        raise ValueError(f"malformed hex8 in {value!r}")
+    return LatentId(cell_id, namespace, int(index), hex8)
+
+
+def parse_render_instance_id(value: Any) -> RenderId:
+    if not isinstance(value, str):
+        raise ValueError(f"render_instance_id must be a str, got {value!r}")
+    parts = value.split(":")
+    if len(parts) != 6:
+        raise ValueError(f"malformed render_instance_id {value!r}")
+    latent_program_id = ":".join(parts[:4])
+    latent = parse_latent_program_id(latent_program_id)
+    renderer_id, visibility = parts[4], parts[5]
+    if renderer_id not in RENDERER_IDS:
+        raise ValueError(f"unknown renderer_id in {value!r}")
+    if visibility not in VISIBILITY_CONDITIONS:
+        raise ValueError(f"unknown visibility_condition in {value!r}")
+    return RenderId(latent, latent_program_id, renderer_id, visibility)

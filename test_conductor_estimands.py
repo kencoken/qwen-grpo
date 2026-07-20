@@ -2,6 +2,9 @@
 population identity, B1 reference controls, and the remaining small
 contract surfaces (§1.9, §1.11, §1.16, §4)."""
 
+import copy
+import dataclasses
+import json
 import warnings
 
 import pytest
@@ -211,6 +214,32 @@ def test_sensitivity_rejects_replayed_rows():
         sensitivity_scores(duplicated)
 
 
+@pytest.mark.parametrize("field,value,why", [
+    ("correct", 2, "correct=2 would produce a headline above 1.0"),
+    ("correct", 1, "ints must not stand in for bools"),
+    ("answer_in_subtask_detected", 0, "ints must not stand in for bools"),
+    ("public_numeric_collision", 1, "ints must not stand in for bools"),
+    ("visibility_condition", "Private", "silently excluded, not rejected"),
+    ("visibility_condition", "", "empty enum value"),
+    ("cluster_id", "", "empty identifier"),
+    ("observation_id", "", "empty identifier"),
+    ("cluster_id", 7, "non-string identifier"),
+])
+def test_sensitivity_rejects_malformed_persisted_rows(field, value, why):
+    """Filtering drops what it does not recognise, so a malformed row must
+    fail here rather than quietly entering or leaving the population."""
+    rows = [_workflow("c1", "o1"), _workflow("c2", "o2", correct=False)]
+    bad = dataclasses.replace(rows[0], **{field: value})
+    with pytest.raises(InfrastructureError):
+        sensitivity_scores([bad] + rows[1:])
+
+
+def test_sensitivity_binds_each_observation_to_one_cluster():
+    rows = [_workflow("c1", "shared"), _workflow("c2", "shared")]
+    with pytest.raises(InfrastructureError, match="more than one cluster"):
+        sensitivity_scores(rows)
+
+
 def test_sensitivity_rejects_cluster_inconsistent_collision_metadata():
     """Collision status is latent-level: renderings of one cluster cannot
     disagree, or part of a no-collision cluster enters the headline."""
@@ -272,8 +301,8 @@ def test_echo_family_only_where_the_parameter_exists():
                      if baselines.observable_subtype("code_atomic", r.params)
                      == "count")
     # `k` does not exist in the count subtype: excluded, never scored.
-    assert baselines.echo_predict("k", count_row.public_numeric_values) is None
-    assert baselines.echo_predict("t", count_row.public_numeric_values) == \
+    assert baselines.echo_predict("k", count_row.params) is None
+    assert baselines.echo_predict("t", count_row.params) == \
         count_row.public_numeric_values["t"]
 
 
@@ -341,7 +370,7 @@ def test_observation_contract_and_visibility_coupling():
     steps = program.workflow_steps(latent)
     registry = InstanceRegistry(private["public_manifest"],
                                 private["private_registry"])
-    observation = program.observation_for(latent, private, registry)
+    observation = program.observation_for(latent, private)
     assert observation.startswith("Problem:\n")
     assert f"Resources available: {', '.join(private['public_manifest'])}" \
         in observation
@@ -353,51 +382,65 @@ def test_observation_contract_and_visibility_coupling():
         assert (f"{position}. (resource: {resource}; previous results: "
                 f"{previous}) {step['subtask']}") in observation
 
-    # Disclosure is derived from visibility_condition alone: passing the
-    # registry to a private instance cannot leak payloads into it.
+    # Disclosure follows the instance's own identity: a private instance
+    # cannot carry payloads no matter what the caller has to hand.
     assert "Resources:\n" not in observation
     for payload in registry.union_payload_texts():
         assert payload not in observation
 
     visible = program.render_instance(latent, "resource_first", "visible")
-    visible_observation = program.observation_for(latent, visible, registry)
+    visible_observation = program.observation_for(latent, visible)
     assert "Resources:\n" in visible_observation
     for payload in registry.union_payload_texts():
         assert payload in visible_observation
 
 
-def test_visible_instance_cannot_omit_its_payloads():
+def test_mutated_visibility_with_a_stale_id_is_rejected():
+    """Flipping visibility_condition while the id still ends in `:private`
+    would disclose payloads into what every later stage counts as a
+    private observation."""
+    latent = program.generate_latent("lookup_math", "construction", 0,
+                                     PROF).latent
+    private = program.render_instance(latent, "resource_first", "private")
+    mutated = dict(private, visibility_condition="visible")
+    with pytest.raises(InfrastructureError, match="render_instance_id"):
+        program.observation_for(latent, mutated)
+    for field, value in (("renderer_id", "goal_first"),
+                         ("cell_id", "math_atomic"),
+                         ("split_id", "train"),
+                         ("latent_program_id", "lookup_math:train:00000:"
+                                               "deadbeef")):
+        with pytest.raises(InfrastructureError, match="render_instance_id"):
+            render.build_observation(dict(private, **{field: value}),
+                                     program.workflow_steps(latent))
+
+
+def test_observation_payloads_come_from_the_instances_own_registry():
+    """Handles can coincide across instances while the payloads differ, so
+    a same-manifest registry must not be able to supply the disclosure."""
     latent = program.generate_latent("lookup_math", "construction", 0,
                                      PROF).latent
     visible = program.render_instance(latent, "resource_first", "visible")
-    with pytest.raises(InfrastructureError):
-        program.observation_for(latent, visible, None)
+    handle = visible["public_manifest"][0]
+    foreign = copy.deepcopy(visible["private_registry"])
+    foreign[handle]["payload"][0][1][0][1] = 424242  # altered value
+    observation = program.observation_for(latent, visible)
+    assert "424242" not in observation
+    own = InstanceRegistry(visible["public_manifest"],
+                           visible["private_registry"])
+    for payload in own.union_payload_texts():
+        assert payload in observation
 
 
-def test_observation_rejects_mismatched_instance_and_registry():
-    latent = program.generate_latent("lookup_math", "construction", 0,
-                                     PROF).latent
-    other = program.generate_latent("lookup_math", "construction", 1,
-                                    PROF).latent
-    visible = program.render_instance(latent, "resource_first", "visible")
-    other_instance = program.render_instance(other, "resource_first",
-                                             "visible")
-    other_registry = InstanceRegistry(other_instance["public_manifest"],
-                                      other_instance["private_registry"])
-    with pytest.raises(InfrastructureError):
-        program.observation_for(latent, visible, other_registry)
-    with pytest.raises(InfrastructureError):  # instance/latent mismatch
-        program.observation_for(other, visible, other_registry)
-
-
-def test_observation_requires_a_valid_visibility_condition():
+def test_observation_requires_a_wellformed_identity():
     latent = program.generate_latent("lookup_math", "construction", 0,
                                      PROF).latent
     instance = program.render_instance(latent, "resource_first", "private")
-    tampered = dict(instance, visibility_condition="bogus")
-    with pytest.raises(InfrastructureError):
-        render.build_observation(tampered, None,
-                                 program.workflow_steps(latent))
+    for bad in ("bogus", "", "a:b:c:d:e:f",
+                instance["render_instance_id"] + ":extra"):
+        with pytest.raises(InfrastructureError):
+            render.build_observation(dict(instance, render_instance_id=bad),
+                                     program.workflow_steps(latent))
 
 
 def test_b4_local_node_request_shape():
@@ -425,6 +468,53 @@ def test_b4_local_node_request_shape():
         registry.payload_text(steps[0]["resource"]), None)
     assert b4_first.replace(render.DIRECT_FINAL_LINE, "") == \
         worker.replace(render.ARTIFACT_FINAL_LINE, "")
+
+
+# --- serialization contract (Stage 1 is resumable) --------------------------
+
+def test_immutable_types_survive_deepcopy_and_round_trip_json():
+    """Mapping proxies break generic deepcopy/asdict, so these carry an
+    explicit persistence form."""
+    latent = program.generate_latent("lookup_math", "construction", 0,
+                                     PROF).latent
+    public = latent["public_params"]
+    assert copy.deepcopy(public) is public          # immutable
+    revived = type(public).from_json(public.to_json())
+    assert dict(revived) == dict(public)
+    assert revived.cell_id == public.cell_id
+
+    cluster = latent["latent_program_id"]
+    raw = {a: {cluster: {f"{cluster}:resource_first:private": 1}}
+           for a in oracle.enumerate_assignments(2)}
+    surface = oracle.validate_payoff_surface(raw, "lookup_math")
+    assert copy.deepcopy(surface) is surface
+    revived_surface = oracle.ValidatedSurface.from_json(surface.to_json())
+    assert revived_surface.candidates == surface.candidates
+    assert revived_surface.clusters == surface.clusters
+    assert revived_surface.accuracy((0, 0)) == surface.accuracy((0, 0))
+    json.dumps(surface.to_json())  # actually JSON-encodable
+
+    report = intervention_report([outcome("c1", "o1")])
+    assert copy.deepcopy(report) is report
+    json.dumps(report.to_json())
+
+
+def test_surface_json_round_trip_for_control_kinds():
+    clusters = [program.generate_latent("fork_join", "construction", i,
+                                        PROF).latent["latent_program_id"]
+                for i in range(2)]
+    def surface_for(candidates):
+        return {c: {cl: {f"{cl}:resource_first:private": 1}
+                    for cl in clusters} for c in candidates}
+    one_call = oracle.validate_one_call_surface(
+        surface_for(oracle.ENDPOINT_IDS), "fork_join")
+    two_call = oracle.validate_two_call_surface(
+        surface_for(oracle.enumerate_two_call_workflows()), "fork_join")
+    for surface in (one_call, two_call):
+        revived = oracle.ValidatedSurface.from_json(
+            json.loads(json.dumps(surface.to_json())))
+        assert revived.candidates == surface.candidates
+        assert revived.kind == surface.kind
 
 
 @pytest.mark.parametrize("completion,expected", [

@@ -3,6 +3,7 @@ intervention positional mapping (both fork orders), pseudo-workers, B2,
 oracle/comparator toy surface, byte-stability, demos execute through the
 runtime (§1.5, §1.7–1.9, §1.11, §4)."""
 
+import copy
 import itertools
 import json
 from pathlib import Path
@@ -304,10 +305,28 @@ def test_b2_draws_typed_errors_never_payload_values():
 
 # --- §1.8 oracle/comparator on a hand-enumerated toy surface ----------------
 
+# Cluster and observation ids are real identities: a surface is bound to
+# its cell through them, which node arity alone cannot do (all three atomic
+# cells have one node).
+def cluster_ids(cell, count=2, namespace="construction"):
+    return [program.generate_latent(cell, namespace, i, PROF)
+            .latent["latent_program_id"] for i in range(count)]
+
+
+def observation_id(cluster, renderer="resource_first", visibility="private"):
+    return f"{cluster}:{renderer}:{visibility}"
+
+
+LM_C1, LM_C2 = cluster_ids("lookup_math")
+
+
 def _toy(pairs):
-    """Observation-keyed toy surface: cluster c1 has two renderings."""
-    return {assignment: {"c1": {"o1": a, "o2": b}, "c2": {"o3": c}}
-            for assignment, (a, b, c) in pairs.items()}
+    """Observation-keyed toy surface: cluster 1 has two renderings."""
+    return {assignment: {
+        LM_C1: {observation_id(LM_C1): a,
+                observation_id(LM_C1, "goal_first"): b},
+        LM_C2: {observation_id(LM_C2): c}}
+        for assignment, (a, b, c) in pairs.items()}
 
 
 TOY_RAW = _toy({
@@ -337,10 +356,19 @@ def test_oracle_toy_surface():
 def test_surface_is_observation_paired_not_merely_equal_counts():
     """Equal per-cluster counts must not admit different renderings: the
     pairing is checked by observation identity."""
-    raw = {a: {"c1": {"o1": 1, "o2": 1}, "c2": {"o3": 1}} for a in TOY_RAW}
-    raw[(1, 2)] = {"c1": {"o2": 1, "o3": 1}, "c2": {"o3": 1}}  # same counts
+    raw = copy.deepcopy(TOY_RAW)
+    raw[(1, 2)] = {
+        LM_C1: {observation_id(LM_C1): 1,
+                observation_id(LM_C1, "bound_var"): 1},   # same count
+        LM_C2: {observation_id(LM_C2): 1}}
     with pytest.raises(oracle.PayoffSurfaceError, match="observation ids"):
         oracle.validate_payoff_surface(raw, "lookup_math")
+
+
+def _atomic_surface(cell="lookup_atomic", value=1):
+    cluster = cluster_ids(cell, 1)[0]
+    return {a: {cluster: {observation_id(cluster): value}}
+            for a in oracle.enumerate_assignments(1)}
 
 
 @pytest.mark.parametrize("raw,cell,match", [
@@ -359,12 +387,48 @@ def test_surface_domain_errors_are_typed(raw, cell, match):
         oracle.validate_payoff_surface(raw, cell)
 
 
+def test_surface_is_bound_to_its_cell_by_identity_not_arity():
+    """The three atomic cells all have one node, so relabelling can only
+    be caught by the cell named in the cluster and observation ids."""
+    raw = _atomic_surface("lookup_atomic")
+    oracle.validate_payoff_surface(raw, "lookup_atomic")
+    for wrong in ("math_atomic", "code_atomic"):
+        with pytest.raises(oracle.PayoffSurfaceError, match="belongs to cell"):
+            oracle.validate_payoff_surface(raw, wrong)
+
+
+def test_surface_rejects_unparseable_or_misfiled_identities():
+    cluster = cluster_ids("lookup_atomic", 1)[0]
+    anonymous = {a: {"c1": {"o1": 1}} for a in oracle.enumerate_assignments(1)}
+    with pytest.raises(oracle.PayoffSurfaceError, match="latent_program_id"):
+        oracle.validate_payoff_surface(anonymous, "lookup_atomic")
+    other = cluster_ids("lookup_atomic", 2)[1]
+    misfiled = {a: {cluster: {observation_id(other): 1}}
+                for a in oracle.enumerate_assignments(1)}
+    with pytest.raises(oracle.PayoffSurfaceError, match="filed under"):
+        oracle.validate_payoff_surface(misfiled, "lookup_atomic")
+    mixed_keys = {a: {cluster: {observation_id(cluster): 1}, 7: {"o": 1}}
+                  for a in oracle.enumerate_assignments(1)}
+    with pytest.raises(oracle.PayoffSurfaceError, match="not a str"):
+        oracle.validate_payoff_surface(mixed_keys, "lookup_atomic")
+
+
 def test_surface_correctness_is_binary():
     """A 0.5 GRPO reward for a well-formed world failure must never be
     averaged into a terminal-accuracy surface."""
-    raw = {a: {"c1": {"o1": 0.5}} for a in oracle.enumerate_assignments(1)}
     with pytest.raises(oracle.PayoffSurfaceError, match="must be 0 or 1"):
-        oracle.validate_payoff_surface(raw, "lookup_atomic")
+        oracle.validate_payoff_surface(_atomic_surface(value=0.5),
+                                       "lookup_atomic")
+
+
+def test_forged_validated_surface_cannot_reach_selectors():
+    """The dataclass constructor re-checks its invariants, so a directly
+    constructed or deserialized surface is not an unchecked back door."""
+    with pytest.raises(oracle.PayoffSurfaceError):
+        oracle.ValidatedSurface(
+            kind="assignment", cell_id="lookup_atomic", candidates=((9,),),
+            clusters=("c1",), observations={"c1": ("o1",)},
+            data={(9,): {"c1": {"o1": 1}}})
 
 
 def test_selectors_require_a_validated_surface():
@@ -404,8 +468,12 @@ def test_signed_gap_paired_and_unclipped():
             {"c1": {"o1": 1}}, {"c1": {"o9": 1}})
 
 
+FJ_C1, FJ_C2 = cluster_ids("fork_join")
+
+
 def _candidate_surface(candidates, value_for):
-    return {c: {"c1": {"o1": value_for(c)}, "c2": {"o2": value_for(c)}}
+    return {c: {FJ_C1: {observation_id(FJ_C1): value_for(c)},
+                FJ_C2: {observation_id(FJ_C2): value_for(c)}}
             for c in candidates}
 
 
@@ -425,12 +493,79 @@ def test_two_call_family_and_tie_order():
 def test_control_surfaces_are_observation_paired_too():
     workflows = oracle.enumerate_two_call_workflows()
     raw = _candidate_surface(workflows, lambda c: 1)
-    raw[workflows[3]] = {"c1": {"oX": 1}, "c2": {"o2": 1}}
+    raw[workflows[3]] = {FJ_C1: {observation_id(FJ_C1, "goal_first"): 1},
+                         FJ_C2: {observation_id(FJ_C2): 1}}
     with pytest.raises(oracle.PayoffSurfaceError, match="observation ids"):
         oracle.validate_two_call_surface(raw, "fork_join")
-    partial = {0: {"c1": {"o1": 1}}, 1: {"c1": {"o1": 1}}}
+    partial = {0: {FJ_C1: {observation_id(FJ_C1): 1}},
+               1: {FJ_C1: {observation_id(FJ_C1): 1}}}
     with pytest.raises(oracle.PayoffSurfaceError, match="full enumeration"):
         oracle.validate_one_call_surface(partial, "fork_join")
+
+
+def test_control_candidate_types_are_exact():
+    """`False` and `0.0` hash equal to `0`, so key equality alone would
+    admit an endpoint id of the wrong type."""
+    for bad_key in (False, 0.0):
+        raw = _candidate_surface(oracle.ENDPOINT_IDS, lambda e: 1)
+        raw[bad_key] = raw.pop(0)
+        with pytest.raises(oracle.PayoffSurfaceError, match="must be an int"):
+            oracle.validate_one_call_surface(raw, "fork_join")
+
+
+def test_two_call_family_is_only_defined_for_fork_join():
+    raw = _candidate_surface(oracle.enumerate_two_call_workflows(),
+                             lambda c: 1)
+    with pytest.raises(oracle.PayoffSurfaceError, match="not defined"):
+        oracle.validate_two_call_surface(raw, "lookup_math")
+    for cell in ("bogus", ""):
+        with pytest.raises(oracle.PayoffSurfaceError, match="unknown cell_id"):
+            oracle.validate_one_call_surface(raw, cell)
+
+
+# --- §1.8 calibration bundle: controls share the assignment population -----
+
+def test_calibration_bundle_requires_one_shared_population():
+    assignment = oracle.validate_payoff_surface(
+        {a: {FJ_C1: {observation_id(FJ_C1): 1},
+             FJ_C2: {observation_id(FJ_C2): 0}}
+         for a in oracle.enumerate_assignments(3)}, "fork_join")
+    one_call = oracle.validate_one_call_surface(
+        _candidate_surface(oracle.ENDPOINT_IDS, lambda e: 0), "fork_join")
+    bundle = oracle.CalibrationBundle(assignment=assignment,
+                                      one_call=one_call)
+    assert bundle.cell_id == "fork_join"
+    assert bundle.deployable() == (0, 0, 0)
+    assert bundle.best_one_call() == 0
+    assert bundle.deployable_vs_one_call() == pytest.approx(0.5)
+
+    # A control scored on a disjoint population would silently invalidate
+    # the oracle-versus-one-call gate.
+    other1, other2 = cluster_ids("fork_join", 4)[2:]
+    disjoint = oracle.validate_one_call_surface(
+        {e: {other1: {observation_id(other1): 1},
+             other2: {observation_id(other2): 1}}
+         for e in oracle.ENDPOINT_IDS}, "fork_join")
+    with pytest.raises(oracle.PayoffSurfaceError, match="different clusters"):
+        oracle.CalibrationBundle(assignment=assignment, one_call=disjoint)
+
+
+def test_calibration_bundle_rejects_cross_cell_controls():
+    assignment = oracle.validate_payoff_surface(TOY_RAW, "lookup_math")
+    fork_control = oracle.validate_one_call_surface(
+        _candidate_surface(oracle.ENDPOINT_IDS, lambda e: 1), "fork_join")
+    with pytest.raises(oracle.PayoffSurfaceError, match="for cell"):
+        oracle.CalibrationBundle(assignment=assignment,
+                                 one_call=fork_control)
+
+
+def test_calibration_bundle_reports_missing_controls():
+    assignment = oracle.validate_payoff_surface(TOY_RAW, "lookup_math")
+    bundle = oracle.CalibrationBundle(assignment=assignment)
+    for call in (bundle.best_one_call, bundle.best_two_call,
+                 bundle.deployable_vs_one_call, bundle.deployable_vs_two_call):
+        with pytest.raises(oracle.PayoffSurfaceError, match="no .*surface"):
+            call()
 
 
 # --- §4 agreement command coverage accounting -------------------------------

@@ -75,8 +75,9 @@ def test_public_only_controls_reject_raw_generator_params():
     with pytest.raises(InfrastructureError):
         baselines.observable_subtype("lookup_math", dict(latent["params"]))
     with pytest.raises(InfrastructureError):
-        baselines.feature_row("lookup_math", dict(latent["params"]),
-                              latent["public_numeric_values"])
+        baselines.feature_row("lookup_math", dict(latent["params"]))
+    with pytest.raises(InfrastructureError):
+        baselines.echo_predict("p", dict(latent["params"]))
 
 
 # --- §4 golden feature-matrix/prediction fixture ----------------------------
@@ -85,14 +86,20 @@ def test_feature_row_column_order_golden():
     # lookup_math construction:00000 — subtype one-hot (minus, plus) then
     # numeric columns exactly [p, q, t, k, i], missing = −1.
     latent, _, _ = env("lookup_math", 0)
-    row = baselines.feature_row("lookup_math", latent["public_params"],
-                                latent["public_numeric_values"])
+    row = baselines.feature_row("lookup_math", latent["public_params"])
     assert row == [0, 1, 8, 12, -1, -1, -1]
     code_latent, _, _ = env("code_atomic", 1)
     code_row = baselines.feature_row("code_atomic",
-                                     code_latent["public_params"],
-                                     code_latent["public_numeric_values"])
+                                     code_latent["public_params"])
     assert code_row == [0, 1, -1, -1, -1, 7, 8]  # select: t=-1, k=7, i=8
+
+
+def test_feature_row_has_a_single_source_of_truth():
+    """There is no second numeric argument to disagree with `params`, so
+    stale or private-derived values cannot be injected at prediction time."""
+    import inspect
+    for fn in (baselines.feature_row, baselines.shallow_predict):
+        assert "public_numeric_values" not in inspect.signature(fn).parameters
 
 
 def _rows(cell, namespace, count):
@@ -107,13 +114,11 @@ def test_shallow_predictor_golden_and_refit_determinism():
         warnings.simplefilter("ignore", UserWarning)
         model_a = baselines.fit_shallow_predictor("lookup_math", rows)
         model_b = baselines.fit_shallow_predictor("lookup_math", rows)
-    predictions = [baselines.shallow_predict(
-        model_a, "lookup_math", row.params,
-        row.public_numeric_values) for row in rows[:5]]
+    predictions = [baselines.shallow_predict(model_a, "lookup_math",
+                                             row.params) for row in rows[:5]]
     assert predictions == [91, 128, 91, 28, 91]  # golden fixture
-    refit = [baselines.shallow_predict(
-        model_b, "lookup_math", row.params,
-        row.public_numeric_values) for row in rows[:5]]
+    refit = [baselines.shallow_predict(model_b, "lookup_math",
+                                       row.params) for row in rows[:5]]
     assert refit == predictions  # refit determinism on identical data
 
 

@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from .resources import InstanceRegistry
 from .types import (
     RENDERER_IDS, VISIBILITY_CONDITIONS, InfrastructureError, PublicParams,
-    require_public,
+    parse_render_instance_id, require_public,
 )
 
 # Prompt typography (§1.4): real × (U+00D7), − (U+2212), ÷ (U+00F7).
@@ -269,31 +270,52 @@ def two_call_subtasks(orientation: str, params: PublicParams) -> list[str]:
 
 # --- §1.5/§1.12: Stage-0C/2 policy observation (frozen skeleton) ------------
 
-def build_observation(instance: dict[str, Any], registry: Any,
+def check_instance_identity(instance: dict[str, Any]) -> None:
+    """`render_instance_id` must agree with every field it encodes (§1.13).
+
+    The id is the thing downstream analysis groups and strata by, so a
+    field that disagrees with it is a silent mislabel: flipping
+    `visibility_condition` to `visible` while the id still ends in
+    `:private` would disclose payloads into what every later stage counts
+    as a private observation.
+    """
+    try:
+        parsed = parse_render_instance_id(instance.get("render_instance_id"))
+    except ValueError as exc:
+        raise InfrastructureError(f"invalid render_instance_id: {exc}") from exc
+    expected = {
+        "latent_program_id": parsed.latent_program_id,
+        "renderer_id": parsed.renderer_id,
+        "visibility_condition": parsed.visibility_condition,
+        "cell_id": parsed.latent.cell_id,
+        "split_id": parsed.latent.namespace,
+    }
+    mismatched = {field: (instance.get(field), value)
+                  for field, value in expected.items()
+                  if instance.get(field) != value}
+    if mismatched:
+        raise InfrastructureError(
+            f"instance fields disagree with render_instance_id "
+            f"{instance['render_instance_id']!r}: "
+            + ", ".join(f"{f}={got!r} but id says {want!r}"
+                        for f, (got, want) in sorted(mismatched.items())))
+
+
+def build_observation(instance: dict[str, Any],
                       steps: list[dict[str, Any]]) -> str:
     """The one supported way to build a Conductor observation.
 
-    Payload disclosure is derived *exclusively* from the instance's
-    `visibility_condition`, never from a separate caller argument: a
-    `private`-labelled observation that carried a `Resources:` block would
-    keep its `:private` identity and private scoring metadata while
-    actually being a visible rendering, silently contaminating the headline
-    stratum (§1.16).
+    Payload disclosure is derived *exclusively* from the instance's own
+    identity and its own `private_registry`. There is no registry
+    argument: an externally supplied registry with matching handles but
+    different payload values would disclose the wrong data, and handles
+    can legitimately coincide across instances.
     """
-    visibility = instance.get("visibility_condition")
-    if visibility not in VISIBILITY_CONDITIONS:
-        raise InfrastructureError(
-            f"instance has no valid visibility_condition: {visibility!r}")
+    check_instance_identity(instance)
     manifest = list(instance["public_manifest"])
     payloads = None
-    if visibility == "visible":
-        if registry is None:
-            raise InfrastructureError(
-                "a visible instance requires its registry to disclose "
-                "payloads")
-        if list(registry.manifest) != manifest:
-            raise InfrastructureError(
-                "registry manifest does not match the instance manifest")
+    if instance["visibility_condition"] == "visible":
+        registry = InstanceRegistry(manifest, instance["private_registry"])
         payloads = registry.union_payload_texts()
     return _format_observation(instance["public_prompt"], manifest, steps,
                                visible_payload_texts=payloads)

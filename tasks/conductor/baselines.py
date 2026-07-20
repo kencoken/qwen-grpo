@@ -132,16 +132,21 @@ def observable_subtype(cell_id: str, params: PublicParams) -> str:
     return "constant"
 
 
-def feature_row(cell_id: str, params: PublicParams,
-                public_numeric_values: dict[str, int]) -> list[int]:
+def feature_row(cell_id: str, params: PublicParams) -> list[int]:
     """Frozen feature contract: subtype one-hot in the frozen level order,
     then numeric columns exactly [p, q, t, k, i]; missing numeric → −1.
-    Keys, fields, handles, entity names, generator-only fields excluded."""
+    Keys, fields, handles, entity names, generator-only fields excluded.
+
+    The numeric values are derived from `params` rather than accepted as a
+    second argument: an independently supplied mapping is a parallel source
+    of truth that can carry stale or private-derived values into a control
+    meant to diagnose public-prompt shortcuts.
+    """
     levels = OBSERVABLE_SUBTYPES[cell_id]
     subtype = observable_subtype(cell_id, params)
+    numeric = require_public(params, cell_id).numeric_features()
     row = [1 if subtype == level else 0 for level in levels]
-    row += [public_numeric_values.get(name, -1)
-            for name in _NUMERIC_COLUMNS]
+    row += [numeric.get(name, -1) for name in _NUMERIC_COLUMNS]
     return row
 
 
@@ -221,8 +226,7 @@ def fit_shallow_predictor(cell_id: str, rows: list[PublicFeatureRecord]
     if len(set(ids)) != len(ids):
         raise InfrastructureError(
             "one training row per latent cluster; duplicate ids present")
-    X = [feature_row(cell_id, row.params, row.public_numeric_values)
-         for row in rows]
+    X = [feature_row(cell_id, row.params) for row in rows]
     y = [row.gold_answer for row in rows]
     model = DecisionTreeClassifier(max_depth=3, criterion="gini",
                                    min_samples_leaf=5, random_state=0)
@@ -231,10 +235,8 @@ def fit_shallow_predictor(cell_id: str, rows: list[PublicFeatureRecord]
 
 
 def shallow_predict(model: DecisionTreeClassifier, cell_id: str,
-                    params: PublicParams,
-                    public_numeric_values: dict[str, int]) -> int:
-    row = feature_row(cell_id, params, public_numeric_values)
-    return int(model.predict(np.asarray([row]))[0])
+                    params: PublicParams) -> int:
+    return int(model.predict(np.asarray([feature_row(cell_id, params)]))[0])
 
 
 # --- §1.11 B1 reference controls (frozen fitting and selection rules) ------
@@ -281,11 +283,14 @@ def echo_family(cell_id: str) -> tuple[str, ...]:
     return tuple(sorted(names))
 
 
-def echo_predict(parameter: str,
-                 public_numeric_values: dict[str, int]) -> int | None:
+def echo_predict(parameter: str, params: PublicParams) -> int | None:
     """The parameter's own value, or None where it does not exist in this
-    subtype (excluded from that subtype's evaluation rather than scored)."""
-    return public_numeric_values.get(parameter)
+    subtype (excluded from that subtype's evaluation rather than scored).
+
+    Takes the canonical projection, not a loose mapping, for the same
+    reason as `feature_row`.
+    """
+    return require_public(params).numeric_features().get(parameter)
 
 
 def _check_control_rows(cell_id: str, rows: list[PublicFeatureRecord]) -> None:

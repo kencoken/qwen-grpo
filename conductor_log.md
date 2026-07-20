@@ -94,6 +94,37 @@ tests it. Backlog = Stage-2+ entry gates.
   genuinely immutable with control features derived from the projection;
   keyed records required to be ordered rectangular grids. 336 tests green
   (296 → 336), byte fixture unchanged.
+- 2026-07-20 — third-round findings
+  (`plans/conductor/52_s_stage_0a_review.md`) addressed; the theme was that
+  the boundaries were right in direction but bypassable at their edges.
+  Observations are bound to the **whole** instance identity
+  (`render_instance_id` must agree with every field it encodes) and
+  disclose payloads from the instance's own registry, so a mutated
+  visibility with a stale id, or a same-manifest registry holding different
+  values, cannot leak into the private headline stratum. Payoff surfaces
+  are bound to their cell **by identity** — cluster ids are
+  `latent_program_id`s and observation ids are `render_instance_id`s, both
+  of which name their cell, which node arity alone cannot check because the
+  three atomic cells all have one node. A `CalibrationBundle` is now the
+  only way to take an oracle-versus-control comparison, because each
+  surface validated in isolation cannot prove the controls were scored on
+  the same population. `ValidatedSurface` re-checks its invariants in
+  `__post_init__`, so a forged or deserialized instance is not an unchecked
+  back door. T1's constructive `c` is solved analytically instead of
+  enumerated: the reviewer's profile that would have run ~1e9 iterations
+  after passing validation now fails in 4 ms, and the draw is bit-identical
+  (same value from the same RNG call), so no generated data changed.
+  Also: public features have a single source of truth (`feature_row` and
+  `shallow_predict` no longer take a numeric mapping); `PublicParams`
+  type-checks its values and is one-shot; sensitivity rows are totally
+  validated before filtering; the normative IR validator applies the same
+  manifest discipline as `InstanceRegistry`; and `PublicParams`,
+  `ValidatedSurface` and `InterventionReport` carry explicit JSON forms
+  because Stage 1 is resumable and mapping proxies defeat generic
+  `deepcopy`/`asdict`. The §1.9 bootstrap wording now states that it
+  resamples paired clusters and recomputes the full-sample statistic.
+  359 tests green (336 → 359), byte fixture unchanged; all fourteen
+  residual probes from the review re-run and closed.
 
 ### Must block the construction screen
 
