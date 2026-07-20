@@ -373,4 +373,3 @@ Before Stage 0A sign-off:
 4. make revived-selection verification mechanically visible to consumers;
 5. finish totalizing the JSON boundaries; and
 6. validate legal edges inside the intervention constructor itself.
-
