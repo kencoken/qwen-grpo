@@ -25,11 +25,14 @@ alongside the primary ones so a gate can never be read off the wrong rule.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
-from .types import VISIBILITY_CONDITIONS, InfrastructureError
+from .types import (
+    CELL_NODES, VISIBILITY_CONDITIONS, InfrastructureError,
+    parse_latent_program_id, parse_render_instance_id,
+)
 
 
 # --- §1.9 intervention estimand ---------------------------------------------
@@ -52,6 +55,46 @@ class EdgeOutcome:
     base_terminal: int | None
     mutated_terminal: int | None
     downstream_path_succeeded: bool
+
+
+def _require_bool(value: Any, field: str) -> None:
+    # `type(...) is bool`: 0/1 are valid ints and non-empty strings such as
+    # "false" are truthy, either of which would silently read as True.
+    if type(value) is not bool:
+        raise InfrastructureError(f"{field} must be a bool, got {value!r}")
+
+
+def _require_optional_int(value: Any, field: str) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise InfrastructureError(
+            f"{field} must be an int or None, got {value!r}")
+
+
+def _require_identity(cluster_id: Any, observation_id: Any,
+                      visibility: str | None = None) -> None:
+    """Persisted rows carry canonical ids; the metadata they encode must
+    agree with the row's own fields.
+
+    An observation naming cluster A and ending in `:visible`, filed under
+    cluster B as `private`, would otherwise score normally inside the
+    private headline population.
+    """
+    try:
+        latent = parse_latent_program_id(cluster_id)
+        render_id = parse_render_instance_id(observation_id)
+    except ValueError as exc:
+        raise InfrastructureError(f"malformed row identity: {exc}") from exc
+    if render_id.latent_program_id != cluster_id:
+        raise InfrastructureError(
+            f"observation {observation_id!r} is filed under cluster "
+            f"{cluster_id!r} but names {render_id.latent_program_id!r}")
+    if visibility is not None and render_id.visibility_condition != visibility:
+        raise InfrastructureError(
+            f"observation {observation_id!r} encodes visibility "
+            f"{render_id.visibility_condition!r}, row says {visibility!r}")
+    return latent
 
 
 def base_eligibility(reference_program: dict[str, Any], downstream: str,
@@ -137,6 +180,17 @@ class InterventionReport:
     follow_through_rate: float
     cluster_weighted: Mapping[str, float]
     cluster_observation_counts: Mapping[str, int]
+    # Per-cluster successes, not just counts: the cluster bootstrap
+    # resamples whole clusters and recomputes the full-sample statistic, so
+    # counts alone are not sufficient statistics for it.
+    cluster_successes: Mapping[str, Mapping[str, int]] = field(
+        default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for name in ("cluster_weighted", "cluster_observation_counts",
+                     "cluster_successes"):
+            object.__setattr__(self, name,
+                               MappingProxyType(dict(getattr(self, name))))
 
     def __deepcopy__(self, memo: dict) -> "InterventionReport":
         return self  # immutable; the mapping proxies are unpicklable
@@ -161,7 +215,54 @@ class InterventionReport:
             "cluster_weighted": dict(self.cluster_weighted),
             "cluster_observation_counts":
                 dict(self.cluster_observation_counts),
+            "cluster_successes": {cluster: dict(values) for cluster, values
+                                  in self.cluster_successes.items()},
         }
+
+    @classmethod
+    def from_json(cls, obj: Mapping[str, Any]) -> "InterventionReport":
+        if not isinstance(obj, Mapping):
+            raise InfrastructureError("report JSON must be an object")
+        expected = {f.name for f in fields(cls)}
+        if set(obj) != expected:
+            raise InfrastructureError(
+                f"report JSON keys must be exactly {sorted(expected)}, got "
+                f"{sorted(obj)}")
+        edge = obj["edge"]
+        if not isinstance(edge, (list, tuple)) or len(edge) != 2 \
+                or not all(isinstance(node, str) for node in edge):
+            raise InfrastructureError(f"malformed edge {edge!r}")
+        return cls(**{**obj, "edge": tuple(edge)})
+
+
+def _validate_edge_rows(outcomes: Sequence[EdgeOutcome]) -> None:
+    """Total validation of persisted intervention rows.
+
+    Without it, string values such as `"false"` for `eligible`,
+    `override_applied` and `downstream_path_succeeded` all read as true,
+    reporting an eligibility rate and follow-through of 1.0.
+    """
+    for outcome in outcomes:
+        if not isinstance(outcome, EdgeOutcome):
+            raise InfrastructureError(
+                f"expected EdgeOutcome rows, got {type(outcome).__name__}")
+        latent = _require_identity(outcome.cluster_id, outcome.observation_id)
+        edge = outcome.edge
+        if not isinstance(edge, tuple) or len(edge) != 2 \
+                or not all(isinstance(node, str) for node in edge):
+            raise InfrastructureError(
+                f"edge {edge!r} must be a (u, v) tuple of node ids")
+        nodes = CELL_NODES[latent.cell_id]
+        if any(node not in nodes for node in edge):
+            raise InfrastructureError(
+                f"edge {edge!r} names nodes outside {latent.cell_id} "
+                f"{nodes}")
+        for name in ("eligible", "override_applied",
+                     "downstream_path_succeeded"):
+            _require_bool(getattr(outcome, name), name)
+        for name in ("gold_answer", "counterfactual_gold", "base_terminal",
+                     "mutated_terminal"):
+            _require_optional_int(getattr(outcome, name), name)
 
 
 def intervention_report(outcomes: Sequence[EdgeOutcome]
@@ -170,6 +271,9 @@ def intervention_report(outcomes: Sequence[EdgeOutcome]
     eligible set, with the eligibility rate attached."""
     if not outcomes:
         raise InfrastructureError("no intervention outcomes")
+    # Before anything that hashes or compares the rows: a list-valued edge
+    # would otherwise raise a raw TypeError instead of a domain error.
+    _validate_edge_rows(outcomes)
     edges = {o.edge for o in outcomes}
     if len(edges) != 1:
         raise InfrastructureError(f"outcomes span several edges: {edges}")
@@ -243,9 +347,15 @@ def intervention_report(outcomes: Sequence[EdgeOutcome]
         counterfactual_consistency=_full_sample(counterfactual),
         follow_through=follow_through,
         follow_through_rate=len(followed) / len(eligible),
-        cluster_weighted=MappingProxyType(clustered),
-        cluster_observation_counts=MappingProxyType(
-            {cluster: len(values) for cluster, values in base.items()}))
+        cluster_weighted=clustered,
+        cluster_observation_counts={cluster: len(values)
+                                    for cluster, values in base.items()},
+        cluster_successes={
+            cluster: {"base": int(sum(base[cluster])),
+                      "corrupted": int(sum(corrupted[cluster])),
+                      "counterfactual": int(sum(counterfactual[cluster])),
+                      "n": len(base[cluster])}
+            for cluster in base})
 
 
 # --- §1.16 collision sensitivity --------------------------------------------
@@ -295,14 +405,14 @@ def _validate_workflow_rows(outcomes: Sequence[WorkflowOutcome]) -> None:
             raise InfrastructureError(
                 f"visibility_condition {outcome.visibility_condition!r} is "
                 f"not one of {VISIBILITY_CONDITIONS}")
-        # `type(...) is bool` rather than isinstance: 0/1 are valid ints
-        # but would let `correct=2` through the same door.
         for field in ("public_numeric_collision", "correct",
                       "answer_in_subtask_detected"):
-            value = getattr(outcome, field)
-            if type(value) is not bool:
-                raise InfrastructureError(
-                    f"{field} must be a bool, got {value!r}")
+            _require_bool(getattr(outcome, field), field)
+        # The ids encode cluster and visibility; both must agree with the
+        # row, or a misfiled visible rendering scores inside the private
+        # headline population.
+        _require_identity(outcome.cluster_id, outcome.observation_id,
+                          outcome.visibility_condition)
 
     seen = {(o.cluster_id, o.observation_id) for o in outcomes}
     if len(seen) != len(outcomes):

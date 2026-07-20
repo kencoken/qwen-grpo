@@ -46,10 +46,11 @@ def build_fixture() -> dict[str, str]:
             fixture[f"{cell}:step{position}:{step['access']}"] = _sha(request)
             previous[position] = latent["node_values"][step["node"]]
         # Plural-resources forms (harness-only): B3 visible direct and B5.
-        fixture[f"{cell}:B3"] = _sha(
-            baselines.build_b3_request(inst, registry))
-        fixture[f"{cell}:B5"] = _sha(
-            baselines.build_b5_request(inst, registry)[0])
+        # These are worker-side arms, so they disclose payloads in either
+        # visibility condition (§1.12) — what is enforced is that the
+        # payloads come from this instance's own registry.
+        fixture[f"{cell}:B3"] = _sha(baselines.build_b3_request(inst))
+        fixture[f"{cell}:B5"] = _sha(baselines.build_b5_request(inst)[0])
 
     # 18 shortcut workflows × 2 calls (fork_join, D12): request bytes are
     # keyed by (orientation, endpoint pair, call) — the endpoint pair enters

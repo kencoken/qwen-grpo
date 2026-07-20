@@ -535,9 +535,10 @@ def test_calibration_bundle_requires_one_shared_population():
     bundle = oracle.CalibrationBundle(assignment=assignment,
                                       one_call=one_call)
     assert bundle.cell_id == "fork_join"
-    assert bundle.deployable() == (0, 0, 0)
-    assert bundle.best_one_call() == 0
-    assert bundle.deployable_vs_one_call() == pytest.approx(0.5)
+    frozen = bundle.freeze_selections()
+    assert frozen.deployable == (0, 0, 0)
+    assert frozen.best_one_call == 0
+    assert bundle.deployable_vs_one_call(frozen) == pytest.approx(0.5)
 
     # A control scored on a disjoint population would silently invalidate
     # the oracle-versus-one-call gate.
@@ -548,6 +549,143 @@ def test_calibration_bundle_requires_one_shared_population():
          for e in oracle.ENDPOINT_IDS}, "fork_join")
     with pytest.raises(oracle.PayoffSurfaceError, match="different clusters"):
         oracle.CalibrationBundle(assignment=assignment, one_call=disjoint)
+
+
+# --- §1.8 / plan contract 7: selected on construction, never reselected ----
+
+def _surface_for(cell, namespace, winner, num_nodes):
+    clusters = cluster_ids(cell, 2, namespace)
+    return oracle.validate_payoff_surface(
+        {a: {c: {observation_id(c): (1 if a == winner else 0)}
+             for c in clusters}
+         for a in oracle.enumerate_assignments(num_nodes)}, cell)
+
+
+def test_selection_is_construction_only():
+    """Re-maximizing at a qualification look would change the hypothesis
+    the pre-registered alpha spending is tested against."""
+    qualification = _surface_for("lookup_math", "qualification", (2, 2), 2)
+    for call in (oracle.select_deployable, oracle.best_fixed):
+        with pytest.raises(oracle.PayoffSurfaceError,
+                           match="never reselected"):
+            call(qualification)
+    with pytest.raises(oracle.PayoffSurfaceError, match="never reselected"):
+        oracle.node_runner_up(qualification, (0, 0), 0)
+    with pytest.raises(oracle.PayoffSurfaceError, match="never reselected"):
+        oracle.CalibrationBundle(assignment=qualification).freeze_selections()
+    # Descriptive statistics remain computable on any split.
+    assert 0.0 <= oracle.uniform_random_accuracy(qualification) <= 1.0
+
+
+def test_qualification_evaluates_the_frozen_choice_not_its_own_argmax():
+    construction = _surface_for("lookup_math", "construction", (0, 0), 2)
+    frozen = oracle.CalibrationBundle(assignment=construction) \
+        .freeze_selections()
+    assert frozen.deployable == (0, 0)
+
+    # Fresh qualification data where a different assignment happens to win.
+    qualification = _surface_for("lookup_math", "qualification", (2, 2), 2)
+    bundle = oracle.CalibrationBundle(assignment=qualification)
+    # The frozen choice is evaluated as-is: 0.0 here, not the 1.0 that
+    # reselecting on qualification outcomes would have reported.
+    assert bundle.deployable_accuracy(frozen) == pytest.approx(0.0)
+    assert qualification.accuracy((2, 2)) == pytest.approx(1.0)
+    assert not hasattr(bundle, "deployable")  # no argmax on the eval path
+
+
+def test_frozen_selections_round_trip_and_validate():
+    construction = _surface_for("fork_join", "construction", (0, 1, 2), 3)
+    one_call = oracle.validate_one_call_surface(
+        {e: {c: {observation_id(c): 1} for c in construction.clusters}
+         for e in oracle.ENDPOINT_IDS}, "fork_join")
+    frozen = oracle.CalibrationBundle(assignment=construction,
+                                      one_call=one_call).freeze_selections()
+    assert frozen.deployable == (0, 1, 2)
+    assert set(frozen.node_runner_ups) == {"n1", "n2", "n3"}
+    revived = oracle.FrozenSelections.from_json(
+        json.loads(json.dumps(frozen.to_json())))
+    assert revived == frozen
+    with pytest.raises(oracle.PayoffSurfaceError):
+        oracle.FrozenSelections.from_json({"cell_id": "fork_join"})
+    with pytest.raises(oracle.PayoffSurfaceError, match="construction"):
+        oracle.FrozenSelections(
+            cell_id="fork_join", namespace="qualification",
+            deployable=(0, 0, 0), best_fixed_assignment=(0, 0, 0),
+            node_runner_ups={}, random_accuracy=0.5)
+
+
+# --- population and execution provenance ------------------------------------
+
+def test_surface_covers_exactly_one_split():
+    """Gates are defined per split, and selection is construction-only, so
+    a surface mixing namespaces is not a population."""
+    con = cluster_ids("lookup_math", 1)[0]
+    qual = program.generate_latent("lookup_math", "qualification", 0,
+                                   PROF).latent["latent_program_id"]
+    mixed = {a: {con: {observation_id(con): 1},
+                 qual: {observation_id(qual): 1}}
+             for a in oracle.enumerate_assignments(2)}
+    with pytest.raises(oracle.PayoffSurfaceError, match="mixes namespaces"):
+        oracle.validate_payoff_surface(mixed, "lookup_math")
+
+
+def _manifest_for(surface, **overrides):
+    fields = dict(cell_id=surface.cell_id, namespace=surface.namespace,
+                  clusters=surface.clusters,
+                  observations=dict(surface.observations),
+                  generator_version=program.GENERATOR_VERSION,
+                  difficulty_profile_version="dp-2bcb6373340a8a79")
+    fields.update(overrides)
+    return oracle.PopulationManifest(**fields)
+
+
+def test_manifest_binds_a_surface_to_the_registered_population():
+    surface = _surface_for("lookup_math", "construction", (0, 0), 2)
+    manifest = _manifest_for(surface)
+    oracle.validate_payoff_surface(surface.to_json() and {
+        a: {c: dict(surface.data[a][c]) for c in surface.clusters}
+        for a in surface.candidates}, "lookup_math", manifest)
+
+    # A cherry-picked or truncated support is rejected even though every
+    # candidate within it agrees.
+    truncated_clusters = surface.clusters[:1]
+    truncated = {a: {c: dict(surface.data[a][c]) for c in truncated_clusters}
+                 for a in surface.candidates}
+    with pytest.raises(oracle.PayoffSurfaceError,
+                       match="registered population"):
+        oracle.validate_payoff_surface(truncated, "lookup_math", manifest)
+
+    fabricated = _manifest_for(surface, clusters=surface.clusters,
+                               observations={c: ("bogus",) for c
+                                             in surface.clusters})
+    with pytest.raises(oracle.PayoffSurfaceError,
+                       match="registered renderings"):
+        oracle.validate_payoff_surface(
+            {a: {c: dict(surface.data[a][c]) for c in surface.clusters}
+             for a in surface.candidates}, "lookup_math", fabricated)
+
+
+def test_execution_provenance_is_an_explicit_stage_0b_gate():
+    """Same-identity pairing does not prove the arms ran under one runtime
+    profile; those fingerprints are 0B artifacts."""
+    surface = _surface_for("lookup_math", "construction", (0, 0), 2)
+    manifest = _manifest_for(surface)
+    with pytest.raises(oracle.PayoffSurfaceError,
+                       match="execution provenance is unrecorded"):
+        manifest.require_execution_provenance()
+    bound = _manifest_for(surface, runtime_profile_fingerprint="rp-1",
+                          endpoint_fingerprints={"lookup": "e0"},
+                          prompt_revision="d16-1")
+    bound.require_execution_provenance()
+
+
+def test_evaluation_rejects_selections_from_another_cell():
+    construction = _surface_for("lookup_math", "construction", (0, 0), 2)
+    frozen = oracle.CalibrationBundle(assignment=construction) \
+        .freeze_selections()
+    other = _surface_for("math_code", "construction", (0, 0), 2)
+    with pytest.raises(oracle.PayoffSurfaceError, match="selections are for"):
+        oracle.CalibrationBundle(assignment=other).deployable_accuracy(frozen)
 
 
 def test_calibration_bundle_rejects_cross_cell_controls():
@@ -562,10 +700,12 @@ def test_calibration_bundle_rejects_cross_cell_controls():
 def test_calibration_bundle_reports_missing_controls():
     assignment = oracle.validate_payoff_surface(TOY_RAW, "lookup_math")
     bundle = oracle.CalibrationBundle(assignment=assignment)
-    for call in (bundle.best_one_call, bundle.best_two_call,
+    frozen = bundle.freeze_selections()
+    assert frozen.best_one_call is None and frozen.best_two_call is None
+    for call in (bundle.one_call_accuracy, bundle.two_call_accuracy,
                  bundle.deployable_vs_one_call, bundle.deployable_vs_two_call):
         with pytest.raises(oracle.PayoffSurfaceError, match="no .*surface"):
-            call()
+            call(frozen)
 
 
 # --- §4 agreement command coverage accounting -------------------------------

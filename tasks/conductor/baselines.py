@@ -40,10 +40,24 @@ def build_b2_request(instance: dict[str, Any], subtask: str
     return request, Binding()
 
 
-def build_b3_request(instance: dict[str, Any],
-                     registry: InstanceRegistry) -> str:
+def _instance_registry(instance: dict[str, Any]) -> InstanceRegistry:
+    """Payloads always come from the instance's own registry.
+
+    An independently supplied registry with matching handles but different
+    values would disclose the wrong data — and handles can legitimately
+    coincide across instances. This is load-bearing for B5 in particular:
+    oracle-versus-one-call is a cell-admission gate, so a mis-wired
+    registry moves the measured gap.
+    """
+    render.check_instance_identity(instance)
+    return InstanceRegistry(instance["public_manifest"],
+                            instance["private_registry"])
+
+
+def build_b3_request(instance: dict[str, Any]) -> str:
     """B3 visible direct: `Problem` + plural `Resources:` (self-solving
     diagnosis; no `SELF` action, so not delegation)."""
+    registry = _instance_registry(instance)
     return render.build_worker_request(
         instance["public_prompt"], None,
         resources_texts=registry.union_payload_texts(), direct=True)
@@ -59,10 +73,15 @@ def build_b4_request(instance: dict[str, Any], subtask: str,
         previous_results=gold_previous, direct=True)
 
 
-def build_b5_request(instance: dict[str, Any],
-                     registry: InstanceRegistry) -> tuple[str, Binding]:
+def build_b5_request(instance: dict[str, Any]) -> tuple[str, Binding]:
     """B5 one-call whole-task: plural union payload (harness-only exception
-    to the one-resource-per-step rule; never available to the policy)."""
+    to the one-resource-per-step rule; never available to the policy).
+
+    Both the disclosed text and the host-side binding come from the
+    instance's own registry, so the control cannot be made easier or harder
+    by a mis-wired one.
+    """
+    registry = _instance_registry(instance)
     request = render.build_worker_request(
         instance["public_prompt"], B5_TASK,
         resources_texts=registry.union_payload_texts())

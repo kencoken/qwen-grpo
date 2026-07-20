@@ -403,8 +403,14 @@ PUBLIC_NUMERIC_PARAMS: dict[str, tuple[str, ...]] = {
 
 def public_param_keys(cell_id: str, params: Mapping[str, Any]
                       ) -> tuple[str, ...]:
+    if cell_id not in CELL_IDS:
+        raise InfrastructureError(f"unknown cell_id {cell_id!r}")
     if cell_id == "code_atomic":
-        return PUBLIC_PARAM_KEYS[f"code_atomic_{params['shape']}"]
+        shape = params.get("shape") if isinstance(params, Mapping) else None
+        if shape not in ("count", "select"):
+            raise InfrastructureError(
+                f"code_atomic public params need a valid shape, got {shape!r}")
+        return PUBLIC_PARAM_KEYS[f"code_atomic_{shape}"]
     return PUBLIC_PARAM_KEYS[cell_id]
 
 
@@ -523,7 +529,15 @@ class PublicParams(Mapping):
 
     @classmethod
     def from_json(cls, obj: Mapping[str, Any]) -> "PublicParams":
-        return cls(obj["cell_id"], obj["values"])
+        if not isinstance(obj, Mapping) or set(obj) != {"cell_id", "values"}:
+            raise InfrastructureError(
+                "PublicParams JSON must have exactly cell_id and values")
+        cell_id, values = obj["cell_id"], obj["values"]
+        if cell_id not in CELL_IDS:
+            raise InfrastructureError(f"unknown cell_id {cell_id!r}")
+        if not isinstance(values, Mapping):
+            raise InfrastructureError("values must be an object")
+        return cls(cell_id, dict(values))
 
     def numeric_features(self) -> dict[str, int]:
         """The §1.16 public *semantic* parameters, derived here rather than

@@ -125,6 +125,58 @@ tests it. Backlog = Stage-2+ entry gates.
   resamples paired clusters and recomputes the full-sample statistic.
   359 tests green (336 → 359), byte fixture unchanged; all fourteen
   residual probes from the review re-run and closed.
+- 2026-07-20 — fourth-round findings
+  (`plans/conductor/53_s_stage_0a_review.md`) addressed. **The first was a
+  regression I introduced in the third round**: the `CalibrationBundle`
+  added to fix arm pairing exposed `argmax` on whatever population it was
+  handed, so a qualification-only bundle would reselect the deployable
+  assignment — violating "selected on construction data, frozen, never
+  reselected" (§1.8, plan contract 7). On a probe it picked (2,2) and
+  reported a gap of 1.0 where the construction-frozen (0,0) scored 0.0.
+  Worse than an optimistic point estimate: qualification uses
+  pre-registered sequential looks, so re-maximizing at each look changes
+  the hypothesis under test and voids the alpha-spending interpretation.
+  Fixed by enforcing the construction namespace inside every argmax and
+  splitting selection from evaluation — `freeze_selections()` records the
+  deployable assignment, best-fixed, node runner-ups, best one-call and
+  best two-call once, and the qualification API evaluates that artifact
+  with no argmax reachable.
+  Also: payoff-surface deserialization is lossless and fail-closed
+  (persisted `0.5`, `"1"`, `True` are no longer coerced into valid-looking
+  binary observations, and duplicate candidate entries no longer collapse
+  last-write-wins); B3/B5 build their payloads and host-side binding from
+  the instance's own registry, which matters because oracle-vs-one-call is
+  a cell-admission gate; `ValidatedSurface` re-freezes every nested
+  collection, so a caller's backing dict can no longer mutate a validated
+  surface after the fact; surfaces cover exactly one split; persisted
+  estimand rows are bound to their encoded identities and totally typed
+  (`"false"` no longer reads as true); and the report carries per-cluster
+  sufficient statistics for the bootstrap. 380 tests green (359 → 380),
+  byte fixture unchanged.
+
+### Scope of the calibration guarantees (read before trusting a gate)
+
+`CalibrationBundle` proves that its assignment and control surfaces carry
+**the same self-declared cluster and observation identities**, and every
+surface is bound by identity to one cell and one split. That is a
+structural same-population check, and it is not on its own sufficient to
+make a Stage-1 gate valid:
+
+- Supplying a `PopulationManifest` is what proves a surface is the
+  *registered* population rather than a cherry-picked or partially resumed
+  subset.
+- The manifest's execution fields — runtime-profile fingerprint, endpoint
+  fingerprints, prompt revision — are **`None` at Stage 0A**, because the
+  artifacts they fingerprint do not exist until 0B/1A.
+  `PopulationManifest.require_execution_provenance()` fails until they are
+  bound. Until then, two arms run under different model revisions, system
+  prompts, or token caps can carry identical observation ids and pass the
+  bundle.
+
+Selection is construction-only and mechanically enforced: every argmax
+refuses a non-construction surface, and qualification consumes a persisted
+`FrozenSelections` artifact that exposes no argmax (§1.8, plan contract 7 —
+"frozen, never reselected").
 
 ### Must block the construction screen
 
@@ -137,6 +189,13 @@ tests it. Backlog = Stage-2+ entry gates.
   accuracy.
 - Replacement of the provisional request hashes with actual chat-template
   bytes during Stage 0B.
+- **A canonical population + execution manifest bound to every calibration
+  artifact** before the construction screen or the first qualification
+  look: registered latent/render ids including renderer and visible-slice
+  support, generator and difficulty-profile versions (all available now),
+  plus the runtime-profile fingerprint, endpoint fingerprints and prompt
+  revision (Stage 0B). Without it a clean same-identity bundle can still
+  represent an incomplete population or arms run under different systems.
 
 ## Backlog (Stage-2+ entry gates)
 

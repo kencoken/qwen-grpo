@@ -22,9 +22,37 @@ from tasks.conductor.types import CELL_IDS, CELL_NODES, InfrastructureError
 PROF = DEFAULT_PROFILE
 
 
-def outcome(cluster, observation, *, eligible=True, override=True,
-            gold=10, cf=20, base=10, mutated=20, followed=True):
-    return EdgeOutcome(cluster_id=cluster, observation_id=observation,
+# Persisted rows carry canonical identities, and their encoded metadata is
+# checked against the row, so tests use real ids rather than toy labels.
+_CLUSTERS: dict[str, str] = {}
+
+
+def cluster(label, cell="lookup_math", namespace="construction"):
+    """A stable real `latent_program_id` per short test label."""
+    key = (label, cell, namespace)
+    if key not in _CLUSTERS:
+        index = len(_CLUSTERS)
+        _CLUSTERS[key] = program.generate_latent(
+            cell, namespace, index, PROF).latent["latent_program_id"]
+    return _CLUSTERS[key]
+
+
+def observation(cluster_id, renderer="resource_first", visibility="private"):
+    return f"{cluster_id}:{renderer}:{visibility}"
+
+
+_RENDERERS = ("resource_first", "goal_first", "bound_var")
+
+
+def outcome(cluster_label, observation_label, *, eligible=True, override=True,
+            gold=10, cf=20, base=10, mutated=20, followed=True,
+            cell="lookup_math"):
+    cluster_id = cluster(cluster_label, cell)
+    # Deterministic across runs (unlike hash()): distinct labels within a
+    # cluster map onto distinct real renderings.
+    renderer = _RENDERERS[sum(map(ord, observation_label)) % len(_RENDERERS)]
+    return EdgeOutcome(cluster_id=cluster_id,
+                       observation_id=observation(cluster_id, renderer),
                        edge=("n1", "n2"), eligible=eligible,
                        override_applied=override, gold_answer=gold,
                        counterfactual_gold=cf, base_terminal=base,
@@ -60,7 +88,8 @@ def test_intervention_report_shares_one_eligible_denominator():
         pytest.approx(0.25)
     assert report.cluster_weighted["counterfactual_consistency"] == \
         pytest.approx(0.75)
-    assert dict(report.cluster_observation_counts) == {"c1": 2, "c2": 1}
+    assert dict(report.cluster_observation_counts) == {
+        cluster("c1"): 2, cluster("c2"): 1}
 
 
 def test_primary_estimate_is_full_sample_not_equal_cluster():
@@ -139,6 +168,35 @@ def test_report_rejects_degenerate_inputs():
         intervention_report(mixed)
 
 
+@pytest.mark.parametrize("field,value", [
+    ("eligible", "false"),                  # truthy string reads as True
+    ("override_applied", "false"),
+    ("downstream_path_succeeded", "false"),
+    ("eligible", 1),                        # int standing in for a bool
+    ("gold_answer", True),                  # bool standing in for an int
+    ("gold_answer", "10"),
+    ("base_terminal", 1.5),
+    ("edge", ["n1", "n2"]),                 # list instead of a tuple
+    ("edge", ("n1",)),
+    ("edge", ("n1", "n9")),                 # node outside the cell
+])
+def test_edge_rows_are_totally_validated(field, value):
+    """Without this, `"false"` for the three booleans reports an
+    eligibility rate and follow-through of 1.0."""
+    rows = [outcome("c1", "o1"), outcome("c1", "o2")]
+    bad = dataclasses.replace(rows[0], **{field: value})
+    with pytest.raises(InfrastructureError):
+        intervention_report([bad] + rows[1:])
+
+
+def test_edge_rows_reject_misfiled_identities():
+    good = outcome("c1", "o1")
+    misfiled = dataclasses.replace(
+        good, observation_id=observation(cluster("c2"), "resource_first"))
+    with pytest.raises(InfrastructureError, match="filed under"):
+        intervention_report([misfiled, outcome("c1", "o2")])
+
+
 def test_base_eligibility_reads_the_base_execution_only():
     latent = program.generate_latent("fork_join", "construction", 0,
                                      PROF).latent
@@ -168,13 +226,16 @@ def test_base_eligibility_reads_the_base_execution_only():
 
 # --- §1.16 sensitivity population identity ----------------------------------
 
-def _workflow(cluster, obs, *, correct=True, detected=False,
+def _workflow(cluster_label, obs_label, *, correct=True, detected=False,
               visibility="private", collision=False):
-    return WorkflowOutcome(cluster_id=cluster, observation_id=obs,
-                           visibility_condition=visibility,
-                           public_numeric_collision=collision,
-                           correct=correct,
-                           answer_in_subtask_detected=detected)
+    cluster_id = cluster(cluster_label)
+    renderer = _RENDERERS[sum(map(ord, obs_label)) % len(_RENDERERS)]
+    return WorkflowOutcome(
+        cluster_id=cluster_id,
+        observation_id=observation(cluster_id, renderer, visibility),
+        visibility_condition=visibility,
+        public_numeric_collision=collision, correct=correct,
+        answer_in_subtask_detected=detected)
 
 
 def test_sensitivity_uses_the_identical_headline_population():
@@ -234,10 +295,23 @@ def test_sensitivity_rejects_malformed_persisted_rows(field, value, why):
         sensitivity_scores([bad] + rows[1:])
 
 
-def test_sensitivity_binds_each_observation_to_one_cluster():
-    rows = [_workflow("c1", "shared"), _workflow("c2", "shared")]
-    with pytest.raises(InfrastructureError, match="more than one cluster"):
-        sensitivity_scores(rows)
+def test_sensitivity_rejects_misfiled_and_mislabelled_rows():
+    """The row's own fields must agree with what its ids encode: a
+    misfiled observation, or one whose id says `:visible` while the row
+    claims `private`, would otherwise score inside the private headline
+    population."""
+    good = _workflow("c1", "o1")
+    other = cluster("c2")
+    misfiled = dataclasses.replace(
+        good, observation_id=observation(other, "resource_first"))
+    with pytest.raises(InfrastructureError, match="filed under"):
+        sensitivity_scores([misfiled, _workflow("c2", "o2")])
+
+    mislabelled = dataclasses.replace(
+        good, observation_id=observation(cluster("c1"), "resource_first",
+                                         "visible"))
+    with pytest.raises(InfrastructureError, match="encodes visibility"):
+        sensitivity_scores([mislabelled, _workflow("c2", "o2")])
 
 
 def test_sensitivity_rejects_cluster_inconsistent_collision_metadata():
@@ -496,7 +570,31 @@ def test_immutable_types_survive_deepcopy_and_round_trip_json():
 
     report = intervention_report([outcome("c1", "o1")])
     assert copy.deepcopy(report) is report
-    json.dumps(report.to_json())
+    revived_report = estimands.InterventionReport.from_json(
+        json.loads(json.dumps(report.to_json())))
+    assert revived_report == report
+    assert copy.deepcopy(revived_report) is revived_report
+    for bad in ({}, {"edge": ["n1", "n2"]},
+                {**report.to_json(), "edge": "n1->n2"},
+                {**report.to_json(), "extra": 1}):
+        with pytest.raises(InfrastructureError):
+            estimands.InterventionReport.from_json(bad)
+
+
+def test_report_carries_bootstrap_sufficient_statistics():
+    """Cluster counts alone cannot reproduce the bootstrap: it resamples
+    whole clusters and recomputes the full-sample statistic."""
+    report = intervention_report([outcome("c1", "o1"),
+                                  outcome("c1", "o2", mutated=10),
+                                  outcome("c2", "o3")])
+    stats = report.cluster_successes
+    assert set(stats) == {cluster("c1"), cluster("c2")}
+    assert stats[cluster("c1")] == {"base": 2, "corrupted": 1,
+                                    "counterfactual": 1, "n": 2}
+    # The full-sample primary is recoverable from the sufficient statistics.
+    total = sum(s["n"] for s in stats.values())
+    assert sum(s["corrupted"] for s in stats.values()) / total == \
+        pytest.approx(report.corruption_accuracy)
 
 
 def test_surface_json_round_trip_for_control_kinds():

@@ -16,16 +16,21 @@ class InstanceRegistry:
 
     def __init__(self, manifest: list[str],
                  registry_json: dict[str, dict[str, Any]]) -> None:
+        # Element types before any set operation: an unhashable element
+        # (a nested list, say) would raise a raw TypeError from set().
+        if not isinstance(manifest, (list, tuple)):
+            raise InfrastructureError("manifest must be a list of handles")
+        for handle in manifest:
+            if not isinstance(handle, str) or not is_handle(handle):
+                raise InfrastructureError(f"malformed handle {handle!r}")
         # Cardinality before set comparison: a manifest repeating a handle
         # compares equal as a set but would render its payload twice.
         if len(set(manifest)) != len(manifest):
             raise InfrastructureError(f"duplicate handles in manifest "
                                       f"{manifest}")
-        if set(manifest) != set(registry_json):
+        if not isinstance(registry_json, dict) \
+                or set(manifest) != set(registry_json):
             raise InfrastructureError("manifest keys != registry keys")
-        for handle in manifest:
-            if not is_handle(handle):
-                raise InfrastructureError(f"malformed handle {handle!r}")
         self.manifest = list(manifest)
         self._resources = {h: resource_from_json(obj)
                            for h, obj in registry_json.items()}

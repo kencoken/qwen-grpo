@@ -35,7 +35,7 @@ def test_b1_is_problem_only():
 
 def test_b3_visible_direct_plural_block():
     _, inst, registry = env("math_code")
-    request = baselines.build_b3_request(inst, registry)
+    request = baselines.build_b3_request(inst)
     assert "\n\nResources:\n" in request
     assert "Task:" not in request
     assert request.endswith(render.DIRECT_FINAL_LINE)
@@ -43,11 +43,39 @@ def test_b3_visible_direct_plural_block():
 
 def test_b5_union_payload_and_task():
     latent, inst, registry = env("fork_join")
-    request, binding = baselines.build_b5_request(inst, registry)
+    request, binding = baselines.build_b5_request(inst)
     assert f"Task:\n{baselines.B5_TASK}" in request
     assert "\n\nResources:\n" in request
     assert set(binding.resources) == set(inst["public_manifest"])
     assert request.endswith(render.ARTIFACT_FINAL_LINE)
+
+
+def test_b3_and_b5_payloads_come_from_their_own_instance():
+    """B5 is load-bearing: oracle-versus-one-call is a cell-admission
+    gate, so a mis-wired registry would move the measured gap."""
+    import copy
+    latent, inst, _ = env("fork_join")
+    handle = inst["public_manifest"][0]
+    foreign = copy.deepcopy(inst)
+    foreign["private_registry"][handle]["payload"][0][1][0][1] = 424242
+    # There is no registry argument to mis-wire; a foreign payload can only
+    # be disclosed by actually being in the instance.
+    for build in (lambda i: baselines.build_b3_request(i),
+                  lambda i: baselines.build_b5_request(i)[0]):
+        assert "424242" not in build(inst)
+        assert "424242" in build(foreign)  # only via its own registry
+    _, binding = baselines.build_b5_request(inst)
+    own = InstanceRegistry(inst["public_manifest"], inst["private_registry"])
+    assert {h: binding.resources[h] for h in binding.resources} == \
+        {h: own.resolve(h) for h in own.manifest}
+
+
+def test_b3_and_b5_validate_instance_identity():
+    _, inst, _ = env("lookup_math")
+    tampered = dict(inst, visibility_condition="visible")  # stale id
+    for build in (baselines.build_b3_request, baselines.build_b5_request):
+        with pytest.raises(InfrastructureError, match="render_instance_id"):
+            build(tampered)
 
 
 def test_generic_subtask_frozen_string():

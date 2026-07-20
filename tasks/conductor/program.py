@@ -292,13 +292,15 @@ def validate_reference_program(program: dict[str, Any],
                                manifest: list[str],
                                registry: dict[str, Resource]) -> None:
     """Every §1.3 IR validity rule; raises LoadError on violation."""
-    # Same boundary discipline as InstanceRegistry: cardinality and handle
-    # shape before the set comparison, which a repeated handle would pass.
+    # Same boundary discipline as InstanceRegistry: element types, then
+    # cardinality, then the set comparison a repeated handle would pass.
+    if not isinstance(manifest, (list, tuple)):
+        raise LoadError("manifest must be a list of handles")
+    for handle in manifest:
+        if not isinstance(handle, str) or not is_handle(handle):
+            raise LoadError(f"malformed handle {handle!r} in manifest")
     if len(set(manifest)) != len(manifest):
         raise LoadError(f"duplicate handles in manifest {manifest}")
-    for handle in manifest:
-        if not is_handle(handle):
-            raise LoadError(f"malformed handle {handle!r} in manifest")
     if set(manifest) != set(registry):
         raise LoadError("manifest keys != registry keys")
     nodes = program["nodes"]
