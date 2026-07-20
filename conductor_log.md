@@ -301,6 +301,48 @@ comparator) the schema-valid rate §1.8 requires alongside it.
   different environments. Until it exists, `CalibrationBundle.gate_report()`
   raises and no Stage-1 gate may be reported.
 
+### Stage 0A close-out (2026-07-20)
+
+**Signed off** in `plans/conductor/57_s_stage_0a_review.md` ("I recommend
+Stage 0A sign-off after the small remaining changes below"), after eight
+review rounds (`50_s`–`57_s`). The three remaining P3 items were
+implemented in the final commit:
+
+1. `draw_intervention` requires a self-consistent latent identity — the
+   current `generator_version`, and a `latent_program_id`/`seed` that
+   re-derive from the latent's own cell/namespace/index — since the
+   intervention seed derives from that id.
+2. `InterventionReport` canonicalizes every derived field after the
+   tolerance comparison, so a within-tolerance float perturbation cannot
+   survive a round-trip or retain an accuracy fractionally above 1.
+3. `validate_instance` validates the exact §1.3 record shape and parsed
+   identity first, and translates every failure (missing fields, malformed
+   ids, renderer errors, regeneration failures) into `LoadError` — the
+   persisted-artifact boundary the resumable Stage-1 loader relies on.
+
+**Final acceptance evidence** (close-out procedure from `57_s`, all on the
+closing commit):
+
+```
+uv run pytest -q -W error            # 463 passed (50 pre-existing + 413 conductor)
+uv run python -m tasks.conductor.agreement --cases 10000
+# agreement: 16665/16665 node executions agree over 10000 latent programs
+# (all 13 operator × cell strata exercised; exit 0)
+uv run python -m tasks.conductor.gen_byte_fixtures   # 58 hashes, no diff
+git diff --check                     # clean
+```
+
+Per the reviewer's guidance, no further Stage 0A adversarial audits: the
+next scientifically valuable review runs against real Stage 0B/1 execution
+(worker/runtime fingerprints, real chat-template bytes, cache keys, trace
+persistence, execution provenance, calibration integration). From here,
+any change to frozen generation, rendering, prompt, parser or tool
+behavior is a **versioned experiment change** (bump
+`GENERATOR_CODE_VERSION`; after qualification data exists it retires the
+affected qualification set), never an informal cleanup. The
+construction-screen blockers above remain the gating items before
+qualification.
+
 ## Backlog (Stage-2+ entry gates)
 
 - CE0 (at 0C): benchmark gates — <22 GB peak, projected seed ≤ overnight,

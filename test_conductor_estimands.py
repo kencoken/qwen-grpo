@@ -833,6 +833,24 @@ def test_numeric_fields_are_type_exact_and_finite(field, value):
         estimands.InterventionReport.from_json(payload)
 
 
+def test_within_tolerance_perturbations_are_canonicalized():
+    """The statistics are the source of truth: a float perturbation inside
+    the comparison tolerance must not survive the round-trip — it could
+    retain an accuracy fractionally above 1 and make the revived report
+    unequal to the canonical one."""
+    report = intervention_report([outcome("c1", "o1"),
+                                  outcome("c1", "o2", mutated=10)])
+    payload = json.loads(json.dumps(report.to_json()))
+    perturbed = dict(payload, base_accuracy=payload["base_accuracy"] + 5e-10)
+    revived = estimands.InterventionReport.from_json(perturbed)
+    assert revived.base_accuracy == report.base_accuracy  # canonicalized
+    assert revived == report
+    assert revived.to_json() == report.to_json()
+    above_one = dict(payload, base_accuracy=1.0 + 5e-10)
+    revived_above = estimands.InterventionReport.from_json(above_one)
+    assert revived_above.base_accuracy <= 1.0
+
+
 def test_report_is_recursively_immutable():
     report = intervention_report([outcome("c1", "o1")])
     with pytest.raises(TypeError):   # inner mapping, not just the outer one

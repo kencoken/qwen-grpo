@@ -643,6 +643,67 @@ def test_draw_intervention_requires_the_latents_own_profile():
         program.draw_intervention(latent, "n1", "n2", other)
 
 
+def test_draw_intervention_requires_a_self_consistent_latent_identity():
+    """The intervention seed derives from latent_program_id, so a swapped
+    id or a stale generator version would silently change the
+    deterministic replacement."""
+    latent = generate_latent("lookup_math", "construction", 0, PROF).latent
+    other = generate_latent("lookup_math", "construction", 1, PROF).latent
+    baseline = program.draw_intervention(latent, "n1", "n2", PROF)
+
+    stale = dict(latent, generator_version="specs-v0.8+older")
+    with pytest.raises(GenerationError, match="generator_version"):
+        program.draw_intervention(stale, "n1", "n2", PROF)
+
+    swapped = dict(latent, latent_program_id=other["latent_program_id"])
+    with pytest.raises(GenerationError, match="does not derive"):
+        program.draw_intervention(swapped, "n1", "n2", PROF)
+
+    wrong_seed = dict(latent, seed=latent["seed"] + 1)
+    with pytest.raises(GenerationError, match="does not derive"):
+        program.draw_intervention(wrong_seed, "n1", "n2", PROF)
+
+    # The untouched latent still draws its deterministic replacement.
+    assert program.draw_intervention(latent, "n1", "n2", PROF) == baseline
+
+
+@pytest.mark.parametrize("corrupt,match", [
+    (lambda i: i.pop("gold_answer"), "missing \\['gold_answer'\\]"),
+    (lambda i: i.update(extra=1), "unexpected \\['extra'\\]"),
+    (lambda i: i.update(render_instance_id="bogus"),
+     "malformed render_instance_id"),
+    (lambda i: i.update(render_instance_id="a:b:00x:deadbeef:rf:private"),
+     "malformed render_instance_id"),
+    (lambda i: i.update(renderer_id="bogus"), "does not regenerate|mismatch"),
+    # Index past the namespace cap, changed consistently in both ids so the
+    # identity parses: GenerationError is translated, not leaked.
+    (lambda i: i.update(
+        latent_program_id=i["latent_program_id"].replace(":00002:",
+                                                         ":99999:"),
+        render_instance_id=i["render_instance_id"].replace(":00002:",
+                                                           ":99999:")),
+     "does not regenerate"),
+    # Ids that disagree with each other are a shape error caught before
+    # regeneration.
+    (lambda i: i.update(
+        render_instance_id=i["render_instance_id"].replace(":00002:",
+                                                           ":00003:")),
+     "disagrees with render_instance_id"),
+])
+def test_validate_instance_always_raises_load_error(corrupt, match):
+    """The persisted-artifact boundary the resumable Stage-1 loader relies
+    on: malformed shapes, identities and regeneration failures surface as
+    LoadError, never raw KeyError/ValueError/GenerationError."""
+    latent = generate_latent("lookup_math", "construction", 2, PROF).latent
+    instance = program.render_instance(latent, "resource_first", "private")
+    bad = copy.deepcopy(instance)
+    corrupt(bad)
+    with pytest.raises(LoadError, match=match):
+        program.validate_instance(bad, PROF)
+    with pytest.raises(LoadError):
+        program.validate_instance("not a dict", PROF)
+
+
 def test_drawn_interventions_always_move_the_sink():
     """§3 replacement rules are constructed to provably change the sink."""
     for cell in ("lookup_math", "math_code", "fork_join"):

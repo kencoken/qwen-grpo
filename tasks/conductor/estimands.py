@@ -261,12 +261,20 @@ class InterventionReport:
                 if not _is_finite_number(got) or abs(got - want) > 1e-9:
                     raise InfrastructureError(
                         f"{name} is {got!r}, derived {want}")
+        # Canonicalize: the statistics are the source of truth, so retain
+        # the *recomputed* values, not the caller-supplied ones — a
+        # within-tolerance float perturbation must not survive the
+        # round-trip (it could leave an accuracy fractionally above 1 and
+        # make a revived report unequal to the canonical one).
+        for name, want in expected.items():
+            if not isinstance(want, Mapping):
+                object.__setattr__(self, name, want)
         object.__setattr__(self, "cluster_successes", MappingProxyType({
             cluster: MappingProxyType(dict(values))
-            for cluster, values in self.cluster_successes.items()}))
+            for cluster, values in expected["cluster_successes"].items()}))
         for name in ("cluster_weighted", "cluster_observation_counts"):
             object.__setattr__(self, name,
-                               MappingProxyType(dict(getattr(self, name))))
+                               MappingProxyType(dict(expected[name])))
 
     def __deepcopy__(self, memo: dict) -> "InterventionReport":
         return self  # every nested mapping is frozen above

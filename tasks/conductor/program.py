@@ -32,8 +32,8 @@ from .types import (
     OP_SCHEMAS, OPERAND_NAME_MATCHED_OPS, PUBLIC_NUMERIC_PARAMS, RENDERER_IDS,
     VISIBILITY_CONDITIONS, InfrastructureError, IntegerList, IntegerRecord,
     PublicParams, Resource, format_latent_program_id,
-    format_render_instance_id, is_handle, public_projection,
-    resource_from_json,
+    format_render_instance_id, is_handle, parse_render_instance_id,
+    public_projection, resource_from_json,
 )
 
 SEP = "\x1f"  # §1.13 separator ␟
@@ -528,15 +528,34 @@ def draw_intervention(latent: dict[str, Any], u: str, v: str,
     The public entry point validates that `profile` is the profile the
     latent was generated under — the replacement support is drawn from it,
     so a mis-wired but individually valid profile would silently change the
-    counterfactual target on a resumed run. Internal generation calls
-    `_draw_intervention` directly, having validated the profile once at the
-    top of `generate_latent`, so this hash is not repeated per edge.
+    counterfactual target on a resumed run — and that the latent's own
+    identity is self-consistent: the intervention seed derives from
+    `latent_program_id`, so a swapped id would silently change the
+    deterministic replacement. Internal generation calls
+    `_draw_intervention` directly, having established both once at the top
+    of `generate_latent`, so neither check is repeated per edge.
     """
     validate_profile(profile)
     if profile_version(profile) != latent["difficulty_profile_version"]:
         raise GenerationError(
             f"intervention profile {profile_version(profile)} does not match "
             f"the latent's {latent['difficulty_profile_version']}")
+    if latent.get("generator_version") != GENERATOR_VERSION:
+        raise GenerationError(
+            f"latent generator_version {latent.get('generator_version')!r} "
+            f"is not the current {GENERATOR_VERSION!r}; regenerate it")
+    material = seed_material(GENERATOR_VERSION,
+                             latent["difficulty_profile_version"],
+                             latent["namespace"], latent["cell_id"],
+                             latent["latent_index"])
+    expected_id = latent_program_id(latent["cell_id"], latent["namespace"],
+                                    latent["latent_index"], material)
+    if latent["latent_program_id"] != expected_id \
+            or latent["seed"] != h64(material):
+        raise GenerationError(
+            f"latent identity {latent['latent_program_id']!r} does not "
+            f"derive from its own cell/namespace/index (expected "
+            f"{expected_id!r})")
     return _draw_intervention(latent, u, v, profile)
 
 
@@ -1054,24 +1073,60 @@ def render_instance(latent: dict[str, Any], renderer_id: str,
     }
 
 
+# The exact §1.3 stored-instance schema, for load-time shape validation.
+INSTANCE_FIELDS = frozenset({
+    "cell_id", "latent_program_id", "render_instance_id", "renderer_id",
+    "split_id", "visibility_condition", "difficulty_profile_version",
+    "generator_version", "seed", "public_numeric_values",
+    "public_numeric_collision_nodes", "public_numeric_collision",
+    "sink_public_numeric_collision", "public_prompt", "public_manifest",
+    "private_registry", "reference_program", "gold_answer",
+})
+
+
 def validate_instance(instance: dict[str, Any],
                       profile: dict[str, Any]) -> None:
     """§4 normative load-time validation: regenerate from identity fields and
     require byte/field equality; re-run IR validation and reference
     evaluation. The generator's rejection path re-asserts the sampling rules.
-    Mismatch = LoadError."""
-    lp_id = instance["latent_program_id"]
-    cell_id, namespace, index_str, _ = lp_id.split(":")
+
+    Every failure surfaces as LoadError — this is the persisted-artifact
+    boundary the resumable Stage-1 loader relies on, so malformed shapes,
+    malformed identities, and regeneration failures are all translated
+    rather than leaking KeyError/ValueError/GenerationError.
+    """
+    if not isinstance(instance, dict):
+        raise LoadError(f"instance must be an object, got "
+                        f"{type(instance).__name__}")
+    if set(instance) != INSTANCE_FIELDS:
+        missing = sorted(INSTANCE_FIELDS - set(instance))
+        extra = sorted(set(instance) - INSTANCE_FIELDS)
+        raise LoadError(f"instance fields do not match the §1.3 schema "
+                        f"(missing {missing}, unexpected {extra})")
+    try:
+        render_id = parse_render_instance_id(instance["render_instance_id"])
+    except ValueError as exc:
+        raise LoadError(f"malformed render_instance_id: {exc}") from exc
+    if instance["latent_program_id"] != render_id.latent_program_id:
+        raise LoadError("latent_program_id disagrees with render_instance_id")
     if instance["difficulty_profile_version"] != profile_version(profile):
         raise LoadError("difficulty_profile_version mismatch")
-    result = generate_latent(cell_id, namespace, int(index_str), profile)
-    regenerated = render_instance(result.latent, instance["renderer_id"],
-                                  instance["visibility_condition"])
+    latent = render_id.latent
+    try:
+        result = generate_latent(latent.cell_id, latent.namespace,
+                                 latent.latent_index, profile)
+        regenerated = render_instance(result.latent, instance["renderer_id"],
+                                      instance["visibility_condition"])
+    except (GenerationError, ValueError) as exc:
+        raise LoadError(f"instance does not regenerate: {exc}") from exc
     if regenerated != instance:
         diff = [k for k in regenerated
                 if regenerated[k] != instance.get(k)]
         raise LoadError(f"instance mismatch on fields {diff}")
-    registry = registry_from_json(instance["private_registry"])
+    try:
+        registry = registry_from_json(instance["private_registry"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise LoadError(f"malformed private_registry: {exc}") from exc
     validate_reference_program(instance["reference_program"],
                                instance["public_manifest"], registry)
     values = evaluate_reference(instance["reference_program"], registry)
