@@ -62,3 +62,7 @@ vLLM generation (fits 1.5B/3B in colocate mode — the Stage-2 sweep speedup),
 SFT warm start, multi-GPU, MATH500/`math_verify`, the Countdown task,
 Conductor/worker machinery. Each has a marked home: tasks in `data.py` +
 `rewards.py`, everything else in `train.py`'s config.
+
+The toy Conductor environment (Stage 0A, CPU-only) lives in
+`tasks/conductor/` — see `conductor_cell_specs.md` (frozen v0.8) and
+`conductor_log.md`.

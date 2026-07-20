@@ -9,6 +9,7 @@ dependencies = [
     "peft>=0.19.1",
     # floor relaxed so the resolver can honor vLLM's exact torch pin
     # (vllm 0.24.0 -> torch==2.11.0); vLLM releases lag one torch minor
+    "scikit-learn>=1.9.0",
     "torch>=2.11",
     "trl>=1.7.1",
     "vllm>=0.24",

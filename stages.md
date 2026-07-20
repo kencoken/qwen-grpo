@@ -166,3 +166,6 @@ mandatory SFT warm-start. A full planning pass precedes any build.
   no training state on the GPU (Phase B unlock).
 - NVIDIA driver 560 caps CUDA at 12.6: torch stays on the cu126 wheel index
   (pinned in pyproject.toml).
+
+Conductor Stages 0–1 progress and pre-registrations live in
+`conductor_log.md`; specs frozen in `conductor_cell_specs.md` (v0.8).
