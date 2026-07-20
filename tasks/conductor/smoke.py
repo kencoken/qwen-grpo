@@ -58,14 +58,16 @@ def build_items(per_cell: int) -> tuple[list[WorkflowItem], dict[str, int]]:
 
 def run_pass(rt, items, trace=None):
     stats = {"calls": Counter(), "cache_hits": 0, "truncated": 0,
-             "records": []}
+             "truncated_by_endpoint": Counter(), "records": []}
 
     def call(worker_id, requests):
-        records = rt.worker_call_batch(ENDPOINT_NAMES[worker_id], requests)
-        stats["calls"][ENDPOINT_NAMES[worker_id]] += len(records)
+        name = ENDPOINT_NAMES[worker_id]
+        records = rt.worker_call_batch(name, requests)
+        stats["calls"][name] += len(records)
         stats["cache_hits"] += sum(r.cache_hit for r in records)
-        stats["truncated"] += sum(r.generation_hit_token_cap
-                                  for r in records)
+        truncated = sum(r.generation_hit_token_cap for r in records)
+        stats["truncated"] += truncated
+        stats["truncated_by_endpoint"][name] += truncated
         stats["records"].extend(records)
         return records
 
@@ -96,10 +98,21 @@ def main() -> int:
         results, stats = run_pass(rt, items, trace=trace)
     statuses = Counter()
     correct = 0
+    per_endpoint: dict[str, Counter] = {name: Counter()
+                                        for name in ENDPOINT_NAMES.values()}
     for item, result in zip(items, results):
         for step in result.steps:
             statuses[step.result.status if step.result else
                      f"world:{step.world_failure}"] += 1
+            if step.completion is None:
+                continue  # pseudo-worker, world failure, or blocked
+            ep = per_endpoint[ENDPOINT_NAMES[step.worker_id]]
+            ep["calls"] += 1
+            assert step.result is not None
+            ep["artifact_valid"] += step.result.artifact_valid
+            ep["success"] += step.result.status == "success"
+            if step.result.rejection_code:
+                ep[step.result.rejection_code] += 1
         correct += executor.score_terminal(result.terminal,
                                            golds[item.item_id]) == 1.0
     print(f"pass 1: calls {dict(stats['calls'])}, "
@@ -107,6 +120,19 @@ def main() -> int:
           f"truncated {stats['truncated']}")
     print(f"pass 1: step statuses {dict(statuses)}; "
           f"terminal correct (descriptive) {correct}/{len(items)}")
+    # Per-endpoint D16 diagnostics (descriptive; construction namespace):
+    # artifact_valid = envelope + grammar both accepted (§1.7 flag table);
+    # rejection-code histogram separates envelope, grammar and semantic
+    # failures; truncation is counted from call telemetry above.
+    for name, ep in per_endpoint.items():
+        if ep["calls"]:
+            detail = {code: n for code, n in ep.items()
+                      if code not in ("calls", "artifact_valid", "success")}
+            print(f"pass 1 [{name}]: calls {ep['calls']}, "
+                  f"artifact_valid {ep['artifact_valid']}, "
+                  f"success {ep['success']}, "
+                  f"truncated {stats['truncated_by_endpoint'][name]}, "
+                  f"rejections {detail}")
 
     results2, stats2 = run_pass(rt, items)
     total2 = sum(stats2["calls"].values())

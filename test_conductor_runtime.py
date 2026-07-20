@@ -164,6 +164,7 @@ def test_worker_visible_fields_change_worker_visible():
         prof,
         profile_with(nf4={**PROFILE["nf4"], "double_quant": "false"}),
         profile_with(tools={**PROFILE["tools"], "math": "v0.9"}),
+        profile_with(prompts={"d16_revision": "rev999"}),
         profile_with(resource_policy="other-policy"),
     ]
     base = worker_visible_fingerprint(PROFILE, SHAS)

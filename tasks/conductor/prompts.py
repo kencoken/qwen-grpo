@@ -6,6 +6,24 @@ BEFORE the 100-example construction screen; they are fingerprinted, and any
 later change retires affected qualification sets. Nothing in this module is
 frozen by the phase-1 spec sign-off.
 
+Revision cycle (evidence per revision in `plans/conductor/60_f_…`):
+
+- rev0 (Stage 0A draft): instruction-only prompts, no worked examples.
+  Stage-0B smoke against the real pool: 0/14 legal artifacts — Lookup and
+  Math emitted correct expressions WITHOUT the envelope; Code used the
+  envelope but wrote the resource handle instead of the literal
+  identifier `resource`; Math hand-computed the arithmetic in long
+  chain-of-thought and hit the 256-token cap on 4/4 calls.
+- rev1: worked examples embedded in the system prompts (built at import
+  time from the machine-verified DEMONSTRATIONS below, so the example
+  text cannot drift from what the runtime actually accepts); explicit
+  "literal word resource, never the handle"; explicit "the tool computes,
+  you do not"; brevity instruction targeting the token-cap truncations.
+
+The §1.5 request skeleton — chat template over exactly (system, user) —
+is frozen; demonstrations enter as worked examples INSIDE the system
+prompt text, never as extra chat turns.
+
 Demonstrations are all grammar-legal and must execute through the runtime
 (0A acceptance: the executes-through-runtime test); demo payloads reuse the
 machine-verified §3 worked examples.
@@ -16,52 +34,14 @@ from __future__ import annotations
 from .types import IntegerList, IntegerRecord, Resource
 
 D16_STATUS = "DRAFT"  # flips to "FROZEN <date>" only via its own review
-
-SYSTEM_LOOKUP = """\
-You are a retrieval worker. Read the task and the resource, then respond \
-with exactly one <artifact>...</artifact> containing a single lookup \
-expression of the form lookup(resource, "Key", "field"). The expression is \
-executed against the authorized resource; its result is your answer. You \
-may reason before the artifact, but emit exactly one artifact and nothing \
-after it."""
-
-SYSTEM_MATH = """\
-You are an exact-arithmetic worker. Read the task, then respond with \
-exactly one <artifact>...</artifact> containing a single arithmetic \
-expression. Allowed: integer literals, single-letter operand names from \
-the resource (a, b, c, d, m), previous results (step_1, step_2), \
-parentheses, and the operators + - * / %. Division must be exact; write \
-subtraction with the - operator (no negative literals). The expression is \
-evaluated by an exact calculator; its result is your answer. You may \
-reason before the artifact, but emit exactly one artifact and nothing \
-after it."""
-
-SYSTEM_CODE = """\
-You are a sequence-processing worker. Read the task, then respond with \
-exactly one <artifact>...</artifact> containing a single expression over \
-the whitelist: count_gt(seq, n), at(seq, n), stable_unique(seq), \
-rotate_left(seq, n), where seq is resource or a nested whitelist call and \
-n is a nonnegative integer or step_k. stable_unique keeps the first \
-occurrence of each value; rotate_left rotates left; at is zero-based. The \
-expression is executed by a whitelist interpreter; its result is your \
-answer. You may reason before the artifact, but emit exactly one artifact \
-and nothing after it."""
-
-SYSTEM_DIRECT = """\
-Solve the problem using only the information given. You may reason step by \
-step. Answer with a single integer on the final line."""
-
-SYSTEM_PROMPTS = {
-    "lookup": SYSTEM_LOOKUP,
-    "math": SYSTEM_MATH,
-    "code": SYSTEM_CODE,
-    "direct": SYSTEM_DIRECT,
-}
+D16_REVISION = "rev1"  # bumps with any change to the strings below
 
 
 # --- demonstrations (endpoint -> [(subtask, resource, completion)]) ---------
 # Payloads are §3 machine-verified worked examples; completions are legal
-# artifacts whose executed value equals the example gold.
+# artifacts whose executed value equals the example gold. The system
+# prompts embed these same objects as worked examples, so the prompt text
+# is checked by the executes-through-runtime test by construction.
 
 _DEMO_LOOKUP_RECORD = IntegerRecord(layout="keyed", payload=(
     ("Aster", (("crates", 31),)), ("Cedar", (("crates", 17),)),
@@ -97,6 +77,101 @@ DEMONSTRATIONS: dict[str, list[dict[str, object]]] = {
                       "</artifact>",
         "value": 4,
     }],
+}
+
+
+def _demo_payload_text(endpoint: str) -> str:
+    demo = DEMONSTRATIONS[endpoint][0]
+    resource = demo["resource"]
+    assert isinstance(resource, (IntegerRecord, IntegerList))
+    return resource.payload_text(str(demo["handle"]))
+
+
+def _demo_completion(endpoint: str) -> str:
+    return str(DEMONSTRATIONS[endpoint][0]["completion"])
+
+
+SYSTEM_LOOKUP = f"""\
+You are a retrieval worker. Respond with exactly one \
+<artifact>...</artifact> containing a single expression of the form \
+lookup(resource, "Key", "field"). Always write the literal word resource \
+as the first argument — never the resource's name (such as R-7K2). The \
+expression is executed against the resource shown in the request; its \
+result is your answer.
+
+Worked example — given this resource:
+
+{_demo_payload_text("lookup")}
+
+the task "{DEMONSTRATIONS["lookup"][0]["subtask"]}" has this complete, \
+correct response:
+
+{_demo_completion("lookup")}
+
+Reply with at most one short sentence of reasoning, then the artifact. \
+Your reply must contain <artifact> and </artifact> exactly once, with the \
+expression between them."""
+
+SYSTEM_MATH = f"""\
+You are an exact-arithmetic worker. An exact calculator evaluates the one \
+expression you emit — do NOT compute the value yourself and do NOT show \
+numeric working. Respond with exactly one <artifact>...</artifact> \
+containing a single expression. Allowed: integer literals, single-letter \
+operand names from the resource (a, b, c, d, m), previous results \
+(step_1, step_2), parentheses, and the operators + - * / %. Division must \
+be exact; write subtraction with the - operator (no negative literals). \
+Plain ASCII only — no LaTeX.
+
+Worked example — given this resource:
+
+{_demo_payload_text("math")}
+
+the task "{DEMONSTRATIONS["math"][0]["subtask"]}" has this complete, \
+correct response:
+
+{_demo_completion("math")}
+
+Reply with at most one short sentence of reasoning, then the artifact. \
+Your reply must contain <artifact> and </artifact> exactly once, with the \
+expression between them."""
+
+SYSTEM_CODE = f"""\
+You are a sequence-processing worker. Respond with exactly one \
+<artifact>...</artifact> containing a single expression over the \
+whitelist: count_gt(seq, n), at(seq, n), stable_unique(seq), \
+rotate_left(seq, n), where seq is the literal word resource or a nested \
+whitelist call — never the resource's name (such as R-8C3) — and n is a \
+nonnegative integer or step_k. stable_unique keeps the first occurrence \
+of each value; rotate_left rotates left; at is zero-based. The expression \
+is executed by a whitelist interpreter against the resource shown in the \
+request; its result is your answer.
+
+Worked example — given this resource:
+
+{_demo_payload_text("code")}
+
+the task "{DEMONSTRATIONS["code"][0]["subtask"]}" has this complete, \
+correct response:
+
+{_demo_completion("code")}
+
+Reply with at most one short sentence of reasoning, then the artifact. \
+Your reply must contain <artifact> and </artifact> exactly once, with the \
+expression between them."""
+
+# Unchanged from rev0: the direct arms (B1/B3/B4) run on the policy model,
+# which the worker pool does not load; revising SYSTEM_DIRECT without
+# execution evidence would be a change without measurement. Revisit when
+# the baseline harness can execute direct arms (Stage 1A calibrate).
+SYSTEM_DIRECT = """\
+Solve the problem using only the information given. You may reason step by \
+step. Answer with a single integer on the final line."""
+
+SYSTEM_PROMPTS = {
+    "lookup": SYSTEM_LOOKUP,
+    "math": SYSTEM_MATH,
+    "code": SYSTEM_CODE,
+    "direct": SYSTEM_DIRECT,
 }
 
 

@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .profiles import ProfileError, canonical_json
+from .prompts import D16_REVISION
 from .types import ENDPOINT_NAMES, InfrastructureError
 
 # Grammar/tool versioning (§1.10 "artifact grammar, tool version"): the
@@ -100,6 +101,11 @@ DEFAULT_RUNTIME_PROFILE: dict[str, Any] = {
         "stopping": "eos",
     },
     "tools": dict(TOOL_VERSIONS),
+    # D16 prompt revision — execution provenance named by the 0A
+    # close-out; worker-visible (the system prompt is in every rendered
+    # request), so a prompt revision retires cached completions even
+    # beyond the byte change in the requests themselves.
+    "prompts": {"d16_revision": D16_REVISION},
     "resource_policy": RESOURCE_POLICY,
     "visibility_condition": "private",
     # Conductor-side fields (never worker-visible):
@@ -151,6 +157,9 @@ def validate_runtime_profile(profile: Mapping[str, Any]) -> None:
             if not isinstance(worker[key], str) or not worker[key]:
                 raise ProfileError(f"worker {name}.{key} must be a non-empty "
                                    "string")
+    if set(profile["prompts"]) != {"d16_revision"} or \
+            not isinstance(profile["prompts"]["d16_revision"], str):
+        raise ProfileError("prompts must hold exactly a string d16_revision")
     if profile["visibility_condition"] not in ("private", "visible"):
         raise ProfileError("visibility_condition must be private|visible")
     if profile["decoding"].get("do_sample") != "false":
