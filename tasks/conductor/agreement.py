@@ -63,14 +63,51 @@ _ENDPOINT_FOR_OP = {"lookup": 0, "affine": 1, "mul_add": 1, "ratio": 1,
                     "modular": 1, "product_affine": 1, "seq_count": 2,
                     "seq_select": 2, "seq_at": 2}
 
+# Every operator × cell stratum the six cells can produce. A run that never
+# exercises one of these has not tested what the command claims to test, so
+# it fails rather than reporting success on partial coverage.
+EXPECTED_STRATA = {
+    ("lookup", "lookup_atomic"),
+    ("ratio", "math_atomic"), ("modular", "math_atomic"),
+    ("mul_add", "math_atomic"),
+    ("seq_count", "code_atomic"), ("seq_select", "code_atomic"),
+    ("lookup", "lookup_math"), ("affine", "lookup_math"),
+    ("modular", "math_code"), ("seq_at", "math_code"),
+    ("lookup", "fork_join"), ("seq_count", "fork_join"),
+    ("product_affine", "fork_join"),
+}
+
+
+def plan_cases(cases: int, namespace: str) -> dict[str, int]:
+    """Latent programs per cell, distributing the remainder so the achieved
+    total equals the request exactly. Raises if the namespace's predeclared
+    maxima cannot supply the request — a silently truncated run must never
+    be reported as a passing acceptance command."""
+    if cases < len(CELL_IDS):
+        raise ValueError(f"--cases must be at least {len(CELL_IDS)} "
+                         f"(one per cell)")
+    base, remainder = divmod(cases, len(CELL_IDS))
+    plan = {cell: base + (1 if i < remainder else 0)
+            for i, cell in enumerate(CELL_IDS)}
+    short = {cell: (count, program.namespace_cap(namespace, cell))
+             for cell, count in plan.items()
+             if count > program.namespace_cap(namespace, cell)}
+    if short:
+        detail = ", ".join(f"{cell}: need {n}, cap {cap}"
+                           for cell, (n, cap) in sorted(short.items()))
+        raise ValueError(
+            f"namespace {namespace!r} cannot supply {cases} cases ({detail})")
+    return plan
+
 
 def run(cases: int, namespace: str = "train") -> int:
-    per_cell = cases // len(CELL_IDS)
+    plan = plan_cases(cases, namespace)
     strata: Counter = Counter()
+    latents_checked = 0
     mismatches = 0
     for cell in CELL_IDS:
-        cap = program.namespace_cap(namespace, cell)
-        for index in range(min(per_cell, cap)):
+        for index in range(plan[cell]):
+            latents_checked += 1
             latent = program.generate_latent(cell, namespace, index,
                                              DEFAULT_PROFILE).latent
             registry = program.registry_from_json(latent["private_registry"])
@@ -96,18 +133,41 @@ def run(cases: int, namespace: str = "train") -> int:
                     print(f"MISMATCH {latent['latent_program_id']} "
                           f"{node_id}: {result}", file=sys.stderr)
     total = sum(strata.values())
-    print(f"agreement: {total - mismatches}/{total} node executions agree")
+    print(f"agreement: {total - mismatches}/{total} node executions agree "
+          f"over {latents_checked} latent programs")
     for (op, cell), count in sorted(strata.items()):
         print(f"  {op:15s} × {cell:15s}: {count}")
-    return 1 if mismatches else 0
+
+    failures = []
+    if latents_checked != cases:
+        failures.append(f"checked {latents_checked} latents, requested "
+                        f"{cases}")
+    if not total:
+        failures.append("no node executions were checked")
+    missing = EXPECTED_STRATA - set(strata)
+    if missing:
+        failures.append(f"strata never exercised: {sorted(missing)}")
+    unexpected = set(strata) - EXPECTED_STRATA
+    if unexpected:
+        failures.append(f"unexpected strata: {sorted(unexpected)}")
+    for note in failures:
+        print(f"COVERAGE FAILURE: {note}", file=sys.stderr)
+    if mismatches:
+        print(f"AGREEMENT FAILURE: {mismatches} mismatches", file=sys.stderr)
+    return 1 if (mismatches or failures) else 0
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--cases", type=int, default=10_000)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--cases", type=int, default=10_000,
+                    help="latent programs to check, split evenly across the "
+                         "six cells (remainder distributed)")
     ap.add_argument("--namespace", default="train")
     args = ap.parse_args()
-    sys.exit(run(args.cases, args.namespace))
+    try:
+        sys.exit(run(args.cases, args.namespace))
+    except ValueError as exc:
+        ap.error(str(exc))
 
 
 if __name__ == "__main__":

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .types import RENDERER_IDS, PublicParams, require_public
+
 # Prompt typography (§1.4): real × (U+00D7), − (U+2212), ÷ (U+00F7).
 TIMES, MINUS, DIVIDE = "×", "−", "÷"
 
@@ -34,13 +36,16 @@ DIRECT_FINAL_LINE = "Answer with a single integer on the final line."
 
 
 def render_public_prompt(cell_id: str, renderer_id: str,
-                         params: dict[str, Any]) -> str:
+                         params: PublicParams) -> str:
     """The §3 renderer string for one cell/subtype/renderer.
 
-    `params` holds public parameters and handles only: H/H1/H2, key, field,
-    p, q, sign, t, k, i, template, shape, branch_order as applicable.
+    `params` is the PublicParams projection (§1.4): handles and public
+    parameters only — private operands and private-derived values are not
+    members of the type, so they cannot reach a template.
     """
-    p = params
+    p = require_public(params, cell_id)
+    if renderer_id not in RENDERER_IDS:
+        raise ValueError(f"unknown renderer {renderer_id!r}")
     if cell_id == "lookup_atomic":
         return {
             "resource_first": (
@@ -192,9 +197,9 @@ def render_public_prompt(cell_id: str, renderer_id: str,
 
 # --- §3: reference subtasks (tool-neutral), keyed by semantic node ----------
 
-def reference_subtasks(cell_id: str, params: dict[str, Any]) -> dict[str, str]:
-    """Semantic node id -> frozen reference subtask string."""
-    p = params
+def reference_subtasks(cell_id: str, params: PublicParams) -> dict[str, str]:
+    """Semantic node id -> frozen reference subtask string (tool-neutral)."""
+    p = require_public(params, cell_id)
     lookup_st = (f"Retrieve {p.get('key')}'s {p.get('field')} value from the "
                  f"requested resource.")
     if cell_id == "lookup_atomic":
@@ -237,8 +242,8 @@ def _code_subtask(shape: str, p: dict[str, Any]) -> str:
 
 
 # §1.11/D12: frozen contracted two-call shortcut subtasks (fork_join).
-def two_call_subtasks(orientation: str, params: dict[str, Any]) -> list[str]:
-    p = params
+def two_call_subtasks(orientation: str, params: PublicParams) -> list[str]:
+    p = require_public(params, "fork_join")
     if orientation == "lookup_first":
         return [
             (f"Retrieve {p['key']}'s {p['field']} value from the requested "

@@ -115,6 +115,13 @@ def band_size(b: tuple[int, int]) -> int:
     return b[1] - b[0] + 1
 
 
+# The samplers draw through NumPy's int64 generators. A band outside that
+# range passes arithmetic validation and then fails deep inside sampling
+# with "high is out of bounds for int64" — so representability is a
+# profile-load check, never an instance-generation surprise.
+INT64_MIN, INT64_MAX = -(2**63), 2**63 - 1
+
+
 def _check_band(cell: str, name: str, value: Any) -> tuple[int, int]:
     ok = (isinstance(value, list) and len(value) == 2
           and all(isinstance(v, int) and not isinstance(v, bool) for v in value))
@@ -123,6 +130,10 @@ def _check_band(cell: str, name: str, value: Any) -> tuple[int, int]:
     lo, hi = value
     if lo > hi:
         raise ProfileError(f"{cell}.{name}: min {lo} > max {hi}")
+    if lo < INT64_MIN or hi >= INT64_MAX:
+        raise ProfileError(
+            f"{cell}.{name}: band [{lo}, {hi}] is not representable by the "
+            f"int64 sampler")
     return lo, hi
 
 
@@ -231,6 +242,13 @@ def validate_profile(profile: dict[str, Any]) -> None:
     if value_band[0] < 1:
         raise ProfileError("code_atomic.value_band.min < 1 "
                            "(select returns a band value as the terminal)")
+    # `i` is a derived public literal (0 … U−1, U ≤ L), so its attainable
+    # maximum is bounded by the list length, not by a declared band.
+    max_index = _check_band("code_atomic", "L_band", ca["L_band"])[1] - 1
+    if max_index > PUBLIC_LITERAL_MAX:
+        raise ProfileError(
+            "code_atomic: derived public index i can exceed the 12-digit "
+            "grammar literal limit")
 
     # lookup_math
     lm = cells["lookup_math"]

@@ -78,17 +78,43 @@ def test_handle_shape_n1():
 
 # --- §1.7 WorkerResult invariants -------------------------------------------
 
-def test_worker_result_invariants():
+@pytest.mark.parametrize("args,why", [
+    (("success", None, None, True, True, False), "success needs a value"),
+    (("typed_failure", None, None, False, False, False), "code required"),
+    (("typed_failure", None, "E_BOGUS", False, False, False), "unknown code"),
+    (("dependency_blocked", None, None, True, False, False), "flags false"),
+    (("success", 5, None, True, True, True), "synthetic never executes"),
+    (("bogus_status", None, None, False, False, False), "unknown status"),
+    (("success", True, None, True, True, False), "bool is not an int value"),
+    (("success", 5, None, False, True, False), "tool needs valid artifact"),
+    (("success", 5, None, False, False, False), "endpoint success flags"),
+    (("typed_failure", None, "E_PARSE", True, True, False), "syntax flags"),
+    (("typed_failure", None, "E_UNKNOWN_KEY", False, False, False),
+     "semantic flags"),
+    (("success", 5, None, 1, True, False), "flags must be bools"),
+])
+def test_worker_result_invariants(args, why):
     with pytest.raises(InfrastructureError):
-        WorkerResult("success", None, None, True, True, False)
+        WorkerResult(*args)
+
+
+def test_worker_result_bool_value_cannot_score_as_gold_one():
+    """True == 1 in Python, so an unguarded bool value would be scored
+    correct against gold answer 1."""
     with pytest.raises(InfrastructureError):
-        WorkerResult("typed_failure", None, None, False, False, False)
-    with pytest.raises(InfrastructureError):
-        WorkerResult("typed_failure", None, "E_BOGUS", False, False, False)
-    with pytest.raises(InfrastructureError):
-        WorkerResult("dependency_blocked", None, None, True, False, False)
-    with pytest.raises(InfrastructureError):
-        WorkerResult("success", 5, None, True, True, True)  # synthetic+tool
+        WorkerResult("success", True, None, True, True, False)
+
+
+@pytest.mark.parametrize("args", [
+    ("success", 42, None, True, True, False),
+    ("typed_failure", None, "E_PARSE", False, False, False),
+    ("typed_failure", None, "E_UNKNOWN_KEY", True, True, False),
+    ("dependency_blocked", None, None, False, False, False),
+    ("success", 0, None, False, False, True),
+    ("typed_failure", None, "E_PARSE", False, False, True),
+])
+def test_worker_result_legal_truth_table_rows(args):
+    assert WorkerResult(*args).status == args[0]
 
 
 def test_rejection_code_partition():
@@ -135,6 +161,8 @@ def _mutated(path, value):
     (("fork_join", "q_band"), [0, 20]),              # fork q < 1
     (("fork_join", "count", "L_band"), [3, 16]),     # fork dedup L < 5
     (("fork_join", "derived_from"), {}),             # missing annotation
+    (("math_atomic", "a_band"), [1, 2**63]),         # not int64-representable
+    (("code_atomic", "L_band"), [8, 10**13]),        # derived index i > 12 digits
 ])
 def test_invalid_profile_rejected_at_load(path, value):
     with pytest.raises(ProfileError):

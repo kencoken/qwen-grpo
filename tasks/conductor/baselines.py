@@ -8,6 +8,8 @@ request text is built with the same frozen blocks as worker requests.
 from __future__ import annotations
 
 import re
+from collections import Counter
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -16,7 +18,10 @@ from sklearn.tree import DecisionTreeClassifier
 from . import contract, render
 from .resources import InstanceRegistry
 from .tools import Binding
-from .types import INTEGER_TOKEN_RE, InfrastructureError, WorkerResult
+from .types import (
+    INTEGER_TOKEN_RE, PUBLIC_NUMERIC_PARAMS, InfrastructureError,
+    PublicParams, WorkerResult, require_public,
+)
 
 B5_TASK = "Complete the task and return the final result."
 
@@ -112,19 +117,22 @@ OBSERVABLE_SUBTYPES: dict[str, tuple[str, ...]] = {
 _NUMERIC_COLUMNS = ("p", "q", "t", "k", "i")  # frozen order
 
 
-def observable_subtype(cell_id: str, params: dict[str, Any]) -> str:
+def observable_subtype(cell_id: str, params: PublicParams) -> str:
+    """Derivable from the public prompt alone — the projection is the only
+    input, so generator-only fields cannot reach a public-only control."""
+    p = require_public(params, cell_id)
     if cell_id == "math_atomic":
-        return params["template"]
+        return p["template"]
     if cell_id == "code_atomic":
-        return params["shape"]
+        return p["shape"]
     if cell_id == "lookup_math":
-        return "minus" if params["sign"] == "-" else "plus"
+        return "minus" if p["sign"] == "-" else "plus"
     if cell_id == "fork_join":
-        return params["branch_order"]
+        return p["branch_order"]
     return "constant"
 
 
-def feature_row(cell_id: str, params: dict[str, Any],
+def feature_row(cell_id: str, params: PublicParams,
                 public_numeric_values: dict[str, int]) -> list[int]:
     """Frozen feature contract: subtype one-hot in the frozen level order,
     then numeric columns exactly [p, q, t, k, i]; missing numeric → −1.
@@ -137,18 +145,66 @@ def feature_row(cell_id: str, params: dict[str, Any],
     return row
 
 
-def fit_shallow_predictor(cell_id: str,
-                          latents: list[dict[str, Any]]
+@dataclass(frozen=True)
+class PublicFeatureRecord:
+    """The sanitized row a public-only control may train or predict on.
+
+    Built by `public_feature_record` from a latent; carries no registry, no
+    reference program, and no private parameters — so a control that is
+    meant to diagnose public-prompt shortcuts cannot accidentally consume
+    private generator state.
+    """
+
+    cell_id: str
+    latent_program_id: str
+    namespace: str
+    params: PublicParams
+    public_numeric_values: dict[str, int]
+    gold_answer: int
+
+
+def public_feature_record(latent: dict[str, Any]) -> PublicFeatureRecord:
+    return PublicFeatureRecord(
+        cell_id=latent["cell_id"],
+        latent_program_id=latent["latent_program_id"],
+        namespace=latent["namespace"],
+        params=latent["public_params"],
+        public_numeric_values=dict(latent["public_numeric_values"]),
+        gold_answer=latent["gold_answer"])
+
+
+FIT_NAMESPACE = "construction"  # §1.11: fitted on construction data only
+
+
+def fit_shallow_predictor(cell_id: str, rows: list[PublicFeatureRecord]
                           ) -> DecisionTreeClassifier:
     """One classifier per cell; frozen hyperparameters; one training row per
     latent cluster (canonical resource_first rendering). Fitted on
     construction data only, then frozen. Prediction ties → lowest class
-    label (sklearn argmax picks the first/lowest label on ties)."""
-    if any(latent["cell_id"] != cell_id for latent in latents):
+    label (sklearn argmax picks the first/lowest label on ties).
+
+    The construction-only and one-row-per-cluster contracts are enforced
+    here: this control exists to diagnose public-prompt shortcuts, so
+    qualification rows leaking in would silently invalidate it.
+    """
+    if not rows:
+        raise InfrastructureError("no training rows")
+    if any(not isinstance(row, PublicFeatureRecord) for row in rows):
+        raise InfrastructureError(
+            "shallow predictor trains on PublicFeatureRecord rows only")
+    if any(row.cell_id != cell_id for row in rows):
         raise InfrastructureError("mixed-cell training rows")
-    X = [feature_row(cell_id, latent["params"],
-                     latent["public_numeric_values"]) for latent in latents]
-    y = [latent["gold_answer"] for latent in latents]
+    off_namespace = sorted({row.namespace for row in rows} - {FIT_NAMESPACE})
+    if off_namespace:
+        raise InfrastructureError(
+            f"shallow predictor is construction-only; got {off_namespace}")
+    ids = [row.latent_program_id for row in rows]
+    if len(set(ids)) != len(ids):
+        raise InfrastructureError(
+            "one training row per latent cluster; duplicate ids present")
+    X = [feature_row(cell_id, row.params, row.public_numeric_values)
+         for row in rows]
+    y = [row.gold_answer for row in rows]
     model = DecisionTreeClassifier(max_depth=3, criterion="gini",
                                    min_samples_leaf=5, random_state=0)
     model.fit(np.asarray(X), np.asarray(y))
@@ -156,7 +212,75 @@ def fit_shallow_predictor(cell_id: str,
 
 
 def shallow_predict(model: DecisionTreeClassifier, cell_id: str,
-                    params: dict[str, Any],
+                    params: PublicParams,
                     public_numeric_values: dict[str, int]) -> int:
     row = feature_row(cell_id, params, public_numeric_values)
     return int(model.predict(np.asarray([row]))[0])
+
+
+# --- §1.11 B1 reference controls (frozen fitting and selection rules) ------
+#
+# B1 is reported against these; leakage is decided by provenance, never by
+# an accuracy near zero. All three consume only the public projection, and
+# all are fitted on construction data before construction outcomes are
+# inspected.
+
+def fit_majority_class(cell_id: str, rows: list[PublicFeatureRecord]
+                       ) -> dict[str, int]:
+    """Per-(cell, observable subtype) majority gold value.
+
+    Frozen tie rule: highest count, then the lowest gold value — so the
+    control is a deterministic function of the construction sample.
+    """
+    _check_control_rows(cell_id, rows)
+    counts: dict[str, Counter] = {}
+    for row in rows:
+        subtype = observable_subtype(cell_id, row.params)
+        counts.setdefault(subtype, Counter())[row.gold_answer] += 1
+    return {subtype: min(counter.items(),
+                         key=lambda kv: (-kv[1], kv[0]))[0]
+            for subtype, counter in counts.items()}
+
+
+def majority_class_predict(model: dict[str, int], cell_id: str,
+                           params: PublicParams) -> int | None:
+    """None where the subtype was never seen during fitting — scored wrong,
+    never silently imputed."""
+    return model.get(observable_subtype(cell_id, params))
+
+
+def echo_family(cell_id: str) -> tuple[str, ...]:
+    """The public parameters a single-parameter echo predictor can use.
+
+    Evaluated only in subtypes where the parameter exists (§1.11): a `k`
+    echo is undefined for the count shape and is not scored there.
+    """
+    names = set()
+    for key, params in PUBLIC_NUMERIC_PARAMS.items():
+        if key == cell_id or key.startswith(f"{cell_id}_"):
+            names.update(params)
+    return tuple(sorted(names))
+
+
+def echo_predict(parameter: str,
+                 public_numeric_values: dict[str, int]) -> int | None:
+    """The parameter's own value, or None where it does not exist in this
+    subtype (excluded from that subtype's evaluation rather than scored)."""
+    return public_numeric_values.get(parameter)
+
+
+def _check_control_rows(cell_id: str, rows: list[PublicFeatureRecord]) -> None:
+    if not rows:
+        raise InfrastructureError("no fitting rows")
+    if any(not isinstance(row, PublicFeatureRecord) for row in rows):
+        raise InfrastructureError(
+            "B1 controls fit on PublicFeatureRecord rows only")
+    if any(row.cell_id != cell_id for row in rows):
+        raise InfrastructureError("mixed-cell fitting rows")
+    off = sorted({row.namespace for row in rows} - {FIT_NAMESPACE})
+    if off:
+        raise InfrastructureError(
+            f"B1 controls are construction-only; got {off}")
+    ids = [row.latent_program_id for row in rows]
+    if len(set(ids)) != len(ids):
+        raise InfrastructureError("duplicate latent clusters in fitting rows")

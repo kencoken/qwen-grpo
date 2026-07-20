@@ -20,8 +20,9 @@ from tasks.conductor.resources import InstanceRegistry
 PROF = DEFAULT_PROFILE
 
 
-def make_env(cell, index=0, renderer="resource_first", visibility="private"):
-    latent = program.generate_latent(cell, "construction", index, PROF).latent
+def make_env(cell, index=0, renderer="resource_first", visibility="private",
+             namespace="construction"):
+    latent = program.generate_latent(cell, namespace, index, PROF).latent
     inst = program.render_instance(latent, renderer, visibility)
     registry = InstanceRegistry(inst["public_manifest"],
                                 inst["private_registry"])
@@ -353,6 +354,33 @@ def test_two_call_family_and_tie_order():
     accuracy = {wf: 0.5 for wf in workflows}
     assert oracle.select_best_two_call(accuracy) == ("lookup_first", (0, 0))
     assert oracle.select_best_one_call({0: 0.5, 1: 0.5, 2: 0.4}) == 0
+
+
+# --- §4 agreement command coverage accounting -------------------------------
+
+def test_agreement_plan_covers_the_request_exactly():
+    from tasks.conductor import agreement
+    for cases in (6, 10, 100, 9999, 10_000):
+        plan = agreement.plan_cases(cases, "train")
+        assert sum(plan.values()) == cases  # no dropped remainder
+        assert set(plan) == set(ALL_CELLS)
+        assert max(plan.values()) - min(plan.values()) <= 1
+
+
+def test_agreement_rejects_impossible_requests():
+    from tasks.conductor import agreement
+    with pytest.raises(ValueError):
+        agreement.plan_cases(5, "train")            # fewer cases than cells
+    with pytest.raises(ValueError):
+        agreement.plan_cases(100_000, "construction")  # exceeds the caps
+
+
+def test_agreement_reports_failure_on_incomplete_coverage():
+    """A run too small to exercise every operator × cell stratum must fail
+    rather than report success on partial coverage."""
+    from tasks.conductor import agreement
+    assert agreement.run(6, "train") == 1        # 1 latent/cell: T2/T3 unseen
+    assert agreement.run(60, "train") == 0       # full strata coverage
 
 
 # --- §4 byte-stability fixture ----------------------------------------------

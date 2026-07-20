@@ -9,6 +9,7 @@ import pytest
 from tasks.conductor import baselines, program, render
 from tasks.conductor.profiles import DEFAULT_PROFILE
 from tasks.conductor.resources import InstanceRegistry
+from tasks.conductor.types import InfrastructureError
 
 PROF = DEFAULT_PROFILE
 
@@ -60,16 +61,22 @@ def test_generic_subtask_frozen_string():
 
 def test_observable_subtype_levels():
     assert baselines.OBSERVABLE_SUBTYPES["lookup_atomic"] == ("constant",)
-    assert baselines.observable_subtype(
-        "lookup_math", {"sign": "-"}) == "minus"
-    assert baselines.observable_subtype(
-        "fork_join", {"branch_order": "code_first"}) == "code_first"
-    assert baselines.observable_subtype("math_code", {}) == "constant"
     for cell, levels in baselines.OBSERVABLE_SUBTYPES.items():
         for index in range(3):
             latent, _, _ = env(cell, index)
             assert baselines.observable_subtype(
-                cell, latent["params"]) in levels
+                cell, latent["public_params"]) in levels
+
+
+def test_public_only_controls_reject_raw_generator_params():
+    """The public/private boundary is structural: a raw parameter mapping
+    is not accepted, so private state cannot reach a public-only control."""
+    latent, _, _ = env("lookup_math")
+    with pytest.raises(InfrastructureError):
+        baselines.observable_subtype("lookup_math", dict(latent["params"]))
+    with pytest.raises(InfrastructureError):
+        baselines.feature_row("lookup_math", dict(latent["params"]),
+                              latent["public_numeric_values"])
 
 
 # --- §4 golden feature-matrix/prediction fixture ----------------------------
@@ -78,35 +85,70 @@ def test_feature_row_column_order_golden():
     # lookup_math construction:00000 — subtype one-hot (minus, plus) then
     # numeric columns exactly [p, q, t, k, i], missing = −1.
     latent, _, _ = env("lookup_math", 0)
-    row = baselines.feature_row("lookup_math", latent["params"],
+    row = baselines.feature_row("lookup_math", latent["public_params"],
                                 latent["public_numeric_values"])
     assert row == [0, 1, 8, 12, -1, -1, -1]
     code_latent, _, _ = env("code_atomic", 1)
-    code_row = baselines.feature_row("code_atomic", code_latent["params"],
+    code_row = baselines.feature_row("code_atomic",
+                                     code_latent["public_params"],
                                      code_latent["public_numeric_values"])
     assert code_row == [0, 1, -1, -1, -1, 7, 8]  # select: t=-1, k=7, i=8
 
 
+def _rows(cell, namespace, count):
+    return [baselines.public_feature_record(
+        program.generate_latent(cell, namespace, i, PROF).latent)
+        for i in range(count)]
+
+
 def test_shallow_predictor_golden_and_refit_determinism():
-    latents = [program.generate_latent("lookup_math", "construction", i,
-                                       PROF).latent for i in range(30)]
+    rows = _rows("lookup_math", "construction", 30)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
-        model_a = baselines.fit_shallow_predictor("lookup_math", latents)
-        model_b = baselines.fit_shallow_predictor("lookup_math", latents)
+        model_a = baselines.fit_shallow_predictor("lookup_math", rows)
+        model_b = baselines.fit_shallow_predictor("lookup_math", rows)
     predictions = [baselines.shallow_predict(
-        model_a, "lookup_math", latent["params"],
-        latent["public_numeric_values"]) for latent in latents[:5]]
+        model_a, "lookup_math", row.params,
+        row.public_numeric_values) for row in rows[:5]]
     assert predictions == [91, 128, 91, 28, 91]  # golden fixture
     refit = [baselines.shallow_predict(
-        model_b, "lookup_math", latent["params"],
-        latent["public_numeric_values"]) for latent in latents[:5]]
+        model_b, "lookup_math", row.params,
+        row.public_numeric_values) for row in rows[:5]]
     assert refit == predictions  # refit determinism on identical data
 
 
-def test_shallow_predictor_rejects_mixed_cells():
-    lm, _, _ = env("lookup_math")
-    ca, _, _ = env("code_atomic")
-    from tasks.conductor.types import InfrastructureError
-    with pytest.raises(InfrastructureError):
-        baselines.fit_shallow_predictor("lookup_math", [lm, ca])
+def test_public_feature_record_carries_no_private_state():
+    latent, _, _ = env("math_atomic")
+    row = baselines.public_feature_record(latent)
+    exposed = set(vars(row))
+    assert "private_registry" not in exposed
+    assert "reference_program" not in exposed
+    assert "node_values" not in exposed
+    # math_atomic's operands are private: absent from the public projection.
+    assert set(row.params) == {"H", "template"}
+
+
+@pytest.mark.parametrize("bad,reason", [
+    ("namespace", "qualification rows must not leak into the control"),
+    ("duplicate", "one training row per latent cluster"),
+    ("empty", "non-empty support required"),
+    ("raw_latent", "sanitized public feature records only"),
+    ("mixed_cell", "one classifier per cell"),
+])
+def test_shallow_predictor_contract_enforced(bad, reason):
+    rows = _rows("lookup_math", "construction", 30)
+    if bad == "namespace":
+        rows = rows[:29] + _rows("lookup_math", "qualification", 1)
+    elif bad == "duplicate":
+        rows = rows[:29] + [rows[0]]
+    elif bad == "empty":
+        rows = []
+    elif bad == "raw_latent":
+        rows = [program.generate_latent("lookup_math", "construction", i,
+                                        PROF).latent for i in range(30)]
+    elif bad == "mixed_cell":
+        rows = rows[:29] + _rows("code_atomic", "construction", 1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        with pytest.raises(InfrastructureError):
+            baselines.fit_shallow_predictor("lookup_math", rows)

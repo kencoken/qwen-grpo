@@ -18,6 +18,7 @@ from typing import Any
 from .types import (
     ARTIFACT_MAX_BYTES, AST_MAX_DEPTH, AST_MAX_NODES, LITERAL_MAX_DIGITS,
     MAX_ABS_VALUE, InfrastructureError, IntegerList, IntegerRecord, Resource,
+    is_utf8_encodable,
 )
 
 
@@ -52,8 +53,12 @@ class _Tok:
 
 _WORD_RE = re.compile(r"[a-z_][a-z0-9_]*")
 _STR_RE = re.compile(r'"([A-Za-z][A-Za-z0-9]*)"')
-_DIGITS_RE = re.compile(r"[0-9]+")
 _SYMBOLS = set("+-*/%(),")
+# Artifacts are ASCII (§1.6). Unicode-wide `str.isdigit()`/`str.isspace()`
+# would admit characters the grammars cannot represent (Arabic-Indic
+# numerals, NBSP) and then fail the ASCII regexes.
+_ASCII_DIGITS = set("0123456789")
+_ASCII_SPACE = set(" \t\n\r\f\v")
 
 
 def _tokenize(text: str) -> list[_Tok]:
@@ -61,22 +66,24 @@ def _tokenize(text: str) -> list[_Tok]:
     pos = 0
     while pos < len(text):
         ch = text[pos]
-        if ch.isspace():
+        if ch in _ASCII_SPACE:
             pos += 1
             continue
         if ch in _SYMBOLS:
             tokens.append(_Tok("SYM", ch))
             pos += 1
             continue
-        if ch.isdigit():
-            m = _DIGITS_RE.match(text, pos)
-            digits = m.group(0)
+        if ch in _ASCII_DIGITS:
+            end = pos
+            while end < len(text) and text[end] in _ASCII_DIGITS:
+                end += 1
+            digits = text[pos:end]
             if len(digits) > LITERAL_MAX_DIGITS:
                 raise ToolRejection("E_PARSE")
             if len(digits) > 1 and digits[0] == "0":
                 raise ToolRejection("E_NONCANONICAL_INT")
             tokens.append(_Tok("INT", int(digits)))
-            pos = m.end()
+            pos = end
             continue
         if ch == '"':
             m = _STR_RE.match(text, pos)
@@ -332,6 +339,8 @@ def _tool_count_gt(xs: list[int], t: int) -> int:
 def execute_artifact(endpoint: int, content: str, binding: Binding) -> int:
     """Parse and execute one trimmed artifact body. Returns the integer
     result or raises ToolRejection; unexpected exceptions propagate."""
+    if not is_utf8_encodable(content):
+        raise ToolRejection("E_PARSE")
     if len(content.encode("utf-8")) > ARTIFACT_MAX_BYTES:
         raise ToolRejection("E_PARSE")
     if endpoint == 0:

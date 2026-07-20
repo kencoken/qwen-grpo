@@ -7,13 +7,15 @@ import copy
 import numpy as np
 import pytest
 
-from tasks.conductor import program, profiles
+from tasks.conductor import program, profiles, render, types
 from tasks.conductor.profiles import DEFAULT_PROFILE
 from tasks.conductor.program import (
     GenerationError, LoadError, RMagnitude, evaluate_reference,
     generate_latent, validate_reference_program,
 )
-from tasks.conductor.types import IntegerList, IntegerRecord
+from tasks.conductor.types import (
+    InfrastructureError, IntegerList, IntegerRecord,
+)
 
 PROF = DEFAULT_PROFILE
 
@@ -366,6 +368,56 @@ def test_distractor_invariance():
 
 # --- provenance-based no-leakage (§4) ---------------------------------------
 
+# The frozen requirement is structural: private-value provenance must not be
+# available to the renderer at all. Output scanning alone would stay green if
+# private values were supplied but happened not to be printed.
+
+def test_renderers_reject_raw_generator_parameters():
+    latent = generate_latent("math_atomic", "construction", 0, PROF).latent
+    raw = dict(latent["params"])
+    for call in (
+        lambda p: render.render_public_prompt("math_atomic",
+                                              "resource_first", p),
+        lambda p: render.reference_subtasks("math_atomic", p),
+    ):
+        with pytest.raises(InfrastructureError):
+            call(raw)
+        call(latent["public_params"])  # the projection is accepted
+
+
+@pytest.mark.parametrize("cell,private_keys", [
+    ("math_atomic", ("a", "b", "c", "d", "m")),
+    ("math_code", ("a", "b", "c", "m")),
+    ("code_atomic", ("U",)),
+    ("fork_join", ("U",)),
+])
+def test_public_projection_excludes_private_state(cell, private_keys):
+    for index in range(4):
+        latent = generate_latent(cell, "construction", index, PROF).latent
+        public = latent["public_params"]
+        assert set(public) == set(
+            types.public_param_keys(cell, latent["params"]))
+        for key in private_keys:
+            assert key not in public
+        # No public value coincides with a private operand by construction
+        # of the projection: the private ones are simply not members.
+        private_values = {v for k, v in latent["params"].items()
+                          if k not in public and isinstance(v, int)}
+        assert not private_values & {v for v in public.values()
+                                     if isinstance(v, int)} - set(
+            latent["public_numeric_values"].values())
+
+
+def test_public_projection_is_immutable_and_typed():
+    latent = generate_latent("lookup_math", "construction", 0, PROF).latent
+    public = latent["public_params"]
+    assert isinstance(public, types.PublicParams)
+    with pytest.raises(TypeError):
+        public["p"] = 99  # Mapping, not MutableMapping
+    with pytest.raises(InfrastructureError):
+        types.PublicParams("lookup_math", {"H": "R-1A1"})  # incomplete
+
+
 def test_prompt_integers_trace_to_public_parameters():
     from tasks.conductor.types import INTEGER_TOKEN_RE
     for cell in ("lookup_atomic", "math_atomic", "code_atomic",
@@ -403,6 +455,33 @@ def test_namespace_caps_enforced():
     with pytest.raises(GenerationError):
         generate_latent("fork_join", "qualification", 200, PROF)
     generate_latent("fork_join", "qualification", 199, PROF)
+
+
+@pytest.mark.parametrize("bad_index", [-1, -42, True, False, 1.0, "0"])
+def test_latent_index_domain_closed(bad_index):
+    # `False` is the subtle one: bool subclasses int, so it would display
+    # as index 00000 while seeding from "False" — an instance that fails
+    # its own normative regeneration.
+    with pytest.raises(GenerationError):
+        generate_latent("lookup_atomic", "construction", bad_index, PROF)
+
+
+def test_unknown_cell_and_namespace_rejected():
+    with pytest.raises(GenerationError):
+        generate_latent("bogus_cell", "construction", 0, PROF)
+    with pytest.raises(GenerationError):
+        generate_latent("lookup_atomic", "bogus_namespace", 0, PROF)
+
+
+def test_visibility_and_renderer_labels_closed():
+    latent = generate_latent("lookup_atomic", "construction", 0, PROF).latent
+    program.render_instance(latent, "resource_first", "private")
+    program.render_instance(latent, "resource_first", "visible")
+    for renderer, visibility in (("resource_first", "bogus"),
+                                 ("bogus", "private"),
+                                 ("resource_first", "Private")):
+        with pytest.raises(ValueError):
+            program.render_instance(latent, renderer, visibility)
 
 
 # --- §1.16 collision metadata -----------------------------------------------

@@ -60,7 +60,7 @@ def build_fixture() -> dict[str, str]:
     inst = program.render_instance(latent, "resource_first", "private")
     registry = InstanceRegistry(inst["public_manifest"],
                                 inst["private_registry"])
-    params = latent["params"]
+    params = latent["public_params"]
     endpoint_names = {0: "lookup", 1: "math", 2: "code"}
     for orientation, pair in oracle.enumerate_two_call_workflows():
         subtasks = render.two_call_subtasks(orientation, params)

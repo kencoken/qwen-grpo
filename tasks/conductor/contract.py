@@ -9,7 +9,7 @@ from __future__ import annotations
 from .tools import Binding, ToolRejection, execute_artifact
 from .types import (
     SEMANTIC_REJECTION_CODES, SYNTAX_REJECTION_CODES, InfrastructureError,
-    WorkerResult, classify_integer_text,
+    WorkerResult, classify_integer_text, is_utf8_encodable,
 )
 
 OPEN_TAG, CLOSE_TAG = "<artifact>", "</artifact>"
@@ -72,7 +72,17 @@ def pseudo_result(value: int | None, code: str | None = None) -> WorkerResult:
 
 def run_worker_output(endpoint: int, completion: str,
                       binding: Binding) -> WorkerResult:
-    """Envelope → grammar → tool for one raw completion (§1.6/§1.7)."""
+    """Envelope → grammar → tool for one raw completion (§1.6/§1.7).
+
+    UTF-8 encodability is a precondition on the completion being a string
+    at all, checked before the frozen envelope precedence rather than as a
+    new case within it: the whole completion is later encoded for traces
+    and cache keys, so a lone surrogate anywhere in it — including the
+    reasoning text outside the envelope — is malformed output, not a
+    world failure.
+    """
+    if not is_utf8_encodable(completion):
+        return typed_failure_result("E_PARSE")
     try:
         content = parse_envelope(completion)
         value = execute_artifact(endpoint, content, binding)

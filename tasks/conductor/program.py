@@ -28,8 +28,9 @@ from .profiles import (
 )
 from .types import (
     CELL_NODES, ENTITY_POOL, FIELD_POOL, MAX_ABS_VALUE, NAMESPACES,
-    OP_SCHEMAS, OPERAND_NAME_MATCHED_OPS, RENDERER_IDS, IntegerList,
-    IntegerRecord, Resource, resource_from_json,
+    OP_SCHEMAS, OPERAND_NAME_MATCHED_OPS, PUBLIC_NUMERIC_PARAMS, RENDERER_IDS,
+    VISIBILITY_CONDITIONS, IntegerList, IntegerRecord, PublicParams, Resource,
+    public_projection, resource_from_json,
 )
 
 SEP = "\x1f"  # §1.13 separator ␟
@@ -538,23 +539,17 @@ def draw_intervention(latent: dict[str, Any], u: str, v: str,
 
 # --- §1.16: collision metadata ----------------------------------------------
 
-# Public semantic parameters per cell (provenance-tagged; never text-scanned).
-_PUBLIC_NUMERIC_PARAMS: dict[str, tuple[str, ...]] = {
-    "lookup_atomic": (), "math_atomic": (), "math_code": (),
-    "code_atomic_count": ("t",), "code_atomic_select": ("k", "i"),
-    "lookup_math": ("p", "q"), "fork_join": ("t", "q"),
-}
-
-
 def public_numeric_values(cell_id: str,
-                          params: dict[str, Any]) -> dict[str, int]:
+                          params: PublicParams) -> dict[str, int]:
+    """Provenance-tagged public semantic parameters — read from the public
+    projection, never by scanning rendered text (§1.16)."""
     key = cell_id
     if cell_id == "code_atomic":
         key = f"code_atomic_{params['shape']}"
-    return {name: params[name] for name in _PUBLIC_NUMERIC_PARAMS[key]}
+    return {name: params[name] for name in PUBLIC_NUMERIC_PARAMS[key]}
 
 
-def collision_metadata(cell_id: str, params: dict[str, Any],
+def collision_metadata(cell_id: str, params: PublicParams,
                        node_values: dict[str, int],
                        sink: str) -> dict[str, Any]:
     values = public_numeric_values(cell_id, params)
@@ -860,12 +855,21 @@ def namespace_cap(namespace: str, cell_id: str) -> int:
 
 def generate_latent(cell_id: str, namespace: str, latent_index: int,
                     profile: dict[str, Any]) -> GenerationResult:
+    if cell_id not in _PROPOSERS:
+        raise GenerationError(f"unknown cell_id {cell_id!r}")
     if namespace not in NAMESPACES:
         raise GenerationError(f"unknown namespace {namespace!r}")
-    if latent_index >= namespace_cap(namespace, cell_id):
+    # `bool` subclasses `int`: `False` would display as index 00000 while
+    # seeding from the string "False", producing an instance that fails its
+    # own normative regeneration.
+    if not isinstance(latent_index, int) or isinstance(latent_index, bool):
         raise GenerationError(
-            f"latent_index {latent_index} exceeds the predeclared "
-            f"{namespace} maximum for {cell_id}")
+            f"latent_index must be a plain int, got {latent_index!r}")
+    if not 0 <= latent_index < namespace_cap(namespace, cell_id):
+        raise GenerationError(
+            f"latent_index {latent_index} outside the predeclared "
+            f"{namespace} range for {cell_id} "
+            f"[0, {namespace_cap(namespace, cell_id)})")
     validate_profile(profile)
     dp_version = profile_version(profile)
     material = seed_material(GENERATOR_VERSION, dp_version, namespace,
@@ -887,6 +891,7 @@ def generate_latent(cell_id: str, namespace: str, latent_index: int,
                         rngs["manifest"].permutation(len(manifest))]  # N8
             validate_reference_program(program, manifest, registry)
             node_values = evaluate_reference(program, registry)
+            public_params = public_projection(cell_id, params)
             latent = {
                 "cell_id": cell_id,
                 "namespace": namespace,
@@ -896,13 +901,17 @@ def generate_latent(cell_id: str, namespace: str, latent_index: int,
                 "difficulty_profile_version": dp_version,
                 "generator_version": GENERATOR_VERSION,
                 "factor_assignment": assignment,
+                # `params` is private generator state (operand values, the
+                # target lookup value, U); `public_params` is the only
+                # mapping renderers and subtasks ever see (§1.4).
                 "params": params,
+                "public_params": public_params,
                 "public_manifest": manifest,
                 "private_registry": registry_to_json(registry),
                 "reference_program": program,
                 "gold_answer": node_values[program["sink"]],
                 "node_values": node_values,
-                **collision_metadata(cell_id, params, node_values,
+                **collision_metadata(cell_id, public_params, node_values,
                                      program["sink"]),
             }
             # §1.14 R_MAGNITUDE: base path was checked during evaluation;
@@ -930,7 +939,8 @@ def workflow_steps(latent: dict[str, Any]) -> list[dict[str, Any]]:
     positions = program["positions"]
     from .types import LEGAL_ACCESS_PATTERNS
     access = LEGAL_ACCESS_PATTERNS[len(positions)]
-    subtasks = render.reference_subtasks(latent["cell_id"], latent["params"])
+    subtasks = render.reference_subtasks(latent["cell_id"],
+                                         latent["public_params"])
     return [{"node": node_id,
              "resource": node_resource(program, node_id),
              "access": access[idx],
@@ -942,8 +952,11 @@ def render_instance(latent: dict[str, Any], renderer_id: str,
                     visibility_condition: str) -> dict[str, Any]:
     if renderer_id not in RENDERER_IDS:
         raise ValueError(f"unknown renderer {renderer_id!r}")
+    if visibility_condition not in VISIBILITY_CONDITIONS:
+        raise ValueError(
+            f"unknown visibility_condition {visibility_condition!r}")
     public_prompt = render.render_public_prompt(
-        latent["cell_id"], renderer_id, latent["params"])
+        latent["cell_id"], renderer_id, latent["public_params"])
     return {
         "cell_id": latent["cell_id"],
         "latent_program_id": latent["latent_program_id"],

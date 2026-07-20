@@ -24,21 +24,31 @@ tests it. Backlog = Stage-2+ entry gates.
   `oracle` / `baselines` / `prompts` / `agreement` /
   `gen_byte_fixtures`.
 - 0A acceptance battery: `test_conductor_{types,tools,program,executor,
-  baselines}.py` — golden §3 fixtures (incl. fork O′), golden seed/ID
-  fixture, byte-stability fixture (58 request hashes incl. the 36 shortcut
-  requests), IR validation, scheduler balance, routing bijection, every
-  rejection code + the §1.6 global procedure order, §1.7 truth table +
-  propagation, intervention positional mapping in both fork orders,
-  pseudo-workers, B2, collision metadata, invalid-profile and R_MAGNITUDE
-  fixtures, metamorphic + distractor invariance, provenance no-leakage,
-  strip test (scorer tested separately), split isolation, valid-AST
-  fuzzing vs `fuzz_oracle.py`, shallow-predictor golden fixture.
-- **Recorded acceptance command** (2026-07-19, pass):
+  baselines,estimands}.py` — golden §3 fixtures (incl. fork O′), golden
+  seed/ID fixture, byte-stability fixture (58 request hashes incl. the 36
+  shortcut requests), IR validation, scheduler balance, routing bijection,
+  every rejection code + the §1.6 global procedure order, §1.7 truth table
+  + propagation, intervention positional mapping in both fork orders and
+  the §1.9 paired estimand (eligibility, shared denominators, eligibility
+  rate, `override_applied=false` abort), §1.16 sensitivity-population
+  identity, pseudo-workers (incl. `noop_correct` at a true zero index),
+  B1–B6, collision metadata, invalid-profile and R_MAGNITUDE fixtures,
+  metamorphic + distractor invariance, structural public/private renderer
+  boundary, provenance no-leakage, strip test (scorer tested separately),
+  split isolation, valid-AST fuzzing vs `fuzz_oracle.py`,
+  shallow-predictor golden fixture.
+- **Recorded acceptance command** (2026-07-20, pass):
 
   ```
   uv run python -m tasks.conductor.agreement --cases 10000
-  # agreement: 16660/16660 node executions agree (operator × cell strata)
+  # agreement: 16665/16665 node executions agree over 10000 latent programs
+  # (all 13 operator × cell strata exercised; coverage asserted)
   ```
+
+  The command now distributes the remainder across cells and fails on
+  incomplete latent or stratum coverage, so a truncated run can no longer
+  report success. (The 2026-07-19 figure, 16,660 executions, covered 9,996
+  latents because the per-cell split dropped the remainder.)
 
 - **D16 status: DRAFT.** `tasks/conductor/prompts.py`
   (SYSTEM_LOOKUP/MATH/CODE/DIRECT + demonstrations) is a separately
@@ -46,8 +56,34 @@ tests it. Backlog = Stage-2+ entry gates.
   freezes before the construction screen. Demos are machine-verified
   legal (executes-through-runtime test).
 - Deferred to 0B with their modules: cache-isolation and backend-truncation
-  tests (`cache.py`, `workers.py`); the canonical rendered request gains
-  the chat-template layer there (0A pins system-name + user bytes).
+  tests (`cache.py`, `workers.py`). **The byte-stability fixture is
+  provisional**: it pins user-message bytes plus a symbolic system
+  identity, *not* chat-template bytes, so it is not yet the
+  cache-key fixture and must be regenerated against the real chat template
+  at 0B before any cache-key claim rests on it.
+- 2026-07-20 — reviewer findings (`plans/conductor/50_s_stage_0a_review.md`)
+  addressed: complete-payoff-surface validation before any oracle/control
+  selection; model output totalized inside the typed-rejection boundary
+  (non-ASCII numerals, lone surrogates); structural public/private renderer
+  boundary via a `PublicParams` projection renderers require by type;
+  generation/profile domain closure (latent-index and visibility labels,
+  derived public index `i`, int64 representability); construction-only
+  shallow-predictor and B1 controls on sanitized public feature records;
+  the acceptance hooks above; full `WorkerResult` union enforcement;
+  agreement-command coverage accounting. 296 tests green
+  (223 → 296), byte fixture unchanged.
+
+### Must block the construction screen
+
+- **D16 review and freeze** against the real 1.5B workers
+  (`tasks/conductor/prompts.py`, `D16_STATUS = "DRAFT"`).
+- **B1 controls frozen before construction outcomes are inspected** — the
+  fitting and selection rules are implemented and frozen in code
+  (`fit_majority_class`, `echo_family`, the shallow predictor); the fitted
+  models must be recorded here before anyone looks at construction
+  accuracy.
+- Replacement of the provisional request hashes with actual chat-template
+  bytes during Stage 0B.
 
 ## Backlog (Stage-2+ entry gates)
 

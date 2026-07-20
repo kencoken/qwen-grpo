@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from .types import ENDPOINT_IDS, LEGAL_ACCESS_PATTERNS
+from .types import ENDPOINT_IDS, LEGAL_ACCESS_PATTERNS, is_utf8_encodable
 
 
 class ActionSchemaError(ValueError):
@@ -24,6 +24,27 @@ def _require_int(value: object) -> int:
     return value
 
 
+def _require_text(value: object, field: str) -> str:
+    """Strings that survive JSON decoding but cannot be encoded as UTF-8
+    (a `\\ud800` escape decodes to a lone surrogate) would fail later in
+    request rendering or cache-key encoding; reject them here, where the
+    failure is scored as a malformed action rather than aborting."""
+    if not isinstance(value, str):
+        raise ActionSchemaError(f"{field} must be a string")
+    if not is_utf8_encodable(value):
+        raise ActionSchemaError(f"{field} is not UTF-8 encodable")
+    return value
+
+
+def _load_action_json(completion: str) -> object:
+    if not is_utf8_encodable(completion):
+        raise ActionSchemaError("action string is not UTF-8 encodable")
+    try:
+        return json.loads(completion.strip())
+    except json.JSONDecodeError as exc:
+        raise ActionSchemaError(f"invalid JSON: {exc}") from exc
+
+
 def parse_routing_action(completion: str, num_steps: int) -> list[int]:
     """§1.5 frozen routing-action schema: the policy emits
     `{"worker_ids": [w_1, …, w_S]}` and nothing else.
@@ -32,10 +53,7 @@ def parse_routing_action(completion: str, num_steps: int) -> list[int]:
     outside {0, 1, 2} are schema violations (the action space is the
     enumerated 3^S assignment set); duplicates are permitted.
     """
-    try:
-        obj = json.loads(completion.strip())
-    except json.JSONDecodeError as exc:
-        raise ActionSchemaError(f"invalid JSON: {exc}") from exc
+    obj = _load_action_json(completion)
     if not isinstance(obj, dict) or set(obj) != {"worker_ids"}:
         raise ActionSchemaError("action must be exactly {\"worker_ids\": […]}")
     ids = obj["worker_ids"]
@@ -72,10 +90,7 @@ MAX_STEPS = 3  # plan contract 2: fixed cap on total calls (v0)
 def parse_workflow_action(completion: str) -> WorkflowAction:
     """Full workflow JSON: ≤3 steps, legal v0 access pattern, ≤1 resource
     per step, no duplicate handles, extra fields rejected (never ignored)."""
-    try:
-        obj = json.loads(completion.strip())
-    except json.JSONDecodeError as exc:
-        raise ActionSchemaError(f"invalid JSON: {exc}") from exc
+    obj = _load_action_json(completion)
     if not isinstance(obj, dict) or set(obj) != {"steps"}:
         raise ActionSchemaError("action must be exactly {\"steps\": […]}")
     raw_steps = obj["steps"]
@@ -85,17 +100,16 @@ def parse_workflow_action(completion: str) -> WorkflowAction:
     for raw in raw_steps:
         if not isinstance(raw, dict) or set(raw) != _STEP_KEYS:
             raise ActionSchemaError(f"step keys must be exactly {_STEP_KEYS}")
-        if not isinstance(raw["subtask"], str):
-            raise ActionSchemaError("subtask must be a string")
+        subtask = _require_text(raw["subtask"], "subtask")
         worker_id = _require_int(raw["worker_id"])
         if worker_id not in ENDPOINT_IDS:
             raise ActionSchemaError(f"worker id {worker_id} outside {{0, 1, 2}}")
         resource = raw["resource"]
-        if resource is not None and not isinstance(resource, str):
-            raise ActionSchemaError("resource must be a handle string or null")
+        if resource is not None:
+            resource = _require_text(resource, "resource")
         if raw["access"] not in ("none", "all"):
             raise ActionSchemaError("access must be \"none\" or \"all\"")
-        steps.append(WorkflowStep(subtask=raw["subtask"], worker_id=worker_id,
+        steps.append(WorkflowStep(subtask=subtask, worker_id=worker_id,
                                   resource=resource, access=raw["access"]))
     access_pattern = tuple(s.access for s in steps)
     if access_pattern != LEGAL_ACCESS_PATTERNS[len(steps)]:
