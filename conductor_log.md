@@ -343,6 +343,119 @@ affected qualification set), never an informal cleanup. The
 construction-screen blockers above remain the gating items before
 qualification.
 
+## Stage 0B — runtime (first GPU)
+
+### Implementation (2026-07-20, branch `conductor_stage_0b`)
+
+Deliverables per the rev6 plan (Stage 0B + §8):
+
+- `tasks/conductor/runtime.py` — versioned runtime profile
+  (`DEFAULT_RUNTIME_PROFILE`, schema-validated at load like the
+  difficulty profile; repo defaults are not the experiment — the named
+  Stage-0C launch profile is a separate 0C artifact) and the three §1.10
+  fingerprint scopes: `rtp-` (full profile incl. observation condition —
+  Conductor-side generations and trace manifests), `wv-` (worker-visible:
+  model/tokenizer revisions, per-endpoint chat-template SHAs, NF4 config,
+  caps, truncation/stopping, greedy decoding, grammar/tool versions,
+  resource policy — observation condition excluded, D11), `ep-`
+  (selected endpoint). Float-valued fields encode as shortest-round-trip
+  decimal strings (§1.13); `canonical_json` rejects raw floats/bools.
+  `build_runtime(profile)` / `Runtime.close()`; `worker_call_batch`
+  renders through the chat template, consults the cache, dedupes
+  byte-identical in-flight misses (one generation, one stored row), and
+  returns records in input order.
+- `tasks/conductor/workers.py` — `WorkerPool`: the three frozen 1.5B
+  endpoints (§1.6) at pinned revisions (Instruct 989aa798…, Math
+  aafeb0fc…, Coder 2e1fd397…), NF4 (double-quant, bf16 compute),
+  tokenizers eager (the chat template is a fingerprint input), models
+  lazy, per-worker microbatched greedy generation under per-worker token
+  caps, §1.6 telemetry (`finish_reason`, generated tokens,
+  `generation_hit_token_cap`); the eos set is read from the model's
+  generation config (Qwen2.5 lists both `<|im_end|>` and
+  `<|endoftext|>`).
+- `tasks/conductor/cache.py` — SQLite write-through completion cache,
+  key = worker-visible fp + endpoint fp + SHA-256 of the canonical
+  rendered request bytes; full request bytes stored and compared on every
+  hit; telemetry columns survive hits (§1.10); a same-key store with a
+  different completion raises (greedy precondition), identical re-store
+  is idempotent; executed `WorkerResult`s never cached.
+- `tasks/conductor/executor.py` — `execute_workflow_batch`: wave
+  batching by worker × depth (depth = workflow position) with per-item
+  §1.7/§1.9 semantics unchanged; `execute_workflow` is now the
+  single-item case of the same code path, so the signed-off 0A battery
+  pins both. `TraceWriter`: JSONL step traces under
+  `runs/<run_name>/traces/` (`steps.jsonl` + `manifest.json` embedding
+  the full profile and all three fingerprint scopes; stable `item_id` =
+  `render_instance_id`; refuses to overwrite an existing trace file).
+  Infrastructure failures raise.
+- `tasks/conductor/gen_chat_fixtures.py` +
+  `fixtures/chat_template_bytes.json` — the promised replacement for the
+  provisional request hashes: SHA-256 of the real chat-template-rendered
+  request bytes (69 hashes: 3 template SHAs; every cell × step × all
+  three endpoints; the 18 two-call shortcut workflows × 2 calls through
+  their pair endpoints). **The Math tokenizer ships a different chat
+  template from Instruct/Coder**, confirming per-endpoint template SHAs
+  in the cache key. Direct-arm (B1/B3/B4/B5) rendering runs on the
+  policy model and is fixed at Stage 1A with `calibrate.py`; its user
+  bytes remain pinned by the 0A fixture.
+- `test_conductor_runtime.py` (25 tests): profile schema + float
+  encoding; fingerprint scopes (visibility/mixture/cache-path/batch/
+  policy-cap changes leave `wv-` fixed and move `rtp-`; revision/NF4/
+  tool/policy/template/cap changes move `wv-`); write-through then hit
+  with telemetry survival; duplicate-miss dedup; endpoint and
+  worker-visible cache isolation; a visibility flip shares completions
+  across conditions (D11); persistence across reopen; greedy-violation
+  and corrupted-row guards; batch-vs-sequential equivalence (all six
+  cells reference-routed; all 9 routings of a lookup_math instance with
+  overrides); wave grouping by worker × depth; duplicate item_id
+  rejection; trace manifest/steps content; overwrite refusal;
+  chat-template fixture stability. Full suite: **488 passed** (463
+  pre-existing + 25 new) under `-W error`.
+
+### Recorded smoke command (2026-07-20, RTX 4090, pass)
+
+```
+uv run python -m tasks.conductor.smoke --per-cell 2 --run-name stage0b-smoke
+# 12 workflows (2/cell x 6 cells), profile rtp-9c5bce7af62279ff,
+#   worker-visible wv-18e02c2032fd9069
+# pass 1: calls {'lookup': 6, 'math': 4, 'code': 4}, cache hits 0, truncated 4
+# pass 1: step statuses {'typed_failure': 14, 'dependency_blocked': 6};
+#   terminal correct (descriptive) 0/12
+# pass 2: calls {'lookup': 6, 'math': 4, 'code': 4}, cache hits 14/14
+# smoke OK
+```
+
+The smoke gates machinery only: real NF4 pool end-to-end, traces +
+manifest written, second pass fully cache-served, replayed completions
+identical. It is not an accuracy gate (no registered population, no
+execution manifest comparison across arms).
+
+### D16 findings from the smoke traces (input to the D16 review)
+
+Zero-shot with the DRAFT D16 system prompts, 0/14 worker calls produced
+an executable artifact:
+
+- Lookup and Math emit the **correct expression without the
+  `<artifact>` envelope** (`E_NO_ARTIFACT`), e.g.
+  `lookup(R-5E8, "Rowan", "seats")` as plain text.
+- Code emits the envelope but writes the **resource handle instead of
+  the literal identifier `resource`**
+  (`<artifact>count_gt(stable_unique(R-3B8), 8)</artifact>` →
+  `E_PARSE`).
+- 4 of 14 calls hit the 256-token cap (`generation_hit_token_cap`).
+
+These are exactly the failure modes the D16 review-and-freeze against the
+real workers exists to address (envelope emphasis, `resource` identifier
+emphasis, cap sizing) — now reproducible end-to-end through the runtime
+before the construction screen. Any D16 prompt change re-fingerprints
+requests and regenerates `chat_template_bytes.json` by construction.
+
+### Still blocking the construction screen (unchanged from 0A close-out)
+
+D16 review + freeze against the real workers (now executable end to end);
+B1 controls frozen before construction outcomes are inspected; the
+canonical population + execution manifest (Stage-1A `calibrate.py`).
+
 ## Backlog (Stage-2+ entry gates)
 
 - CE0 (at 0C): benchmark gates — <22 GB peak, projected seed ≤ overnight,
