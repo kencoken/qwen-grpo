@@ -153,24 +153,43 @@ class PublicFeatureRecord:
     reference program, and no private parameters — so a control that is
     meant to diagnose public-prompt shortcuts cannot accidentally consume
     private generator state.
+
+    `public_numeric_values` is *derived from* `params` rather than accepted
+    from the caller: an independently supplied mapping could inject extra
+    or private-derived p/q/t/k/i values into a supposedly sanitized record.
     """
 
     cell_id: str
     latent_program_id: str
     namespace: str
     params: PublicParams
-    public_numeric_values: dict[str, int]
     gold_answer: int
+
+    def __post_init__(self) -> None:
+        require_public(self.params, self.cell_id)
+        if isinstance(self.gold_answer, bool) or not isinstance(
+                self.gold_answer, int):
+            raise InfrastructureError("gold_answer must be an int")
+
+    @property
+    def public_numeric_values(self) -> dict[str, int]:
+        return self.params.numeric_features()
 
 
 def public_feature_record(latent: dict[str, Any]) -> PublicFeatureRecord:
-    return PublicFeatureRecord(
+    record = PublicFeatureRecord(
         cell_id=latent["cell_id"],
         latent_program_id=latent["latent_program_id"],
         namespace=latent["namespace"],
         params=latent["public_params"],
-        public_numeric_values=dict(latent["public_numeric_values"]),
         gold_answer=latent["gold_answer"])
+    # The derived features must agree with the generator's own §1.16
+    # provenance-tagged values; a mismatch means one of the two drifted.
+    if record.public_numeric_values != latent["public_numeric_values"]:
+        raise InfrastructureError(
+            f"derived public features {record.public_numeric_values} != "
+            f"stored {latent['public_numeric_values']}")
+    return record
 
 
 FIT_NAMESPACE = "construction"  # §1.11: fitted on construction data only

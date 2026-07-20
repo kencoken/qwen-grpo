@@ -52,6 +52,33 @@ def test_keyed_values_pairwise_distinct_d3():
             ("Aster", (("crates", 31),)), ("Cedar", (("crates", 31),))))
 
 
+@pytest.mark.parametrize("payload,why", [
+    ((("Aster", (("crates", 31),)), ("Aster", (("crates", 17),))),
+     "duplicate entity makes lookup first-match dependent"),
+    ((("Aster", (("crates", 31), ("crates", 17))),),
+     "duplicate field name"),
+    ((("Aster", (("crates", 31),)), ("Cedar", (("units", 17),))),
+     "ragged grid: entities disagree about the field schema"),
+    ((("Aster", (("crates", 31),)), ("Cedar", ())),
+     "entity with no fields"),
+    ((), "empty record"),
+])
+def test_keyed_record_requires_an_ordered_rectangular_grid(payload, why):
+    with pytest.raises(ValueError):
+        IntegerRecord(layout="keyed", payload=payload)
+
+
+def test_registry_rejects_a_manifest_repeating_a_handle():
+    from tasks.conductor.resources import InstanceRegistry
+    from tasks.conductor.types import InfrastructureError as IE
+    record = IntegerRecord(layout="keyed",
+                           payload=(("Aster", (("crates", 31),)),)).to_json()
+    with pytest.raises(IE, match="duplicate handles"):
+        InstanceRegistry(["R-1A1", "R-1A1"], {"R-1A1": record})
+    registry = InstanceRegistry(["R-1A1"], {"R-1A1": record})
+    assert len(registry.union_payload_texts()) == 1
+
+
 def test_operand_names_d9():
     IntegerRecord(layout="operands",
                   payload=(("a", 1), ("b", 2), ("c", 3), ("m", 4)))
@@ -162,7 +189,12 @@ def _mutated(path, value):
     (("fork_join", "count", "L_band"), [3, 16]),     # fork dedup L < 5
     (("fork_join", "derived_from"), {}),             # missing annotation
     (("math_atomic", "a_band"), [1, 2**63]),         # not int64-representable
-    (("code_atomic", "L_band"), [8, 10**13]),        # derived index i > 12 digits
+    # Workload ceilings: representable but computationally impossible.
+    (("code_atomic", "L_band"), [5, 10**12]),        # unbounded list alloc
+    (("math_code", "L_band"), [8, 10**9]),           # unbounded list alloc
+    (("lookup_math", "value_band"), [1, 10**9]),     # enumerated support
+    (("math_atomic", "c_band"), [1, 10**9]),         # T1 feasible-c scan
+    (("fork_join", "count", "L_band"), [5, 10**9]),
 ])
 def test_invalid_profile_rejected_at_load(path, value):
     with pytest.raises(ProfileError):
@@ -179,6 +211,14 @@ def test_s_minus_support_rule():
     with pytest.raises(ProfileError) as err:
         profiles.validate_profile(profile)
     assert "S⁻" in str(err.value)
+
+
+def test_derived_index_bound_uses_distinct_value_count_not_list_length():
+    """U is the number of *distinct* values, so it is capped by the value
+    band's cardinality as well as by L."""
+    profile = _mutated(("code_atomic", "L_band"), [5, 200])
+    profile["cells"]["code_atomic"]["value_band"] = [1, 9]
+    profiles.validate_profile(profile)  # U <= 9: index literal stays small
 
 
 def test_missing_cell_field_rejected():

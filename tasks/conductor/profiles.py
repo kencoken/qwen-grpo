@@ -23,6 +23,15 @@ KEYED_NF_CAP = 60
 # nonnegative and fit the 12-digit literal limit.
 PUBLIC_LITERAL_MAX = 999_999_999_999
 
+# Workload ceilings. int64 representability is not enough on its own: a
+# band like L = [5, 10**12] is representable and would then have the
+# generator try to materialize a trillion-element list. These bound the
+# work a profile can ask for, so an impossible profile fails at load
+# rather than hanging or exhausting memory during generation.
+MAX_LIST_LENGTH = 256           # integer_list payload elements
+MAX_RECORD_CELLS = KEYED_NF_CAP  # keyed record entries (N x F)
+MAX_SUPPORT_CARDINALITY = 1_000_000  # any band we enumerate or sample from
+
 
 class ProfileError(ValueError):
     """Offending profiles are rejected at load, never silently sampled around."""
@@ -166,6 +175,9 @@ def _check_keyed_fields(cell: str, fields: dict[str, Any]) -> None:
         raise ProfileError(f"{cell}.N_band.max {n_band[1]} > 20")
     if not (1 <= f_band[0] <= f_band[1] <= 10):
         raise ProfileError(f"{cell}.F_band {f_band} outside [1, 10]")
+    # Sampled without replacement, and enumerated by the lookup_math /
+    # fork_join intervention support rules.
+    _check_support(cell, "value_band", value_band)
     if band_size(value_band) < max_admitted_nf(n_band, f_band):
         raise ProfileError(f"{cell}.value_band too small for N*F "
                            "without-replacement sampling")
@@ -181,10 +193,28 @@ def _check_public_literal(cell: str, name: str, b: tuple[int, int]) -> None:
         raise ProfileError(f"{cell}.{name}: public literal exceeds 12 digits")
 
 
+def _check_list_length(cell: str, name: str, l_band: tuple[int, int]) -> None:
+    if l_band[1] > MAX_LIST_LENGTH:
+        raise ProfileError(
+            f"{cell}.{name}.max {l_band[1]} exceeds the {MAX_LIST_LENGTH}"
+            f"-element list ceiling (prompt and runtime budget)")
+
+
+def _check_support(cell: str, name: str, band_: tuple[int, int]) -> None:
+    """Bands we enumerate or sample without replacement must be small
+    enough to materialize."""
+    if band_size(band_) > MAX_SUPPORT_CARDINALITY:
+        raise ProfileError(
+            f"{cell}.{name} spans {band_size(band_)} values, above the "
+            f"{MAX_SUPPORT_CARDINALITY} support ceiling")
+
+
 def _check_dedup_fields(cell: str, fields: dict[str, Any],
                         prefix: str = "") -> None:
     l_band = _check_band(cell, prefix + "L_band", fields["L_band"])
     value_band = _check_band(cell, prefix + "value_band", fields["value_band"])
+    _check_list_length(cell, prefix + "L_band", l_band)
+    _check_support(cell, prefix + "value_band", value_band)
     if l_band[0] < 5:
         raise ProfileError(f"{cell}.{prefix}L_band.min {l_band[0]} < 5 "
                            "(U >= 3 requires L >= U + 2)")
@@ -222,6 +252,8 @@ def validate_profile(profile: dict[str, Any]) -> None:
         raise ProfileError("math_atomic.t1/t2 must hold exactly d_band/m_band")
     d_band = _check_band("math_atomic", "t1.d_band", ma["t1"]["d_band"])
     m_band = _check_band("math_atomic", "t2.m_band", ma["t2"]["m_band"])
+    # T1 draws c from the enumerated feasible set {c : c ≡ a·b (mod d)}.
+    _check_support("math_atomic", "c_band", c_band)
     if b_band[0] < 10:
         raise ProfileError("math_atomic.b_band.min < 10")
     if c_band[0] < 1:
@@ -242,9 +274,11 @@ def validate_profile(profile: dict[str, Any]) -> None:
     if value_band[0] < 1:
         raise ProfileError("code_atomic.value_band.min < 1 "
                            "(select returns a band value as the terminal)")
-    # `i` is a derived public literal (0 … U−1, U ≤ L), so its attainable
-    # maximum is bounded by the list length, not by a declared band.
-    max_index = _check_band("code_atomic", "L_band", ca["L_band"])[1] - 1
+    # `i` is a derived public literal in 0 … U−1. U is the number of
+    # *distinct* values, so it is capped by both the list length and the
+    # value band's cardinality — L_max alone would overstate it.
+    l_band = _check_band("code_atomic", "L_band", ca["L_band"])
+    max_index = min(l_band[1], band_size(value_band)) - 1
     if max_index > PUBLIC_LITERAL_MAX:
         raise ProfileError(
             "code_atomic: derived public index i can exceed the 12-digit "
@@ -275,6 +309,8 @@ def validate_profile(profile: dict[str, Any]) -> None:
     _check_band("math_code", "c_band", mc["c_band"])
     l_band = _check_band("math_code", "L_band", mc["L_band"])
     lv_band = _check_band("math_code", "list_value_band", mc["list_value_band"])
+    _check_list_length("math_code", "L_band", l_band)
+    _check_support("math_code", "list_value_band", lv_band)
     if l_band[0] < 2:
         raise ProfileError("math_code.L_band.min < 2 "
                            "(non-empty intervention alternative set)")

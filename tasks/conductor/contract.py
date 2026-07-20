@@ -95,7 +95,14 @@ def run_worker_output(endpoint: int, completion: str,
 
 def parse_answer_line(completion: str) -> int | None:
     """Last non-empty line, trimmed, as a canonical integer; else None
-    (scored wrong, not a typed rejection — direct arms have no artifact)."""
+    (scored wrong, not a typed rejection — direct arms have no artifact).
+
+    The whole completion must be UTF-8 encodable: a surrogate anywhere in
+    the reasoning would otherwise be accepted here and then abort trace or
+    cache encoding downstream.
+    """
+    if not is_utf8_encodable(completion):
+        return None
     for line in reversed(completion.split("\n")):
         text = line.strip()
         if text:

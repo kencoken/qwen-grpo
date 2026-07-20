@@ -2,6 +2,7 @@
 resource-error procedure, flag truth table, valid-AST fuzzing (§1.6, §1.7,
 §4)."""
 
+import json
 import random
 
 import pytest
@@ -217,6 +218,59 @@ def test_every_rejection_code_classified():
     for code_name in REJECTION_CODES:
         result = typed_failure_result(code_name)
         assert result.rejection_code == code_name
+
+
+# --- Unicode boundary regressions -------------------------------------------
+#
+# All of these arrive as untrusted model output. None may escape as an
+# unexpected exception: that would abort a rollout group or a training
+# update rather than scoring as a malformed action.
+
+SURROGATE = "\ud800"        # lone surrogate: str-legal, not UTF-8 encodable
+ARABIC_INDIC = "١٢"   # ١٢ — Unicode digits outside the ASCII grammar
+
+
+@pytest.mark.parametrize("body,code", [
+    (ARABIC_INDIC, "E_PARSE"),
+    (f"{ARABIC_INDIC} + 1", "E_PARSE"),
+    ("a + ٣", "E_PARSE"),
+    (SURROGATE, "E_PARSE"),
+    (f"a + 1 {SURROGATE}", "E_PARSE"),
+    ("1 2", "E_PARSE"),          # non-ASCII whitespace
+])
+def test_non_ascii_artifact_bodies_are_typed_failures(body, code):
+    result = run_worker_output(1, f"<artifact>{body}</artifact>",
+                               Binding({"R": OPS}))
+    assert result.status == "typed_failure"
+    assert result.rejection_code == code
+    assert (result.artifact_valid, result.tool_executed) == (False, False)
+
+
+def test_surrogate_outside_the_envelope_is_a_typed_failure():
+    """The whole completion is later encoded for traces and cache keys, so
+    a surrogate in the ignored reasoning text is malformed output too."""
+    result = run_worker_output(
+        1, f"thinking {SURROGATE} <artifact>1 + 1</artifact>",
+        Binding({"R": OPS}))
+    assert result.status == "typed_failure"
+    assert result.rejection_code == "E_PARSE"
+
+
+def test_surrogate_in_a_workflow_string_is_a_schema_error():
+    from tasks.conductor import parser
+    escaped = json.dumps({"steps": [{"subtask": SURROGATE, "worker_id": 0,
+                                     "resource": None, "access": "none"}]})
+    with pytest.raises(parser.ActionSchemaError):
+        parser.parse_workflow_action(escaped)
+    with pytest.raises(parser.ActionSchemaError):
+        parser.parse_routing_action(SURROGATE + '{"worker_ids": [0]}', 1)
+
+
+def test_surrogate_in_direct_answer_reasoning_is_rejected():
+    """B1/B3/B4 read a bare answer line; a valid trailing integer must not
+    launder a non-encodable completion."""
+    assert contract.parse_answer_line("reasoning\n42") == 42
+    assert contract.parse_answer_line(f"reasoning {SURROGATE}\n42") is None
 
 
 # --- §4 random valid-AST fuzzing vs fuzz_oracle -----------------------------

@@ -13,12 +13,21 @@ documented:
 - the eligibility rate travels with every gate, because these are
   conditional causal estimates and their conditioning fraction is part of
   the result.
+
+**Weighting differs by section, deliberately.** §1.9 names *full-sample
+(eligible-set) accuracy* as the primary intervention metric, with
+clustering entering through paired comparisons and the cluster bootstrap.
+§1.8's oracle objective is *cluster-weighted*, and §1.16's sensitivity pair
+is specified on "the same cluster weights". Each estimator below follows
+its own section, and `InterventionReport` carries the equal-cluster values
+alongside the primary ones so a gate can never be read off the wrong rule.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from types import MappingProxyType
+from typing import Any, Iterable, Mapping, Sequence
 
 from .types import InfrastructureError
 
@@ -66,7 +75,14 @@ def base_eligibility(reference_program: dict[str, Any], downstream: str,
 
 
 def _cluster_weighted(values: dict[str, list[float]]) -> float:
+    """Mean over clusters of the within-cluster mean (§1.8's convention)."""
     return sum(sum(v) / len(v) for v in values.values()) / len(values)
+
+
+def _full_sample(values: dict[str, list[float]]) -> float:
+    """Unweighted mean over every observation — §1.9's primary metric."""
+    flat = [v for group in values.values() for v in group]
+    return sum(flat) / len(flat)
 
 
 def _group(outcomes: Iterable[EdgeOutcome],
@@ -80,6 +96,24 @@ def _group(outcomes: Iterable[EdgeOutcome],
 
 @dataclass(frozen=True)
 class InterventionReport:
+    """§1.9 intervention estimates.
+
+    The headline fields are **full-sample eligible-set accuracies**, which
+    §1.9 names as the primary metric. That differs deliberately from the
+    §1.8 oracle objective, which is cluster-weighted: clustering enters
+    §1.9 through *paired comparisons and the cluster bootstrap over latent
+    programs*, not through the point estimate. The equal-cluster values are
+    reported alongside in `cluster_weighted` for those paired comparisons,
+    never as the gate value.
+
+    Example of the difference: two eligible correct observations in cluster
+    A and one eligible incorrect observation in cluster B give a full-sample
+    accuracy of 2/3 but an equal-cluster estimate of 1/2. Eligibility can
+    genuinely differ between renderings of one latent program, because base
+    worker success depends on the rendered prompt, so the two can diverge on
+    well-formed data.
+    """
+
     edge: tuple[str, str]
     n_total: int
     n_eligible: int
@@ -93,6 +127,8 @@ class InterventionReport:
     counterfactual_consistency: float
     follow_through: float | None
     follow_through_rate: float
+    cluster_weighted: Mapping[str, float]
+    cluster_observation_counts: Mapping[str, int]
 
 
 def intervention_report(outcomes: Sequence[EdgeOutcome]
@@ -136,15 +172,30 @@ def intervention_report(outcomes: Sequence[EdgeOutcome]
 
     followed = [o for o in eligible if o.downstream_path_succeeded]
     follow_through = None
+    follow_through_clustered = None
     if followed:
-        follow_through = _cluster_weighted(_group(
-            followed, lambda o: o.mutated_terminal == o.counterfactual_gold))
+        followed_group = _group(
+            followed, lambda o: o.mutated_terminal == o.counterfactual_gold)
+        # The conditioned diagnostic uses the same weighting rule as the
+        # primary estimate it is reported alongside.
+        follow_through = _full_sample(followed_group)
+        follow_through_clustered = _cluster_weighted(followed_group)
 
-    base_accuracy = _cluster_weighted(base)
+    base_accuracy = _full_sample(base)
     # Corruption accuracy and old-answer persistence are the same
     # comparison (mutated terminal vs the stored gold) read as two gates:
     # the drop from baseline, and the residual rate itself.
-    corruption_accuracy = _cluster_weighted(corrupted)
+    corruption_accuracy = _full_sample(corrupted)
+    clustered = {
+        "base_accuracy": _cluster_weighted(base),
+        "corruption_accuracy": _cluster_weighted(corrupted),
+        "corruption_drop": _cluster_weighted(base) - _cluster_weighted(
+            corrupted),
+        "old_answer_persistence": _cluster_weighted(corrupted),
+        "counterfactual_consistency": _cluster_weighted(counterfactual),
+    }
+    if follow_through_clustered is not None:
+        clustered["follow_through"] = follow_through_clustered
     return InterventionReport(
         edge=next(iter(edges)),
         n_total=len(outcomes),
@@ -156,9 +207,12 @@ def intervention_report(outcomes: Sequence[EdgeOutcome]
         corruption_accuracy=corruption_accuracy,
         corruption_drop=base_accuracy - corruption_accuracy,
         old_answer_persistence=corruption_accuracy,
-        counterfactual_consistency=_cluster_weighted(counterfactual),
+        counterfactual_consistency=_full_sample(counterfactual),
         follow_through=follow_through,
-        follow_through_rate=len(followed) / len(eligible))
+        follow_through_rate=len(followed) / len(eligible),
+        cluster_weighted=MappingProxyType(clustered),
+        cluster_observation_counts=MappingProxyType(
+            {cluster: len(values) for cluster, values in base.items()}))
 
 
 # --- §1.16 collision sensitivity --------------------------------------------
@@ -184,10 +238,38 @@ class SensitivityScores:
     detected_observations: int
 
 
+def _validate_workflow_rows(outcomes: Sequence[WorkflowOutcome]) -> None:
+    """Reject replayed traces and cluster-inconsistent latent metadata.
+
+    A duplicated row would silently move the cluster mean and the reported
+    observation count while every same-population assertion still passed;
+    and collision status is a property of the *latent* program, so renderer
+    rows disagreeing about it would let part of a supposedly no-collision
+    cluster into the headline population.
+    """
+    seen = {(o.cluster_id, o.observation_id) for o in outcomes}
+    if len(seen) != len(outcomes):
+        raise InfrastructureError(
+            "duplicate (cluster_id, observation_id) rows: a replayed trace "
+            "would change the cluster mean silently")
+    by_cluster: dict[str, set] = {}
+    for outcome in outcomes:
+        by_cluster.setdefault(outcome.cluster_id, set()).add(
+            outcome.public_numeric_collision)
+    inconsistent = sorted(c for c, values in by_cluster.items()
+                          if len(values) > 1)
+    if inconsistent:
+        raise InfrastructureError(
+            f"collision metadata is latent-level but differs between "
+            f"renderings of clusters {inconsistent}")
+
+
 def headline_population(outcomes: Iterable[WorkflowOutcome]
                         ) -> list[WorkflowOutcome]:
     """The private, no-public-semantic-parameter-collision stratum."""
-    return [o for o in outcomes
+    rows = list(outcomes)
+    _validate_workflow_rows(rows)
+    return [o for o in rows
             if o.visibility_condition == "private"
             and not o.public_numeric_collision]
 

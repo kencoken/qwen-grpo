@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from .types import RENDERER_IDS, PublicParams, require_public
+from .types import (
+    RENDERER_IDS, VISIBILITY_CONDITIONS, InfrastructureError, PublicParams,
+    require_public,
+)
 
 # Prompt typography (§1.4): real × (U+00D7), − (U+2212), ÷ (U+00F7).
 TIMES, MINUS, DIVIDE = "×", "−", "÷"
@@ -264,14 +267,43 @@ def two_call_subtasks(orientation: str, params: PublicParams) -> list[str]:
     raise ValueError(f"unknown orientation {orientation!r}")
 
 
-# --- §1.5: Stage-0C/2 policy observation (frozen skeleton) ------------------
+# --- §1.5/§1.12: Stage-0C/2 policy observation (frozen skeleton) ------------
 
-def render_observation(public_prompt: str, manifest: list[str],
-                       steps: list[dict[str, Any]],
-                       visible_payload_texts: list[str] | None = None) -> str:
-    """Conductor-side observation. Steps are dicts with keys
-    `resource` (handle or None), `access` ("none" | "all"), `subtask`,
-    ordered by workflow position (`positions` order)."""
+def build_observation(instance: dict[str, Any], registry: Any,
+                      steps: list[dict[str, Any]]) -> str:
+    """The one supported way to build a Conductor observation.
+
+    Payload disclosure is derived *exclusively* from the instance's
+    `visibility_condition`, never from a separate caller argument: a
+    `private`-labelled observation that carried a `Resources:` block would
+    keep its `:private` identity and private scoring metadata while
+    actually being a visible rendering, silently contaminating the headline
+    stratum (§1.16).
+    """
+    visibility = instance.get("visibility_condition")
+    if visibility not in VISIBILITY_CONDITIONS:
+        raise InfrastructureError(
+            f"instance has no valid visibility_condition: {visibility!r}")
+    manifest = list(instance["public_manifest"])
+    payloads = None
+    if visibility == "visible":
+        if registry is None:
+            raise InfrastructureError(
+                "a visible instance requires its registry to disclose "
+                "payloads")
+        if list(registry.manifest) != manifest:
+            raise InfrastructureError(
+                "registry manifest does not match the instance manifest")
+        payloads = registry.union_payload_texts()
+    return _format_observation(instance["public_prompt"], manifest, steps,
+                               visible_payload_texts=payloads)
+
+
+def _format_observation(public_prompt: str, manifest: list[str],
+                        steps: list[dict[str, Any]],
+                        visible_payload_texts: list[str] | None = None) -> str:
+    """Text layout only — internal. Callers use `build_observation`, which
+    is the only path that couples disclosure to the visibility condition."""
     lines = ["Problem:", public_prompt]
     if visible_payload_texts is not None:  # §1.12 visible condition
         lines += ["", "Resources:"]

@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Literal
 
 # --- §1.6: typed rejection codes -------------------------------------------
@@ -130,9 +131,30 @@ class IntegerRecord:
 
     def __post_init__(self) -> None:
         if self.layout == "keyed":
+            # §1.2 specifies an ordered entities x ordered fields grid.
+            # Duplicate names or a ragged grid would make `lookup` depend
+            # on first-match order instead of the specified structure.
+            if not self.payload:
+                raise ValueError("keyed record must be non-empty")
+            entities = [entity for entity, _ in self.payload]
+            if len(set(entities)) != len(entities):
+                raise ValueError("duplicate entity names in keyed record")
+            schema: tuple[str, ...] | None = None
             values: list[int] = []
             for entity, fields in self.payload:
                 _check_name(entity)
+                if not fields:
+                    raise ValueError(f"entity {entity!r} has no fields")
+                names = tuple(name for name, _ in fields)
+                if len(set(names)) != len(names):
+                    raise ValueError(
+                        f"duplicate field names for entity {entity!r}")
+                if schema is None:
+                    schema = names
+                elif names != schema:
+                    raise ValueError(
+                        "keyed record is not rectangular: entity "
+                        f"{entity!r} has fields {names}, expected {schema}")
                 for field, value in fields:
                     _check_name(field)
                     _check_int(value)
@@ -387,11 +409,16 @@ def public_param_keys(cell_id: str, params: Mapping[str, Any]
 
 
 class PublicParams(Mapping):
-    """An immutable projection holding *only* a cell's public parameters.
+    """A genuinely immutable projection holding *only* a cell's public
+    parameters.
 
     Constructed solely by `public_projection`; renderers accept this type
     and reject a raw dict, so private generator state cannot reach a
-    template even accidentally.
+    template even accidentally. Immutability is real rather than
+    documented: the backing mapping is a read-only proxy and attribute
+    rebinding is blocked, because mutating a projection would change
+    rendered bytes without changing the latent identity that those bytes
+    are supposed to be pinned to.
     """
 
     __slots__ = ("_cell_id", "_values")
@@ -402,8 +429,14 @@ class PublicParams(Mapping):
             raise InfrastructureError(
                 f"{cell_id}: public projection keys {sorted(values)} != "
                 f"{sorted(expected)}")
-        self._cell_id = cell_id
-        self._values = dict(values)
+        object.__setattr__(self, "_cell_id", cell_id)
+        object.__setattr__(self, "_values", MappingProxyType(dict(values)))
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise InfrastructureError("PublicParams is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise InfrastructureError("PublicParams is immutable")
 
     @property
     def cell_id(self) -> str:
@@ -418,8 +451,20 @@ class PublicParams(Mapping):
     def __len__(self) -> int:
         return len(self._values)
 
+    def __hash__(self) -> int:
+        return hash((self._cell_id, tuple(sorted(self._values.items()))))
+
     def __repr__(self) -> str:
-        return f"PublicParams({self._cell_id}, {self._values!r})"
+        return f"PublicParams({self._cell_id}, {dict(self._values)!r})"
+
+    def numeric_features(self) -> dict[str, int]:
+        """The §1.16 public *semantic* parameters, derived here rather than
+        supplied by a caller — so a control record cannot be handed extra
+        or private-derived p/q/t/k/i values."""
+        keys = PUBLIC_NUMERIC_PARAMS[
+            f"code_atomic_{self['shape']}" if self._cell_id == "code_atomic"
+            else self._cell_id]
+        return {name: self._values[name] for name in keys}
 
 
 def public_projection(cell_id: str, params: Mapping[str, Any]) -> PublicParams:

@@ -43,14 +43,36 @@ def test_intervention_report_shares_one_eligible_denominator():
     assert report.intervention_ineligible == 1
     assert report.eligibility_rate == pytest.approx(0.75)
     assert report.n_clusters == 2
-    # Cluster-weighted over the identical eligible set. Base: c1 = {1, 1},
-    # c2 = {1} -> 1.0. Corrupted (mutated vs old gold): c1 = {0, 1},
-    # c2 = {0} -> 0.25. Counterfactual: c1 = {1, 0}, c2 = {1} -> 0.75.
+    # §1.9 primary = full-sample over the 3 eligible observations.
+    # base = [1, 1, 1] -> 1.0; corrupted = [0, 1, 0] -> 1/3;
+    # counterfactual = [1, 0, 1] -> 2/3.
     assert report.base_accuracy == pytest.approx(1.0)
-    assert report.corruption_accuracy == pytest.approx(0.25)
-    assert report.corruption_drop == pytest.approx(0.75)
+    assert report.corruption_accuracy == pytest.approx(1 / 3)
+    assert report.corruption_drop == pytest.approx(2 / 3)
     assert report.old_answer_persistence == report.corruption_accuracy
-    assert report.counterfactual_consistency == pytest.approx(0.75)
+    assert report.counterfactual_consistency == pytest.approx(2 / 3)
+    # Equal-cluster values are reported alongside for paired comparisons
+    # and the cluster bootstrap, never as the gate value.
+    assert report.cluster_weighted["corruption_accuracy"] == \
+        pytest.approx(0.25)
+    assert report.cluster_weighted["counterfactual_consistency"] == \
+        pytest.approx(0.75)
+    assert dict(report.cluster_observation_counts) == {"c1": 2, "c2": 1}
+
+
+def test_primary_estimate_is_full_sample_not_equal_cluster():
+    """§1.9 names full-sample eligible-set accuracy as the primary metric;
+    §1.8's cluster weighting is a different rule for a different purpose.
+    Two correct observations in one cluster and one incorrect in another
+    give 2/3 full-sample but 1/2 under equal-cluster weighting."""
+    outcomes = [
+        outcome("A", "o1", base=10, gold=10),
+        outcome("A", "o2", base=10, gold=10),
+        outcome("B", "o3", base=99, gold=10),
+    ]
+    report = intervention_report(outcomes)
+    assert report.base_accuracy == pytest.approx(2 / 3)
+    assert report.cluster_weighted["base_accuracy"] == pytest.approx(0.5)
 
 
 def test_eligibility_rate_accompanies_every_gate():
@@ -86,6 +108,17 @@ def test_follow_through_is_secondary_and_conditioned():
     assert report.counterfactual_consistency == pytest.approx(0.5)
     assert report.follow_through == pytest.approx(1.0)  # conditioned
     assert report.follow_through_rate == pytest.approx(0.5)
+
+
+def test_follow_through_uses_the_same_weighting_rule_as_the_primary():
+    outcomes = [
+        outcome("A", "o1", mutated=20, followed=True),   # consistent
+        outcome("A", "o2", mutated=20, followed=True),   # consistent
+        outcome("B", "o3", mutated=99, followed=True),   # inconsistent
+    ]
+    report = intervention_report(outcomes)
+    assert report.follow_through == pytest.approx(2 / 3)         # full-sample
+    assert report.cluster_weighted["follow_through"] == pytest.approx(0.5)
 
 
 def test_report_rejects_degenerate_inputs():
@@ -169,6 +202,25 @@ def test_sensitivity_requires_a_non_empty_headline_stratum():
         sensitivity_scores([_workflow("c1", "o1", visibility="visible")])
 
 
+def test_sensitivity_rejects_replayed_rows():
+    """A duplicated trace would move the cluster mean and n_observations
+    while every same-population assertion still passed."""
+    duplicated = [_workflow("c1", "o1"), _workflow("c1", "o1"),
+                  _workflow("c2", "o2", correct=False)]
+    with pytest.raises(InfrastructureError, match="duplicate"):
+        sensitivity_scores(duplicated)
+
+
+def test_sensitivity_rejects_cluster_inconsistent_collision_metadata():
+    """Collision status is latent-level: renderings of one cluster cannot
+    disagree, or part of a no-collision cluster enters the headline."""
+    inconsistent = [_workflow("c1", "o1", collision=False),
+                    _workflow("c1", "o2", collision=True),
+                    _workflow("c2", "o3")]
+    with pytest.raises(InfrastructureError, match="collision metadata"):
+        sensitivity_scores(inconsistent)
+
+
 # --- §1.11 B1 reference controls --------------------------------------------
 
 def _rows(cell, namespace="construction", count=12):
@@ -191,12 +243,10 @@ def test_majority_class_control_is_deterministic_and_frozen():
 
 def test_majority_class_tie_rule_prefers_the_lowest_gold():
     rows = _rows("lookup_atomic", count=6)
-    tied = [type(r)(cell_id=r.cell_id,
-                    latent_program_id=r.latent_program_id,
-                    namespace=r.namespace, params=r.params,
-                    public_numeric_values=r.public_numeric_values,
-                    gold_answer=g)
-            for r, g in zip(rows, [50, 50, 20, 20, 90, 90])]
+    tied = [baselines.PublicFeatureRecord(
+        cell_id=r.cell_id, latent_program_id=r.latent_program_id,
+        namespace=r.namespace, params=r.params, gold_answer=g)
+        for r, g in zip(rows, [50, 50, 20, 20, 90, 90])]
     model = baselines.fit_majority_class("lookup_atomic", tied)
     assert model["constant"] == 20  # counts tie at 2 -> lowest value
 
@@ -284,15 +334,16 @@ def test_noop_correct_at_a_true_zero_index():
     assert noop_correct is True  # the substituted zero is the true index
 
 
-def test_render_observation_contract():
+def test_observation_contract_and_visibility_coupling():
     latent = program.generate_latent("fork_join", "construction", 0,
                                      PROF).latent
-    inst = program.render_instance(latent, "resource_first", "private")
+    private = program.render_instance(latent, "resource_first", "private")
     steps = program.workflow_steps(latent)
-    observation = render.render_observation(
-        inst["public_prompt"], inst["public_manifest"], steps)
+    registry = InstanceRegistry(private["public_manifest"],
+                                private["private_registry"])
+    observation = program.observation_for(latent, private, registry)
     assert observation.startswith("Problem:\n")
-    assert f"Resources available: {', '.join(inst['public_manifest'])}" \
+    assert f"Resources available: {', '.join(private['public_manifest'])}" \
         in observation
     assert observation.endswith("Choose one worker for each step.")
     # Steps numbered in `positions` order, with resource/access disclosed.
@@ -301,14 +352,52 @@ def test_render_observation_contract():
         previous = "all" if step["access"] == "all" else "none"
         assert (f"{position}. (resource: {resource}; previous results: "
                 f"{previous}) {step['subtask']}") in observation
-    # Private condition never carries payload text.
+
+    # Disclosure is derived from visibility_condition alone: passing the
+    # registry to a private instance cannot leak payloads into it.
     assert "Resources:\n" not in observation
-    registry = InstanceRegistry(inst["public_manifest"],
-                                inst["private_registry"])
-    visible = render.render_observation(
-        inst["public_prompt"], inst["public_manifest"], steps,
-        visible_payload_texts=registry.union_payload_texts())
-    assert "Resources:\n" in visible
+    for payload in registry.union_payload_texts():
+        assert payload not in observation
+
+    visible = program.render_instance(latent, "resource_first", "visible")
+    visible_observation = program.observation_for(latent, visible, registry)
+    assert "Resources:\n" in visible_observation
+    for payload in registry.union_payload_texts():
+        assert payload in visible_observation
+
+
+def test_visible_instance_cannot_omit_its_payloads():
+    latent = program.generate_latent("lookup_math", "construction", 0,
+                                     PROF).latent
+    visible = program.render_instance(latent, "resource_first", "visible")
+    with pytest.raises(InfrastructureError):
+        program.observation_for(latent, visible, None)
+
+
+def test_observation_rejects_mismatched_instance_and_registry():
+    latent = program.generate_latent("lookup_math", "construction", 0,
+                                     PROF).latent
+    other = program.generate_latent("lookup_math", "construction", 1,
+                                    PROF).latent
+    visible = program.render_instance(latent, "resource_first", "visible")
+    other_instance = program.render_instance(other, "resource_first",
+                                             "visible")
+    other_registry = InstanceRegistry(other_instance["public_manifest"],
+                                      other_instance["private_registry"])
+    with pytest.raises(InfrastructureError):
+        program.observation_for(latent, visible, other_registry)
+    with pytest.raises(InfrastructureError):  # instance/latent mismatch
+        program.observation_for(other, visible, other_registry)
+
+
+def test_observation_requires_a_valid_visibility_condition():
+    latent = program.generate_latent("lookup_math", "construction", 0,
+                                     PROF).latent
+    instance = program.render_instance(latent, "resource_first", "private")
+    tampered = dict(instance, visibility_condition="bogus")
+    with pytest.raises(InfrastructureError):
+        render.build_observation(tampered, None,
+                                 program.workflow_steps(latent))
 
 
 def test_b4_local_node_request_shape():

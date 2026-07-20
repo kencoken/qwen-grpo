@@ -418,6 +418,34 @@ def test_public_projection_is_immutable_and_typed():
         types.PublicParams("lookup_math", {"H": "R-1A1"})  # incomplete
 
 
+def test_public_projection_immutability_is_real_not_documented():
+    """Mutating a projection would change rendered bytes without changing
+    the latent identity those bytes are pinned to."""
+    latent = generate_latent("lookup_math", "construction", 0, PROF).latent
+    public = latent["public_params"]
+    before = render.render_public_prompt("lookup_math", "resource_first",
+                                         public)
+    with pytest.raises(TypeError):          # backing map is a read-only proxy
+        public._values["p"] = 99
+    with pytest.raises(InfrastructureError):  # attributes cannot be rebound
+        public._values = {"p": 99}
+    with pytest.raises(InfrastructureError):
+        public._cell_id = "math_atomic"
+    with pytest.raises(InfrastructureError):
+        del public._values
+    assert render.render_public_prompt("lookup_math", "resource_first",
+                                       public) == before
+
+
+def test_numeric_features_are_derived_not_supplied():
+    latent = generate_latent("code_atomic", "construction", 1, PROF).latent
+    public = latent["public_params"]
+    assert public.numeric_features() == latent["public_numeric_values"]
+    # Only the subtype's own parameters can appear: a `count` instance has
+    # no k/i, and nothing outside the frozen family can be injected.
+    assert set(public.numeric_features()) <= {"p", "q", "t", "k", "i"}
+
+
 def test_prompt_integers_trace_to_public_parameters():
     from tasks.conductor.types import INTEGER_TOKEN_RE
     for cell in ("lookup_atomic", "math_atomic", "code_atomic",

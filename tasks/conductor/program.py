@@ -29,8 +29,8 @@ from .profiles import (
 from .types import (
     CELL_NODES, ENTITY_POOL, FIELD_POOL, MAX_ABS_VALUE, NAMESPACES,
     OP_SCHEMAS, OPERAND_NAME_MATCHED_OPS, PUBLIC_NUMERIC_PARAMS, RENDERER_IDS,
-    VISIBILITY_CONDITIONS, IntegerList, IntegerRecord, PublicParams, Resource,
-    public_projection, resource_from_json,
+    VISIBILITY_CONDITIONS, InfrastructureError, IntegerList, IntegerRecord,
+    PublicParams, Resource, public_projection, resource_from_json,
 )
 
 SEP = "\x1f"  # §1.13 separator ␟
@@ -946,6 +946,20 @@ def workflow_steps(latent: dict[str, Any]) -> list[dict[str, Any]]:
              "access": access[idx],
              "subtask": subtasks[node_id]}
             for idx, node_id in enumerate(positions)]
+
+
+def observation_for(latent: dict[str, Any], instance: dict[str, Any],
+                    registry: Any) -> str:
+    """Canonical Conductor observation for a rendered instance (§1.5).
+
+    Disclosure follows `instance["visibility_condition"]` alone; the steps
+    come from the reference topology in `positions` order.
+    """
+    if instance["latent_program_id"] != latent["latent_program_id"]:
+        raise InfrastructureError(
+            "instance and latent describe different latent programs")
+    return render.build_observation(instance, registry,
+                                    workflow_steps(latent))
 
 
 def render_instance(latent: dict[str, Any], renderer_id: str,

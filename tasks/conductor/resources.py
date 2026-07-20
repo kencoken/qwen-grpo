@@ -16,6 +16,11 @@ class InstanceRegistry:
 
     def __init__(self, manifest: list[str],
                  registry_json: dict[str, dict[str, Any]]) -> None:
+        # Cardinality before set comparison: a manifest repeating a handle
+        # compares equal as a set but would render its payload twice.
+        if len(set(manifest)) != len(manifest):
+            raise InfrastructureError(f"duplicate handles in manifest "
+                                      f"{manifest}")
         if set(manifest) != set(registry_json):
             raise InfrastructureError("manifest keys != registry keys")
         for handle in manifest:

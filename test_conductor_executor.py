@@ -304,27 +304,81 @@ def test_b2_draws_typed_errors_never_payload_values():
 
 # --- §1.8 oracle/comparator on a hand-enumerated toy surface ----------------
 
-TOY = {
-    (0, 0): {"c1": [1, 0], "c2": [0]},
-    (0, 1): {"c1": [1, 1], "c2": [1]},
-    (0, 2): {"c1": [0, 0], "c2": [0]},
-    (1, 0): {"c1": [1, 1], "c2": [1]},   # accuracy tie with (0, 1)
-    (1, 1): {"c1": [1, 0], "c2": [1]},
-    (1, 2): {"c1": [0, 0], "c2": [1]},
-    (2, 0): {"c1": [1, 1], "c2": [0]},
-    (2, 1): {"c1": [1, 0], "c2": [1]},
-    (2, 2): {"c1": [1, 1], "c2": [0]},
-}
+def _toy(pairs):
+    """Observation-keyed toy surface: cluster c1 has two renderings."""
+    return {assignment: {"c1": {"o1": a, "o2": b}, "c2": {"o3": c}}
+            for assignment, (a, b, c) in pairs.items()}
+
+
+TOY_RAW = _toy({
+    (0, 0): (1, 0, 0),
+    (0, 1): (1, 1, 1),
+    (0, 2): (0, 0, 0),
+    (1, 0): (1, 1, 1),   # accuracy tie with (0, 1)
+    (1, 1): (1, 0, 1),
+    (1, 2): (0, 0, 1),
+    (2, 0): (1, 1, 0),
+    (2, 1): (1, 0, 1),
+    (2, 2): (1, 1, 0),
+})
 
 
 def test_oracle_toy_surface():
-    assert oracle.cluster_weighted_accuracy(TOY[(1, 1)]) == 0.75
-    assert oracle.select_deployable(TOY) == (0, 1)  # tie -> lexicographic
-    assert oracle.best_fixed(TOY) == (1, 1)
-    assert oracle.uniform_random_accuracy(TOY) == pytest.approx(5.25 / 9)
+    surface = oracle.validate_payoff_surface(TOY_RAW, "lookup_math")
+    assert surface.accuracy((1, 1)) == 0.75
+    assert oracle.select_deployable(surface) == (0, 1)  # tie -> lexicographic
+    assert oracle.best_fixed(surface) == (1, 1)
+    assert oracle.uniform_random_accuracy(surface) == pytest.approx(5.25 / 9)
     # Runner-up at node 0 with node 1 fixed: (1,1) vs (2,1) tie -> lowest.
-    assert oracle.node_runner_up(TOY, (0, 1), 0) == (1, 1)
-    assert oracle.node_runner_up(TOY, (0, 1), 1) == (0, 0)
+    assert oracle.node_runner_up(surface, (0, 1), 0) == (1, 1)
+    assert oracle.node_runner_up(surface, (0, 1), 1) == (0, 0)
+
+
+def test_surface_is_observation_paired_not_merely_equal_counts():
+    """Equal per-cluster counts must not admit different renderings: the
+    pairing is checked by observation identity."""
+    raw = {a: {"c1": {"o1": 1, "o2": 1}, "c2": {"o3": 1}} for a in TOY_RAW}
+    raw[(1, 2)] = {"c1": {"o2": 1, "o3": 1}, "c2": {"o3": 1}}  # same counts
+    with pytest.raises(oracle.PayoffSurfaceError, match="observation ids"):
+        oracle.validate_payoff_surface(raw, "lookup_math")
+
+
+@pytest.mark.parametrize("raw,cell,match", [
+    ({(2,): {"c": {"o": 1}}}, "lookup_atomic", "full enumeration"),
+    ({(): {"c": {"o": 1}}}, "lookup_atomic", "must have 1 entries"),
+    ({0: {"c": {"o": 1}}}, "lookup_atomic", "must be a tuple"),
+    ({(0.0,): {"c": {"o": 1}}, (1,): {"c": {"o": 1}}, (2,): {"c": {"o": 1}}},
+     "lookup_atomic", "non-integer"),
+    ({(True,): {"c": {"o": 1}}, (1,): {"c": {"o": 1}}, (2,): {"c": {"o": 1}}},
+     "lookup_atomic", "non-integer"),
+    (TOY_RAW, "lookup_atomic", "must have 1 entries"),   # wrong cell arity
+    (TOY_RAW, "bogus_cell", "unknown cell_id"),
+])
+def test_surface_domain_errors_are_typed(raw, cell, match):
+    with pytest.raises(oracle.PayoffSurfaceError, match=match):
+        oracle.validate_payoff_surface(raw, cell)
+
+
+def test_surface_correctness_is_binary():
+    """A 0.5 GRPO reward for a well-formed world failure must never be
+    averaged into a terminal-accuracy surface."""
+    raw = {a: {"c1": {"o1": 0.5}} for a in oracle.enumerate_assignments(1)}
+    with pytest.raises(oracle.PayoffSurfaceError, match="must be 0 or 1"):
+        oracle.validate_payoff_surface(raw, "lookup_atomic")
+
+
+def test_selectors_require_a_validated_surface():
+    for call in (oracle.select_deployable, oracle.best_fixed,
+                 oracle.uniform_random_accuracy):
+        with pytest.raises(oracle.PayoffSurfaceError, match="ValidatedSurface"):
+            call(TOY_RAW)
+    surface = oracle.validate_payoff_surface(TOY_RAW, "lookup_math")
+    with pytest.raises(oracle.PayoffSurfaceError):
+        oracle.select_best_one_call(surface)   # wrong surface kind
+    with pytest.raises(oracle.PayoffSurfaceError):
+        oracle.node_runner_up(surface, [0, 1], 0)   # list, not tuple
+    with pytest.raises(oracle.PayoffSurfaceError):
+        oracle.node_runner_up(surface, (0, 1), 5)   # node index range
 
 
 def test_semantic_to_positional_both_fork_orders():
@@ -336,24 +390,47 @@ def test_semantic_to_positional_both_fork_orders():
 
 
 def test_signed_gap_paired_and_unclipped():
-    deployable = {"c1": [1.0, 1.0], "c2": [1.0]}
-    policy = {"c1": [1.0, 0.0], "c2": [0.0]}  # malformed action enters as 0
+    deployable = {"c1": {"o1": 1, "o2": 1}, "c2": {"o3": 1}}
+    policy = {"c1": {"o1": 1, "o2": 0}, "c2": {"o3": 0}}  # malformed -> 0
     assert oracle.signed_deployable_gap(deployable, policy) == \
         pytest.approx(0.75)
-    better = {"c1": [1.0, 1.0], "c2": [1.0]}
-    worse = {"c1": [0.0, 0.0], "c2": [1.0]}
+    better = {"c1": {"o1": 1, "o2": 1}, "c2": {"o3": 1}}
+    worse = {"c1": {"o1": 0, "o2": 0}, "c2": {"o3": 1}}
     assert oracle.signed_deployable_gap(worse, better) == pytest.approx(-0.5)
-    with pytest.raises(ValueError):
-        oracle.signed_deployable_gap(deployable, {"c1": [1.0]})
+    with pytest.raises(oracle.PayoffSurfaceError):
+        oracle.signed_deployable_gap(deployable, {"c1": {"o1": 1}})
+    with pytest.raises(oracle.PayoffSurfaceError):  # unpaired observations
+        oracle.signed_deployable_gap(
+            {"c1": {"o1": 1}}, {"c1": {"o9": 1}})
+
+
+def _candidate_surface(candidates, value_for):
+    return {c: {"c1": {"o1": value_for(c)}, "c2": {"o2": value_for(c)}}
+            for c in candidates}
 
 
 def test_two_call_family_and_tie_order():
     workflows = oracle.enumerate_two_call_workflows()
     assert len(workflows) == 18
     assert workflows[0] == ("lookup_first", (0, 0))
-    accuracy = {wf: 0.5 for wf in workflows}
-    assert oracle.select_best_two_call(accuracy) == ("lookup_first", (0, 0))
-    assert oracle.select_best_one_call({0: 0.5, 1: 0.5, 2: 0.4}) == 0
+    tied = oracle.validate_two_call_surface(
+        _candidate_surface(workflows, lambda c: 1), "fork_join")
+    assert oracle.select_best_two_call(tied) == ("lookup_first", (0, 0))
+    one_call = oracle.validate_one_call_surface(
+        _candidate_surface(oracle.ENDPOINT_IDS,
+                           lambda e: 1 if e in (0, 1) else 0), "fork_join")
+    assert oracle.select_best_one_call(one_call) == 0  # tie -> lowest index
+
+
+def test_control_surfaces_are_observation_paired_too():
+    workflows = oracle.enumerate_two_call_workflows()
+    raw = _candidate_surface(workflows, lambda c: 1)
+    raw[workflows[3]] = {"c1": {"oX": 1}, "c2": {"o2": 1}}
+    with pytest.raises(oracle.PayoffSurfaceError, match="observation ids"):
+        oracle.validate_two_call_surface(raw, "fork_join")
+    partial = {0: {"c1": {"o1": 1}}, 1: {"c1": {"o1": 1}}}
+    with pytest.raises(oracle.PayoffSurfaceError, match="full enumeration"):
+        oracle.validate_one_call_surface(partial, "fork_join")
 
 
 # --- §4 agreement command coverage accounting -------------------------------

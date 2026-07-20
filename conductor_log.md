@@ -72,6 +72,28 @@ tests it. Backlog = Stage-2+ entry gates.
   the acceptance hooks above; full `WorkerResult` union enforcement;
   agreement-command coverage accounting. 296 tests green
   (223 → 296), byte fixture unchanged.
+- 2026-07-20 — second-round findings
+  (`plans/conductor/51_s_stage_0a_review.md`) addressed. **One was a
+  conformance bug, not a hardening gap**: `intervention_report` applied
+  §1.8's cluster weighting to §1.9's estimates, but §1.9 names *full-sample
+  (eligible-set) accuracy* as the primary metric, with clustering entering
+  through paired comparisons and the cluster bootstrap. The spec is frozen
+  and correct; the code now follows it, and reports the equal-cluster
+  values alongside so a gate cannot be read off the wrong rule. Two
+  eligible correct observations in one cluster against one incorrect in
+  another give 2/3, not 1/2. **This changes Stage-1 intervention gate
+  values** and is settled before any construction data exists.
+  Also: payoff surfaces are observation-keyed
+  (`surface[candidate][cluster][observation_id]`), cell-bound, and
+  binary-valued, so pairing is checked by observation identity rather than
+  equal counts, and a 0.5 world-failure reward can never enter a
+  terminal-accuracy surface; a single `build_observation` derives payload
+  disclosure from `visibility_condition` alone; UTF-8 validation extended
+  to the direct-answer path; profile workload ceilings; sensitivity rows
+  checked for replay and cluster-constant collision metadata; `PublicParams`
+  genuinely immutable with control features derived from the projection;
+  keyed records required to be ordered rectangular grids. 336 tests green
+  (296 → 336), byte fixture unchanged.
 
 ### Must block the construction screen
 
