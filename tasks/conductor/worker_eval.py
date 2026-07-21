@@ -33,7 +33,9 @@ import os
 import platform
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from fractions import Fraction
+from itertools import combinations
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -701,6 +703,7 @@ def build_manifest(runtime: Runtime, prompts: PromptBundle, *,
                    frozen_candidate: bool = False,
                    seed_policy: str = "greedy-no-sampling",
                    git_info: Mapping[str, Any] | None = None,
+                   process_info: Mapping[str, Any] | None = None,
                    difficulty_profile: Mapping[str, Any] | None = None,
                    ) -> dict[str, Any]:
     """Assemble the run manifest from actual runtime facts.
@@ -719,15 +722,17 @@ def build_manifest(runtime: Runtime, prompts: PromptBundle, *,
             f"prompt bundle {prompts.revision!r} does not match the "
             f"prompts the pool actually renders (endpoints {wrong}); "
             "a declared revision is valid only for its exact strings")
-    if frozen_candidate:
-        # 82_s finding 5: freeze status comes from the authoritative
-        # registry, never from a caller-constructed dataclass.
+    if frozen_candidate or prompts.status.startswith("FROZEN"):
+        # 82_s finding 5 / 84_s finding 3: freeze grade is intrinsic —
+        # any bundle *claiming* FROZEN must match the authoritative
+        # registry, whether or not the caller set the flag.
         registered = resolve_prompts(prompts.revision)
         if prompts != registered:
             raise ProfileError(
-                f"frozen-candidate bundle {prompts.revision!r} does not "
-                "match the registered revision; frozen prompts resolve "
-                "only through the registry")
+                f"bundle {prompts.revision!r} claims or requires frozen "
+                "status but does not match the registry; frozen prompts "
+                "resolve only through the registry")
+    if frozen_candidate:
         if not registered.status.startswith("FROZEN"):
             raise ProfileError(
                 f"frozen-candidate run refuses prompt bundle "
@@ -752,6 +757,11 @@ def build_manifest(runtime: Runtime, prompts: PromptBundle, *,
         "evaluation_mode": evaluation_mode,
         "status": "running",
         "git": dict(git_info) if git_info is not None else git_provenance(),
+        # Fresh-process evidence for the §7.4 repeat confirmation.
+        "process": (dict(process_info) if process_info is not None else
+                    {"pid": os.getpid(),
+                     "started_utc": datetime.now(
+                         timezone.utc).isoformat()}),
         "population": copy.deepcopy(dict(population)),
         "endpoint_schedule_version": endpoint_schedule_version,
         "generator_version": program.GENERATOR_VERSION,
@@ -982,7 +992,7 @@ def summarize_worker_eval(manifest: Mapping[str, Any],
         }
         by_stratum: dict[str, dict[str, int]] = {}
         by_renderer: dict[str, dict[str, int]] = {}
-        pairs: dict[tuple[str, str], list[bool]] = {}
+        pairs: dict[tuple[str, str], dict[str, bool]] = {}
         correct = 0
         for score in node_scores:
             correct += int(score["node_correct"])
@@ -994,9 +1004,19 @@ def summarize_worker_eval(manifest: Mapping[str, Any],
                    score["node_correct"])
             pairs.setdefault((score["latent_program_id"],
                               score["node_id"]),
-                             []).append(score["node_correct"])
-        flipped = sum(1 for outcomes_list in pairs.values()
-                      if len(set(outcomes_list)) > 1)
+                             {})[score["renderer_id"]] = \
+                score["node_correct"]
+        flipped = sum(1 for group in pairs.values()
+                      if len(set(group.values())) > 1)
+        # §4.5/§5.5 pairwise flips (84_s): which renderer *pair*
+        # disagreed — the any-of-three flag above cannot identify it.
+        pairwise: dict[str, dict[str, int]] = {}
+        for group in pairs.values():
+            for left, right in combinations(sorted(group), 2):
+                entry = pairwise.setdefault(f"{left}|{right}",
+                                            {"n": 0, "flipped": 0})
+                entry["n"] += 1
+                entry["flipped"] += int(group[left] != group[right])
         by_rate = sorted(by_renderer.items(),
                          key=lambda kv: (Fraction(kv[1]["correct"],
                                                   kv[1]["n"]), kv[0]))
@@ -1011,7 +1031,8 @@ def summarize_worker_eval(manifest: Mapping[str, Any],
                                 **by_rate[0][1]} if by_rate else None),
             "best_renderer": ({"renderer_id": by_rate[-1][0],
                                **by_rate[-1][1]} if by_rate else None),
-            "paired": {"groups": len(pairs), "flipped": flipped},
+            "paired": {"groups": len(pairs), "flipped": flipped,
+                       "pairwise": pairwise},
         }
     composed = [row for row in calls
                 if row["evaluation_mode"] == "composed"]
@@ -1177,6 +1198,23 @@ def load_run(run_dir: str | Path,
         raise InfrastructureError(
             "manifest runtime profile does not rederive its own "
             "fingerprint; the stored configuration was altered")
+    stored_prompts = manifest["system_prompts"]
+    if stored_prompts["status"].startswith("FROZEN"):
+        # 84_s finding 3: a FROZEN claim is intrinsic and downstream-
+        # verifiable — recheck it against the authoritative registry.
+        try:
+            registered = resolve_prompts(stored_prompts["revision"])
+        except ProfileError as error:
+            raise InfrastructureError(
+                f"stored FROZEN prompt claim cannot be verified: "
+                f"{error}") from error
+        if (not registered.status.startswith("FROZEN")
+                or stored_prompts["text"] != dict(registered.prompts)
+                or stored_prompts["sha256"] != registered.sha256()):
+            raise InfrastructureError(
+                f"stored FROZEN claim for revision "
+                f"{stored_prompts['revision']!r} does not match the "
+                "registry")
 
     payload_shas = manifest["payload_sha256"]
     on_disk = {path.name for path in run_dir.iterdir()
@@ -1242,9 +1280,18 @@ def load_run(run_dir: str | Path,
                 f"extra {extra}")
         check_renderer_support(labels, list(population["renderers"]))
         label_by_id = {label.case_id: label for label in labels}
+        plan_index = {case.case_id: index
+                      for index, case in enumerate(cases)}
         for row in calls:
             case = case_by_id[row["case_id"]]
             label = label_by_id[row["case_id"]]
+            if row["generation_ordinal"] != plan_index[row["case_id"]]:
+                # 84_s finding 1: isolated runs generate in canonical
+                # plan order; the recorded ordinals must prove it.
+                raise InfrastructureError(
+                    f"{row['case_id']}: generation ordinal "
+                    f"{row['generation_ordinal']} is not the canonical "
+                    f"plan position {plan_index[row['case_id']]}")
             # 82_s finding 4: every isolated row must be a real call whose
             # identity matches the regenerated case — a relabelled
             # endpoint or an impossible blocked-with-value state must not
@@ -1320,7 +1367,7 @@ def load_run(run_dir: str | Path,
 # would invalidate hour-scale GPU runs over docs-only commits) but is
 # always reported; dirty trees are refused outright.
 _ALWAYS_ALLOWED_DIFFS = ("run_id", "purpose", "candidate_label", "git",
-                         "payload_sha256")
+                         "process", "payload_sha256")
 # A "model" difference is the pinned checkpoint identity and what follows
 # from it — never the caps or microbatch, which change results on their
 # own (82_s finding 5).
@@ -1335,12 +1382,13 @@ _ALLOWED_DIFFS = {
                              "worker_visible_fingerprint",
                              "endpoint_fingerprints",
                              "chat_template_sha256", "tokenizer_facts"),
-    "request_contract": ("request_contract",),
 }
-# Fingerprint paths follow from any declared difference; their presence
-# alone must not satisfy the declared-difference requirement below.
-_DERIVED_DIFFS = ("runtime_profile_fingerprint",
-                  "worker_visible_fingerprint", "endpoint_fingerprints")
+# 84_s finding 3: the declared dimension must differ in *actual bytes*,
+# not in a relabelled revision or a template-only side effect.
+_MUST_DIFFER = {
+    "prompt": ("system_prompts.text", "system_prompts.sha256"),
+    "model": _MODEL_DIFFS,
+}
 
 
 def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
@@ -1359,6 +1407,15 @@ def compare_worker_eval_runs(left: Mapping[str, Any],
     Requires identical population/case support and singleton generation;
     prints the exact differing manifest fields and refuses unexpected
     ones."""
+    if allowed_difference == "request_contract":
+        # 84_s finding 3: the resolved contract metadata does not yet
+        # configure build_worker_call, so a second registry key would
+        # create a no-op arm with real-looking provenance. Re-enable
+        # only when a request-scope option actually parameterizes the
+        # builder.
+        raise ProfileError(
+            "request_contract comparison is disabled until the contract "
+            "key configures the request builder")
     if allowed_difference not in _ALLOWED_DIFFS:
         raise ProfileError(
             f"allowed_difference must be one of "
@@ -1401,18 +1458,25 @@ def compare_worker_eval_runs(left: Mapping[str, Any],
         raise InfrastructureError(
             f"manifest fields differ beyond declared "
             f"{allowed_difference!r} difference: {unexpected}")
-    # 82_s finding 5: the declared dimension must actually differ — a
-    # comparison whose arms are secretly identical is a config error,
-    # not a result.
+    # 82_s/84_s finding: the declared dimension must differ in actual
+    # bytes — a comparison whose arms are secretly identical (or differ
+    # only in a label or a template side effect) is a config error.
     declared = [path for path in differing
                 if any(path == a or path.startswith(a + ".")
-                       for a in _ALLOWED_DIFFS[allowed_difference])
-                and not any(path == d or path.startswith(d + ".")
-                            for d in _DERIVED_DIFFS)]
+                       for a in _MUST_DIFFER[allowed_difference])]
     if not declared:
         raise InfrastructureError(
-            f"declared {allowed_difference!r} difference is not present: "
-            "the two runs are identical on that dimension")
+            f"declared {allowed_difference!r} difference is not present "
+            "in actual bytes: the two runs are identical on that "
+            "dimension")
+    if allowed_difference == "model":
+        endpoints = {path.split(".")[2] for path in declared}
+        if len(endpoints) != 1:
+            raise InfrastructureError(
+                "a model comparison changes exactly one endpoint "
+                f"checkpoint, got {sorted(endpoints)}; name a "
+                "multi-endpoint contrast explicitly if one is ever "
+                "intended")
     return {"allowed_difference": allowed_difference,
             "differing_fields": differing,
             "case_support": len(left_support)}
@@ -1426,20 +1490,64 @@ CONFIRMATION_FIELDS = ("request_sha256", "completion", "finish_reason",
                        "generated_tokens", "generation_hit_token_cap")
 
 # Manifest paths that may legitimately differ between two runs of the
-# same candidate: run identity and the payload hashes that embed it.
-_REPEAT_ALLOWED_DIFFS = ("run_id", "purpose", "git", "payload_sha256")
+# same candidate: run identity, process identity (required to differ),
+# and the payload hashes that embed the run id.
+_REPEAT_ALLOWED_DIFFS = ("run_id", "purpose", "git", "process",
+                         "payload_sha256")
+
+# The declared §7.4 full-population design (registration of the
+# dedicated worker-development namespace is pending the D1 erratum):
+# 30 latents per cell x 6 cells x all renderers = 900 isolated calls.
+FULL_RUN_PER_CELL = 30
 
 
 def confirm_repeat_run(left: Mapping[str, Any],
-                       right: Mapping[str, Any]) -> dict[str, Any]:
-    """The §7.4 confirmation over two loaded runs of one candidate:
-    identical manifests (up to run identity), identical case support, and
-    exact generation-field equality for every called row. Required before
-    a candidate's full result enters the final comparison/freeze."""
+                       right: Mapping[str, Any],
+                       expected_namespace: str,
+                       per_cell: int = FULL_RUN_PER_CELL
+                       ) -> dict[str, Any]:
+    """The §7.4 confirmation over two loaded runs of one candidate: the
+    declared full isolated population, singleton generation, two
+    genuinely distinct fresh-process runs on one clean commit, identical
+    manifests (up to run identity), identical case support, and exact
+    generation-field equality for every called row (84_s finding 1 —
+    self-confirmation must fail). Canonical generation order is already
+    enforced per run by `load_run`. Required before a candidate's full
+    result enters the final comparison/freeze."""
     reasons: list[str] = []
-    for run in (left, right):
-        if run["manifest"]["git"]["dirty"]:
-            reasons.append("run from a dirty worktree")
+    for side, run in (("left", left), ("right", right)):
+        manifest = run["manifest"]
+        population = manifest["population"]
+        if manifest["evaluation_mode"] != "isolated":
+            reasons.append(f"{side}: not an isolated run")
+        if manifest["generation_policy"] != GENERATION_POLICY_SINGLETON:
+            reasons.append(f"{side}: not singleton generation")
+        if population["namespace"] != expected_namespace:
+            reasons.append(f"{side}: namespace "
+                           f"{population['namespace']!r} is not the "
+                           f"declared {expected_namespace!r}")
+        if population["per_cell"] != per_cell:
+            reasons.append(f"{side}: per_cell {population['per_cell']} "
+                           f"is not the full §7.4 population "
+                           f"({per_cell}/cell)")
+        if sorted(population["renderers"]) != sorted(RENDERER_IDS):
+            reasons.append(f"{side}: not the full renderer crossing")
+        if population["visibility"] != "private":
+            reasons.append(f"{side}: visibility is not private")
+        if manifest["git"]["dirty"]:
+            reasons.append(f"{side}: run from a dirty worktree")
+    if left["manifest"]["run_id"] == right["manifest"]["run_id"]:
+        reasons.append("run ids are identical; confirmation requires "
+                       "two distinct runs")
+    if left["manifest"]["process"]["pid"] \
+            == right["manifest"]["process"]["pid"]:
+        reasons.append("process ids are identical; confirmation "
+                       "requires two fresh processes")
+    if left["manifest"]["git"]["commit"] \
+            != right["manifest"]["git"]["commit"]:
+        reasons.append("runs span different commits; a repeat "
+                       "confirmation requires one clean commit (the "
+                       "cross-candidate commit policy does not apply)")
     flat_left = _flatten(left["manifest"])
     flat_right = _flatten(right["manifest"])
     unexpected = sorted(

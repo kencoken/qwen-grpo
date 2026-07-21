@@ -53,6 +53,8 @@ def eval_runtime(pool=None):
 def make_manifest(rt, **overrides):
     kwargs = dict(
         run_id="run-1", purpose="tranche-a-test",
+        process_info={"pid": make_manifest.next_pid(),
+                      "started_utc": "t"},
         population={"namespace": "worker_dev", "per_cell": 30,
                     "renderers": ["resource_first", "goal_first",
                                   "bound_var"], "visibility": "private"},
@@ -64,6 +66,9 @@ def make_manifest(rt, **overrides):
     )
     kwargs.update(overrides)
     return build_manifest(rt, BUNDLE, **kwargs)
+
+
+make_manifest.next_pid = iter(range(50_000, 60_000)).__next__
 
 
 # --- prompt binding (81_f §5.2; Gate A) --------------------------------------
@@ -708,7 +713,13 @@ def test_hand_calculated_paired_renderer_summary():
                                           "n": 2, "correct": 1}
     assert isolated["best_renderer"] == {"renderer_id": "resource_first",
                                          "n": 2, "correct": 2}
-    assert isolated["paired"] == {"groups": 2, "flipped": 1}
+    assert isolated["paired"] == {
+        "groups": 2, "flipped": 1,
+        # Hand calculation: only L1's bound_var disagrees, so both
+        # pairs containing bound_var flip once and the third never.
+        "pairwise": {"bound_var|goal_first": {"n": 2, "flipped": 1},
+                     "bound_var|resource_first": {"n": 2, "flipped": 1},
+                     "goal_first|resource_first": {"n": 2, "flipped": 0}}}
     assert isolated["by_stratum"]["code|code_atomic|code|bound_var"] \
         == {"n": 2, "correct": 1}
 
@@ -728,7 +739,7 @@ def write_isolated_run(tmp_path, name="run-iso", population=POPULATION):
     latents = generate_latents(population)
     script = reference_script(cases, labels, latents)
     rt = eval_runtime(pool=bundle_pool(script=script, default="garbage"))
-    manifest = make_manifest(rt, population=population,
+    manifest = make_manifest(rt, population=population, run_id=name,
                              expected_calls=len(cases),
                              expected_scores=len(labels))
     with RunWriter(tmp_path / name, manifest) as writer:
@@ -864,11 +875,13 @@ def write_prompt_variant_run(tmp_path, name="run-var"):
     rt = eval_runtime(pool=FakePool(script=script, default="garbage",
                                     system_prompts=variant_prompts))
     manifest = build_manifest(
-        rt, bundle, run_id="run-1", purpose="tranche-a-test",
+        rt, bundle, run_id=name, purpose="tranche-a-test",
         population=POPULATION,
         endpoint_schedule_version="d16-operator-aligned-v1",
         candidate_label="rev0-var", request_contract_key="worker-blocks-v0",
         expected_calls=len(cases), expected_scores=len(labels),
+        process_info={"pid": make_manifest.next_pid(),
+                      "started_utc": "t"},
         git_info={"commit": "0" * 40, "dirty": False, "diff_sha256": None})
     with RunWriter(tmp_path / name, manifest) as writer:
         rows = run_node_cases(rt, cases, writer, case_identities(labels))
@@ -1196,20 +1209,43 @@ def test_confirm_repeat_run_and_cli(tmp_path, capsys):
     left_dir = write_isolated_run(tmp_path, "run-a")
     right_dir = write_isolated_run(tmp_path, "run-b")
     left, right = load_run(left_dir), load_run(right_dir)
-    verdict = confirm_repeat_run(left, right)
+    verdict = confirm_repeat_run(left, right, "construction", per_cell=1)
     assert verdict["confirmed"] and verdict["cases"] == 30
-    assert probe_main(["confirm", str(left_dir), str(right_dir)]) == 0
-    assert "CONFIRMED" in capsys.readouterr().out
+
+    # 84_s finding 1: self-confirmation must fail (same run id and pid).
+    selfsame = confirm_repeat_run(left, left, "construction", per_cell=1)
+    assert not selfsame["confirmed"]
+    assert any("distinct runs" in r for r in selfsame["reasons"])
+    assert any("fresh processes" in r for r in selfsame["reasons"])
+
+    # The default design is the full §7.4 population; the CLI has no
+    # per-cell override, so these 1/cell diagnostic runs cannot confirm.
+    small = confirm_repeat_run(left, right, "construction")
+    assert not small["confirmed"]
+    assert any("full §7.4 population" in r for r in small["reasons"])
+    assert probe_main(["confirm", str(left_dir), str(right_dir),
+                       "--namespace", "construction"]) == 1
+    assert "FAIL" in capsys.readouterr().out
+
+    # Wrong namespace and split commits each refuse.
+    assert not confirm_repeat_run(left, right, "worker_dev",
+                                  per_cell=1)["confirmed"]
+    split = copy_mod.deepcopy(right)
+    split["manifest"]["git"]["commit"] = "e" * 40
+    split_v = confirm_repeat_run(left, split, "construction", per_cell=1)
+    assert any("one clean commit" in r for r in split_v["reasons"])
 
     altered = copy_mod.deepcopy(right)
     altered["calls"][0]["completion"] += " "
-    unequal = confirm_repeat_run(left, altered)
+    unequal = confirm_repeat_run(left, altered, "construction",
+                                 per_cell=1)
     assert not unequal["confirmed"]
     assert any("generation fields" in reason
                for reason in unequal["reasons"])
     # A different candidate is not a "repeat" however equal its outputs.
     variant = load_run(write_prompt_variant_run(tmp_path, "run-v"))
-    drifted = confirm_repeat_run(left, variant)
+    drifted = confirm_repeat_run(left, variant, "construction",
+                                 per_cell=1)
     assert not drifted["confirmed"]
     assert any("hold the whole candidate fixed" in reason
                for reason in drifted["reasons"])
@@ -1247,8 +1283,8 @@ def test_admit_preconditions_reject_unregistered_designs():
     def reasons(bad_runs, namespace="construction"):
         return admit_singleton(bad_runs, namespace)["reasons"]
 
-    # 82_s finding 1: the registered design, not mutual consistency.
-    assert any("registered" in r for r in reasons(runs, "worker_dev"))
+    # 82_s finding 1: the declared design, not mutual consistency.
+    assert any("declared" in r for r in reasons(runs, "worker_dev"))
     subset = [dict(run, renderers=["resource_first"]) for run in runs]
     assert any("full crossing" in r for r in reasons(subset))
     keep = {record["case_id"] for record in runs[0]["cases"][:5]}
@@ -1269,3 +1305,115 @@ def test_admit_preconditions_reject_unregistered_designs():
              dict(runs[2], git={"commit": "e" * 40, "dirty": False,
                                 "diff_sha256": None})]
     assert any("one clean commit" in r for r in reasons(split))
+
+
+# =============================================================================
+# 84_s review response: confirmation, P0 comparability, candidate identity.
+# =============================================================================
+
+def test_comparison_requires_actual_byte_differences(tmp_path):
+    base = load_run(write_isolated_run(tmp_path, "run-a"))
+
+    # A relabelled prompt revision with identical bytes is a no-op arm.
+    relabel = copy_mod.deepcopy(base)
+    relabel["manifest"]["system_prompts"]["revision"] = "rev0-alias"
+    with pytest.raises(InfrastructureError, match="actual bytes"):
+        compare_worker_eval_runs(base, relabel, "prompt")
+
+    # A chat-template-only change is not a declared model difference.
+    template = copy_mod.deepcopy(base)
+    template["manifest"]["chat_template_sha256"]["math"] = "other"
+    with pytest.raises(InfrastructureError, match="actual bytes"):
+        compare_worker_eval_runs(base, template, "model")
+
+    # A model comparison changes exactly one endpoint checkpoint.
+    two = copy_mod.deepcopy(base)
+    for endpoint in ("math", "code"):
+        two["manifest"]["runtime_profile"]["workers"][endpoint][
+            "model_id"] = "Qwen/Other"
+    with pytest.raises(InfrastructureError, match="exactly one endpoint"):
+        compare_worker_eval_runs(base, two, "model")
+    one = copy_mod.deepcopy(base)
+    one["manifest"]["runtime_profile"]["workers"]["code"].update(
+        model_id="Qwen/Qwen2.5-3B-Instruct", revision="aa8e7253" + "0" * 32)
+    comparison = compare_worker_eval_runs(base, one, "model")
+    assert comparison["case_support"] == 30
+
+    # request_contract stays disabled until it configures the builder.
+    with pytest.raises(ProfileError, match="disabled"):
+        compare_worker_eval_runs(base, base, "request_contract")
+
+
+def test_frozen_claim_is_intrinsic(tmp_path):
+    # Build side: a forged FROZEN status fails even without the flag.
+    forged_prompts = {"lookup": "x", "math": "y", "code": "z"}
+    forged = PromptBundle(revision=D16_REVISION, status="FROZEN forged",
+                          prompts=tuple(sorted(forged_prompts.items())))
+    rt = eval_runtime(pool=FakePool(system_prompts=forged_prompts))
+    with pytest.raises(ProfileError, match="registry"):
+        build_manifest(
+            rt, forged, run_id="run-1", purpose="t",
+            population=POPULATION,
+            endpoint_schedule_version="d16-operator-aligned-v1",
+            candidate_label="forged",
+            request_contract_key="worker-blocks-v0", expected_calls=1,
+            git_info={"commit": "0" * 40, "dirty": False,
+                      "diff_sha256": None})
+
+    # Load side: a stored FROZEN claim is rechecked against the registry.
+    run_dir = write_isolated_run(tmp_path)
+
+    def claim_frozen(manifest):
+        manifest["system_prompts"]["status"] = "FROZEN forged"
+    with pytest.raises(InfrastructureError, match="registry"):
+        load_run(tampered(run_dir, tmp_path / "t-frozen",
+                          mutate_manifest=claim_frozen))
+
+
+def test_loader_requires_canonical_generation_order(tmp_path):
+    run_dir = write_isolated_run(tmp_path)
+
+    def swap_ordinals(rows):
+        first = dict(rows[0],
+                     generation_ordinal=rows[1]["generation_ordinal"])
+        second = dict(rows[1],
+                      generation_ordinal=rows[0]["generation_ordinal"])
+        return [first, second] + rows[2:]
+    with pytest.raises(InfrastructureError, match="canonical"):
+        load_run(tampered(run_dir, tmp_path / "t-ordinal",
+                          mutate_calls=swap_ordinals))
+
+
+def test_probe_compare_refuses_configuration_drift(tmp_path, capsys):
+    cases, labels = probe_sample()
+    records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
+                                 cases[:5], labels, "canonical")
+    base_path = tmp_path / "base.json"
+    base_path.write_text(json.dumps(fake_p1_output(records, "canonical")))
+
+    # Request-byte drift between invocations is config drift, never
+    # generation evidence (84_s finding 2).
+    drift = fake_p1_output(
+        [dict(records[0], request_sha256="0" * 64)] + records[1:],
+        "canonical")
+    (tmp_path / "drift.json").write_text(json.dumps(drift))
+    assert probe_main(["compare", str(base_path),
+                       str(tmp_path / "drift.json")]) == 2
+    assert "NOT COMPARABLE" in capsys.readouterr().out
+
+    # So is a header change (environment, prompts, templates, ...).
+    other_env = fake_p1_output(records, "canonical",
+                               environment={"torch": "different"})
+    (tmp_path / "env.json").write_text(json.dumps(other_env))
+    assert probe_main(["compare", str(base_path),
+                       str(tmp_path / "env.json")]) == 2
+    out = capsys.readouterr().out
+    assert "NOT COMPARABLE" in out and "environment" in out
+
+    # And a split commit between condition runs.
+    other_commit = fake_p1_output(records, "canonical",
+                                  git={"commit": "e" * 40, "dirty": False,
+                                       "diff_sha256": None})
+    (tmp_path / "commit.json").write_text(json.dumps(other_commit))
+    assert probe_main(["compare", str(base_path),
+                       str(tmp_path / "commit.json")]) == 2

@@ -8,7 +8,7 @@ singleton path. Differences between conditions are retained findings,
 not tool failures.
 
 P1 is the `singleton-v1` admissibility gate: one invocation = one fresh
-process running the pre-registered sample in canonical or reversed
+process running the declared sample in canonical or reversed
 order; the `admit` subcommand takes two canonical-order runs and one
 reversed-order run and admits only on exact generation-field equality
 within the frozen cost gate (§7.3). If admission fails, stop and write
@@ -193,7 +193,7 @@ def _header(probe: str, pool: Any, profile: Mapping[str, Any],
 def run_p1_cases(runtime: Any, cases: list[WorkerEvalCase],
                  labels: list[NodeLabel], order: str
                  ) -> tuple[list[dict[str, Any]], float, int | None]:
-    """One fresh-process singleton pass over the pre-registered sample,
+    """One fresh-process singleton pass over the declared sample,
     through the exact runtime path the scientific evaluator uses."""
     if order not in ("canonical", "reversed"):
         raise ProfileError(f"unknown order {order!r}")
@@ -331,6 +331,56 @@ def run_p0_condition(pool: Any, runtime: Any, endpoint: str,
 
 # --- comparison and admission ------------------------------------------------
 
+# Headers that must match before two probe outputs are comparable at
+# all (84_s finding 2): P0 conditions run in separate invocations, so a
+# prompt/model/template/code change between them must be refused as
+# configuration drift, never misreported as batching evidence.
+_P0_HELD_FIXED = ("probe", "schema_version", "cohort_sha256", "endpoint",
+                  "generator_version", "endpoint_schedule_version",
+                  "runtime_profile_fingerprint", "system_prompt_sha256",
+                  "chat_template_sha256", "environment")
+
+
+def compare_probe_outputs(left: Mapping[str, Any],
+                          right: Mapping[str, Any]
+                          ) -> list[dict[str, Any]]:
+    """Whole-output comparison: refuse unless the probe-type-specific
+    held-fixed headers, one clean shared commit, and per-case
+    user-message/request hashes all match; only then report per-case
+    outcome differences (which, for P0, are the retained evidence)."""
+    if left.get("probe") != right.get("probe"):
+        raise InfrastructureError(
+            f"cannot compare {left.get('probe')!r} with "
+            f"{right.get('probe')!r} outputs")
+    held = (_P0_HELD_FIXED if left["probe"] == "p0"
+            else ("probe", "schema_version") + _P1_HELD_FIXED)
+    mismatched = [field for field in held
+                  if left.get(field) != right.get(field)]
+    for side, run in (("left", left), ("right", right)):
+        if run["git"]["dirty"]:
+            mismatched.append(f"git.dirty ({side})")
+    if left["git"]["commit"] != right["git"]["commit"]:
+        mismatched.append("git.commit")
+    if mismatched:
+        raise InfrastructureError(
+            f"outputs are not comparable; configuration differs on "
+            f"{mismatched} — differences would not be generation "
+            "evidence")
+    left_by = {record["case_id"]: record for record in left["cases"]}
+    right_by = {record["case_id"]: record for record in right["cases"]}
+    drifted = sorted(
+        case_id for case_id in set(left_by) & set(right_by)
+        if (left_by[case_id]["user_message_sha256"],
+            left_by[case_id]["request_sha256"])
+        != (right_by[case_id]["user_message_sha256"],
+            right_by[case_id]["request_sha256"]))
+    if drifted:
+        raise InfrastructureError(
+            f"request bytes differ for {drifted[:5]}; the runs did not "
+            "pose identical requests")
+    return compare_records(left["cases"], right["cases"])
+
+
 def compare_records(left: list[Mapping[str, Any]],
                     right: list[Mapping[str, Any]]
                     ) -> list[dict[str, Any]]:
@@ -364,9 +414,10 @@ _P1_HELD_FIXED = ("namespace", "per_cell", "renderers", "visibility",
                   "runtime_profile_fingerprint", "system_prompt_sha256",
                   "chat_template_sha256", "environment")
 
-# The §7.3 registered P1 design: 10 latents per cell crossed with all
-# renderers, private visibility — 300 node cases. Diagnostic runs with
-# other shapes are legal probe invocations but never admissible.
+# The declared §7.3 P1 design (namespace registration pends the D1
+# erratum): 10 latents per cell crossed with all renderers, private
+# visibility — 300 node cases. Diagnostic runs with other shapes are
+# legal probe invocations but never admissible.
 P1_PER_CELL = 10
 P1_CASES = 300
 
@@ -377,7 +428,7 @@ def admit_singleton(runs: list[Mapping[str, Any]],
                     max_vram_bytes: int = MAX_PEAK_VRAM_BYTES,
                     full_cases: int = 900) -> dict[str, Any]:
     """The §7.3 verdict over three fresh-process P1 outputs (canonical,
-    canonical, reversed). The runs must be the registered design against
+    canonical, reversed). The runs must be the declared design against
     the declared namespace (82_s finding 1) — not merely mutually
     consistent — with exact generation-field equality for every case and
     the frozen cost gate. FAIL has no partial credit."""
@@ -400,13 +451,13 @@ def admit_singleton(runs: list[Mapping[str, Any]],
     for field, expected in design.items():
         if runs[0].get(field) != expected:
             reasons.append(f"{field} {runs[0].get(field)!r} is not the "
-                           f"registered {expected!r}")
+                           f"declared {expected!r}")
     if sorted(runs[0].get("renderers", [])) != sorted(RENDERER_IDS):
         reasons.append(f"renderers {runs[0].get('renderers')} are not "
                        f"the full crossing {sorted(RENDERER_IDS)}")
     if len(runs[0]["cases"]) != P1_CASES:
         reasons.append(f"{len(runs[0]['cases'])} cases is not the "
-                       f"registered {P1_CASES}-case design")
+                       f"declared {P1_CASES}-case design")
     commits = [run["git"]["commit"] for run in runs]
     if any(run["git"]["dirty"] for run in runs):
         reasons.append("a run came from a dirty worktree")
@@ -513,7 +564,7 @@ def main(argv: list[str] | None = None) -> int:
     adm = sub.add_parser("admit", help="§7.3 singleton-v1 verdict")
     adm.add_argument("runs", nargs=3)
     adm.add_argument("--namespace", required=True,
-                     help="the registered P1 namespace the runs must use")
+                     help="the declared P1 namespace the runs must use")
     adm.add_argument("--max-seconds", type=int,
                      default=MAX_FULL_RUN_SECONDS)
     adm.add_argument("--max-vram-gib", type=float, default=None)
@@ -523,6 +574,8 @@ def main(argv: list[str] | None = None) -> int:
                         "candidate (two evaluator run directories)")
     conf.add_argument("left")
     conf.add_argument("right")
+    conf.add_argument("--namespace", required=True,
+                      help="the declared full-population namespace")
 
     args = ap.parse_args(argv)
 
@@ -561,7 +614,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "compare":
         left = json.loads(Path(args.left).read_text(encoding="utf-8"))
         right = json.loads(Path(args.right).read_text(encoding="utf-8"))
-        diffs = compare_records(left["cases"], right["cases"])
+        try:
+            diffs = compare_probe_outputs(left, right)
+        except InfrastructureError as error:
+            print(f"NOT COMPARABLE: {error}")
+            return 2
         for diff in diffs:
             print(f"{diff['case_id']}:")
             for field, sides in sorted(diff["fields"].items()):
@@ -587,8 +644,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "confirm":
         from .worker_eval import confirm_repeat_run, load_run
+        # The CLI always enforces the full §7.4 population; only the
+        # function's tests may shrink per_cell.
         verdict = confirm_repeat_run(load_run(args.left),
-                                     load_run(args.right))
+                                     load_run(args.right),
+                                     args.namespace)
         print(json.dumps(verdict, indent=1, sort_keys=True))
         print("CONFIRMED: repeat run is generation-identical"
               if verdict["confirmed"]
