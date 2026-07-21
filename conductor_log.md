@@ -450,11 +450,44 @@ emphasis, cap sizing) — now reproducible end-to-end through the runtime
 before the construction screen. Any D16 prompt change re-fingerprints
 requests and regenerates `chat_template_bytes.json` by construction.
 
+### D16 revision cycle (2026-07-21, branch `conductor_stage_0b_d16`)
+
+Five refine→critique iterations against the real pool, recorded in
+`plans/conductor/60_f`–`69_f` (revision + evidence docs even, critiques
+odd; paired construction instances throughout; qualification untouched;
+`D16_STATUS` still DRAFT). Outcome at the pause point
+(`68_f_d16_rev5.md` consolidates):
+
+- **Lookup 45/45 (100%)** — fixed at rev1 (worked example + duplicated
+  envelope contract), stable since.
+- **Code 26/30 (86.7%)** — envelope fixed at rev1, count-shape
+  identifier at rev2, select nesting at rev3, layout regression
+  recovered at rev4 (rule first + last); the four residual failures are
+  ALL fork_join count-branch handle substitutions (two-handle problem
+  contexts) — the one remaining prompt-side lever if a further cycle is
+  authorized.
+- **Math 0/56 — endpoint-model question, escalated.** Probe 1 (`64_f`):
+  three maximally different system prompts all 0/20 (content
+  irrelevant); probe 2: base Qwen2.5-1.5B-Instruct with the same prompt,
+  same requests: 20/20 legal, 0 truncated. No prompt makes
+  Qwen2.5-Math-1.5B-Instruct emit the envelope; it solves and boxes
+  regardless. **Blocking D16-review decision**: §1.6 endpoint swap
+  (versioned experiment change) vs accepting Math-cell qualification
+  failure (which would gut four of six cells' reference paths).
+- Mechanistic account the trail supports: worked examples teach
+  structure, layout position teaches priority, prose rules teach almost
+  nothing (rev3→rev4 is the controlled comparison).
+- `D16_REVISION` provenance now in the runtime profile (worker-visible);
+  `chat_template_bytes.json` regenerated per revision; 488 tests
+  `-W error` throughout.
+
 ### Still blocking the construction screen (unchanged from 0A close-out)
 
-D16 review + freeze against the real workers (now executable end to end);
-B1 controls frozen before construction outcomes are inspected; the
-canonical population + execution manifest (Stage-1A `calibrate.py`).
+D16 review + freeze against the real workers (now executable end to end,
+with the `60_f`–`69_f` evidence package and one blocking endpoint-model
+question); B1 controls frozen before construction outcomes are
+inspected; the canonical population + execution manifest (Stage-1A
+`calibrate.py`).
 
 ## Backlog (Stage-2+ entry gates)
 
