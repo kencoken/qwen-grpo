@@ -64,6 +64,15 @@ Revision cycle (evidence per revision in `plans/conductor/60_f_…`):
   the eval isolates the swap. Code: the wrong/right contrast extended to
   the two-handle case ("this also holds when the Problem mentions
   several resources"), targeting the only remaining failure mode.
+  Eval (70_f): Math 57/57 with correct values (freeze posture); Code
+  code_atomic 15/15, fork_join 12/15, and the newly-unlocked math_code
+  step 2 0/15 — argument-order flips (at(step_1, R-8X7)) and invented
+  guards (at(resource, step_1 % length(resource))).
+- rev7 (levers ranked in 71_f): Code only — argument-order + anti-guard
+  wrong/right contrasts attached to the second worked example; the
+  first-sentence rule extended with the positional form ("in every call
+  the FIRST argument is the sequence and the SECOND is a number").
+  Math and Lookup untouched.
 
 The §1.5 request skeleton — chat template over exactly (system, user) —
 is frozen; demonstrations enter as worked examples INSIDE the system
@@ -79,7 +88,7 @@ from __future__ import annotations
 from .types import IntegerList, IntegerRecord, Resource
 
 D16_STATUS = "DRAFT"  # flips to "FROZEN <date>" only via its own review
-D16_REVISION = "rev6"  # bumps with any change to the strings below
+D16_REVISION = "rev7"  # bumps with any change to the strings below
 # (rev5 was the no-change confirmation run; the counter tracks the
 # revision-log numbering in plans/conductor/.)
 
@@ -228,9 +237,10 @@ the sequence shown in the request. Respond with exactly one \
 <artifact>...</artifact> containing a single expression built only from \
 the whitelist calls count_gt(seq, n), at(seq, n), stable_unique(seq), \
 rotate_left(seq, n) — no arithmetic operators — where seq is resource or \
-a nested whitelist call and n is a nonnegative integer or step_k. \
-stable_unique keeps the first occurrence of each value; rotate_left \
-rotates left; at is zero-based.
+a nested whitelist call and n is a nonnegative integer or step_k. In \
+every call the FIRST argument is the sequence and the SECOND is a \
+number. stable_unique keeps the first occurrence of each value; \
+rotate_left rotates left; at is zero-based.
 
 Worked example — given this resource:
 
@@ -253,6 +263,10 @@ Second example — with the previous result step_1 = 2, the task \
 response:
 
 {DEMONSTRATIONS["code"][1]["completion"]}
+
+Wrong: at(step_1, resource) — the sequence is always the first \
+argument; the index comes second. Wrong: at(resource, step_1 % 8) — use \
+step_1 exactly as given; the whitelist has no arithmetic.
 
 Third example — the task "{DEMONSTRATIONS["code"][2]["subtask"]}" has \
 exactly this correct response:
