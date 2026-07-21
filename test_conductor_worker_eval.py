@@ -884,3 +884,185 @@ def test_comparison_accepts_declared_and_refuses_undeclared_differences(
         compare_worker_eval_runs(base, variant, "model")
     with pytest.raises(ProfileError, match="allowed_difference"):
         compare_worker_eval_runs(base, variant, "vibes")
+
+
+# =============================================================================
+# P0/P1 probe command (plan 81_f §7; executed in Tranche D on the D16
+# branch — this branch ships and tests the tool).
+# =============================================================================
+
+from tasks.conductor.worker_eval_probe import (
+    admit_singleton, assert_probe_coverage, build_probe_cases,
+    compare_records, load_cohort, probe_latents, run_p0_condition,
+    run_p1_cases,
+)
+from tasks.conductor.worker_eval_probe import main as probe_main
+
+
+def test_probe_coverage_assertion():
+    assert_probe_coverage(probe_latents("construction", 10))
+    with pytest.raises(InfrastructureError, match="misses"):
+        assert_probe_coverage(probe_latents("construction", 1))
+
+
+def probe_sample():
+    return build_probe_cases("construction", 10, list(RENDERER_IDS),
+                             "private")
+
+
+def fake_p1_output(records, order, wall=60.0, vram=3 * 2 ** 30):
+    """Output-dict shape the admit verdict consumes; held-fixed fields
+    constant across runs by construction."""
+    return {"probe": "p1", "order": order, "namespace": "construction",
+            "per_cell": 10, "renderers": list(RENDERER_IDS),
+            "visibility": "private", "generator_version": "g",
+            "endpoint_schedule_version": "s",
+            "runtime_profile_fingerprint": "rtp-x",
+            "system_prompt_sha256": {"lookup": "a"},
+            "chat_template_sha256": {"lookup": "b"},
+            "environment": {"torch": "t"},
+            "wall_seconds": wall, "peak_vram_bytes": vram,
+            "cases": records}
+
+
+def test_p1_sample_is_300_cases_and_runs_singleton():
+    cases, labels = probe_sample()
+    assert len(cases) == 300  # §7.3: 10/cell x 6 cells x nodes x renderers
+    pool = FakePool()
+    rt = eval_runtime(pool=pool)
+    records, wall, vram = run_p1_cases(rt, cases, labels, "canonical")
+    assert len(records) == 300
+    assert all(len(reqs) == 1 for _, reqs in pool.generate_calls)
+    assert wall >= 0
+    assert vram is None or vram >= 0  # None only when CUDA is absent
+
+
+def test_admit_requires_exact_equality_and_cost_gate():
+    cases, labels = probe_sample()
+    runs = []
+    for order in ("canonical", "canonical", "reversed"):
+        records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
+                                     cases, labels, order)
+        runs.append(fake_p1_output(records, order))
+    verdict = admit_singleton(runs)
+    assert verdict["admitted"] and verdict["reasons"] == []
+    assert verdict["cases"] == 300
+
+    # One byte-different completion in the reversed run fails admission.
+    tampered = [json.loads(json.dumps(run)) for run in runs]
+    victim = tampered[2]["cases"][7]
+    victim["completion"] = victim["completion"] + " "
+    verdict = admit_singleton(tampered)
+    assert not verdict["admitted"]
+    assert any(victim["case_id"] in reason
+               for reason in verdict["reasons"])
+
+    # Wrong order schedule, missing VRAM, or a blown cost gate each fail.
+    bad_orders = [fake_p1_output(runs[0]["cases"], o)
+                  for o in ("canonical", "reversed", "reversed")]
+    assert not admit_singleton(bad_orders)["admitted"]
+    no_vram = [dict(run, peak_vram_bytes=None) for run in runs]
+    assert any("measurement" in r
+               for r in admit_singleton(no_vram)["reasons"])
+    slow = [dict(run, wall_seconds=3000.0) for run in runs]
+    assert any("frozen" in r for r in admit_singleton(slow)["reasons"])
+    hungry = [dict(run, peak_vram_bytes=23 * 2 ** 30) for run in runs]
+    assert any("VRAM" in r for r in admit_singleton(hungry)["reasons"])
+
+
+def test_compare_records_field_diffs_and_alignment():
+    cases, labels = probe_sample()
+    records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
+                                 cases[:5], labels, "canonical")
+    assert compare_records(records, records) == []
+    changed = [dict(record) for record in records]
+    changed[2]["completion"] = "<artifact>999</artifact>"
+    changed[2]["value"] = 999
+    (diff,) = compare_records(records, changed)
+    assert diff["case_id"] == records[2]["case_id"]
+    assert set(diff["fields"]) >= {"completion", "value"}
+    with pytest.raises(InfrastructureError, match="case sets differ"):
+        compare_records(records[:4], records)
+
+
+def code_cohort_entry(cell, index):
+    latent = program.generate_latent(cell, "construction", index,
+                                     DEFAULT_PROFILE).latent
+    (node_id,) = [node for node, family
+                  in endpoint_schedule(latent).items() if family == "code"]
+    return {"cell_id": cell, "latent_index": index,
+            "renderer_id": "resource_first", "node_id": node_id}
+
+
+def test_p0_conditions_reconstruct_physical_chunks():
+    cohort = {"endpoint": "code", "namespace": "construction",
+              "visibility": "private",
+              "chunks": [[code_cohort_entry("math_code", 19),
+                          code_cohort_entry("code_atomic", 0)],
+                         [code_cohort_entry("fork_join", 0)]]}
+    endpoint, chunks = load_cohort(cohort)
+    assert [len(chunk) for chunk in chunks] == [2, 1]
+
+    pool = FakePool()
+    rt = eval_runtime(pool=pool)
+    original, _, _ = run_p0_condition(pool, rt, endpoint, chunks,
+                                      "original")
+    # The recorded physical chunks drive pool.generate directly: one call
+    # of two requests, one call of one request.
+    assert [len(reqs) for _, reqs in pool.generate_calls] == [2, 1]
+    assert [(r["chunk_index"], r["chunk_slot"]) for r in original] \
+        == [(0, 0), (0, 1), (1, 0)]
+
+    reversed_pool = FakePool()
+    reversed_rt = eval_runtime(pool=reversed_pool)
+    rev, _, _ = run_p0_condition(reversed_pool, reversed_rt, endpoint,
+                                 chunks, "reversed")
+    assert rev[0]["case_id"] == original[1]["case_id"]  # within-chunk flip
+    assert rev[2]["case_id"] == original[2]["case_id"]  # chunk kept
+
+    single_pool = FakePool()
+    single_rt = eval_runtime(pool=single_pool)
+    single, _, _ = run_p0_condition(single_pool, single_rt, endpoint,
+                                    chunks, "singleton")
+    assert [len(reqs) for _, reqs in single_pool.generate_calls] \
+        == [1, 1, 1]
+    assert all(r["chunk_index"] is None for r in single)
+    # Deterministic fake backend: all three conditions agree exactly.
+    assert compare_records(original, single) == []
+
+
+def test_p0_cohort_pinning_and_endpoint_fail_closed():
+    entry = code_cohort_entry("math_code", 19)
+    pinned = dict(entry, user_message_sha256="0" * 64)
+    with pytest.raises(InfrastructureError, match="drifted"):
+        load_cohort({"endpoint": "code", "namespace": "construction",
+                     "visibility": "private", "chunks": [[pinned]]})
+    with pytest.raises(InfrastructureError, match="scheduled on"):
+        load_cohort({"endpoint": "math", "namespace": "construction",
+                     "visibility": "private", "chunks": [[entry]]})
+
+
+def test_probe_cli_compare_and_admit_verdicts(tmp_path, capsys):
+    cases, labels = probe_sample()
+    records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
+                                 cases[:5], labels, "canonical")
+    paths = []
+    for index, order in enumerate(("canonical", "canonical", "reversed")):
+        path = tmp_path / f"run{index}.json"
+        # wall=10s over 5 cases projects 1800s for 900, inside the gate.
+        path.write_text(json.dumps(fake_p1_output(records, order,
+                                                  wall=10.0)))
+        paths.append(str(path))
+    assert probe_main(["compare", paths[0], paths[1]]) == 0
+    assert probe_main(["admit", *paths]) == 0
+    assert "ADMIT singleton-v1" in capsys.readouterr().out
+
+    tampered = fake_p1_output(
+        [dict(records[0], completion="x")] + records[1:], "reversed",
+        wall=10.0)
+    (tmp_path / "bad.json").write_text(json.dumps(tampered))
+    assert probe_main(["compare", paths[0],
+                       str(tmp_path / "bad.json")]) == 1
+    assert probe_main(["admit", paths[0], paths[1],
+                       str(tmp_path / "bad.json")]) == 1
+    assert "FAIL" in capsys.readouterr().out
