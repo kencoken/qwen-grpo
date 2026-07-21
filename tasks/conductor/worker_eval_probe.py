@@ -352,6 +352,14 @@ def compare_probe_outputs(left: Mapping[str, Any],
         raise InfrastructureError(
             f"cannot compare {left.get('probe')!r} with "
             f"{right.get('probe')!r} outputs")
+    if (left["process"]["pid"], left["process"].get("started_utc")) \
+            == (right["process"]["pid"],
+                right["process"].get("started_utc")):
+        # 86_s: §7.2 compares two *executions*; one output compared with
+        # itself would manufacture bit-stability evidence.
+        raise InfrastructureError(
+            "outputs share one process identity; comparison requires "
+            "two separate executions")
     held = (_P0_HELD_FIXED if left["probe"] == "p0"
             else ("probe", "schema_version") + _P1_HELD_FIXED)
     mismatched = [field for field in held
@@ -563,6 +571,9 @@ def main(argv: list[str] | None = None) -> int:
 
     adm = sub.add_parser("admit", help="§7.3 singleton-v1 verdict")
     adm.add_argument("runs", nargs=3)
+    # When the D1 erratum registers the worker-development namespace,
+    # bind it here as the authoritative default (86_s deferred-gates
+    # note): a green verdict against any other namespace is not Gate D.
     adm.add_argument("--namespace", required=True,
                      help="the declared P1 namespace the runs must use")
     adm.add_argument("--max-seconds", type=int,

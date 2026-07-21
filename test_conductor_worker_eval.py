@@ -903,7 +903,8 @@ def test_comparison_accepts_declared_and_refuses_undeclared_differences(
     # Test 9.1.14: the same runs cannot be compared as if only the model
     # changed — the prompt difference is undeclared and blocks comparison.
     with pytest.raises(InfrastructureError, match="beyond declared"):
-        compare_worker_eval_runs(base, variant, "model")
+        compare_worker_eval_runs(base, variant, "model",
+                                 model_endpoint="code")
     with pytest.raises(ProfileError, match="allowed_difference"):
         compare_worker_eval_runs(base, variant, "vibes")
 
@@ -1118,6 +1119,7 @@ def test_probe_cli_compare_and_admit_verdicts(tmp_path, capsys):
 import copy as copy_mod
 
 from tasks.conductor.worker_eval import confirm_repeat_run
+from tasks.conductor.worker_eval import _confirm_repeat_run
 
 
 def test_manifest_refuses_profile_mutated_after_build():
@@ -1209,17 +1211,20 @@ def test_confirm_repeat_run_and_cli(tmp_path, capsys):
     left_dir = write_isolated_run(tmp_path, "run-a")
     right_dir = write_isolated_run(tmp_path, "run-b")
     left, right = load_run(left_dir), load_run(right_dir)
-    verdict = confirm_repeat_run(left, right, "construction", per_cell=1)
+    verdict = _confirm_repeat_run(left, right, "construction", 1)
     assert verdict["confirmed"] and verdict["cases"] == 30
 
     # 84_s finding 1: self-confirmation must fail (same run id and pid).
-    selfsame = confirm_repeat_run(left, left, "construction", per_cell=1)
+    selfsame = _confirm_repeat_run(left, left, "construction", 1)
     assert not selfsame["confirmed"]
     assert any("distinct runs" in r for r in selfsame["reasons"])
     assert any("fresh processes" in r for r in selfsame["reasons"])
 
-    # The default design is the full §7.4 population; the CLI has no
-    # per-cell override, so these 1/cell diagnostic runs cannot confirm.
+    # The public entry point is fixed at the full §7.4 population
+    # (86_s finding 2) — no override exists, so these 1/cell diagnostic
+    # runs cannot confirm.
+    with pytest.raises(TypeError):
+        confirm_repeat_run(left, right, "construction", per_cell=1)
     small = confirm_repeat_run(left, right, "construction")
     assert not small["confirmed"]
     assert any("full §7.4 population" in r for r in small["reasons"])
@@ -1228,24 +1233,21 @@ def test_confirm_repeat_run_and_cli(tmp_path, capsys):
     assert "FAIL" in capsys.readouterr().out
 
     # Wrong namespace and split commits each refuse.
-    assert not confirm_repeat_run(left, right, "worker_dev",
-                                  per_cell=1)["confirmed"]
+    assert not _confirm_repeat_run(left, right, "worker_dev", 1)["confirmed"]
     split = copy_mod.deepcopy(right)
     split["manifest"]["git"]["commit"] = "e" * 40
-    split_v = confirm_repeat_run(left, split, "construction", per_cell=1)
+    split_v = _confirm_repeat_run(left, split, "construction", 1)
     assert any("one clean commit" in r for r in split_v["reasons"])
 
     altered = copy_mod.deepcopy(right)
     altered["calls"][0]["completion"] += " "
-    unequal = confirm_repeat_run(left, altered, "construction",
-                                 per_cell=1)
+    unequal = _confirm_repeat_run(left, altered, "construction", 1)
     assert not unequal["confirmed"]
     assert any("generation fields" in reason
                for reason in unequal["reasons"])
     # A different candidate is not a "repeat" however equal its outputs.
     variant = load_run(write_prompt_variant_run(tmp_path, "run-v"))
-    drifted = confirm_repeat_run(left, variant, "construction",
-                                 per_cell=1)
+    drifted = _confirm_repeat_run(left, variant, "construction", 1)
     assert not drifted["confirmed"]
     assert any("hold the whole candidate fixed" in reason
                for reason in drifted["reasons"])
@@ -1324,20 +1326,43 @@ def test_comparison_requires_actual_byte_differences(tmp_path):
     template = copy_mod.deepcopy(base)
     template["manifest"]["chat_template_sha256"]["math"] = "other"
     with pytest.raises(InfrastructureError, match="actual bytes"):
-        compare_worker_eval_runs(base, template, "model")
+        compare_worker_eval_runs(base, template, "model",
+                                 model_endpoint="math")
 
-    # A model comparison changes exactly one endpoint checkpoint.
+    # 86_s finding 1: the comparison names its endpoint, and drift on
+    # any other endpoint refuses instead of riding along.
+    one = copy_mod.deepcopy(base)
+    one["manifest"]["runtime_profile"]["workers"]["code"].update(
+        model_id="Qwen/Qwen2.5-3B-Instruct", revision="aa8e7253" + "0" * 32)
+    comparison = compare_worker_eval_runs(base, one, "model",
+                                          model_endpoint="code")
+    assert comparison["case_support"] == 30
+    assert comparison["model_endpoint"] == "code"
+    with pytest.raises(ProfileError, match="names its endpoint"):
+        compare_worker_eval_runs(base, one, "model")
+    # An intended Code contrast whose arms actually differ on Math (or
+    # vice versa) refuses rather than misattributing the delta.
+    with pytest.raises(InfrastructureError, match="beyond declared"):
+        compare_worker_eval_runs(base, one, "model",
+                                 model_endpoint="math")
+    # The reviewer's reproduction: Code checkpoint change plus
+    # unrelated Math template drift no longer passes.
+    drifty = copy_mod.deepcopy(one)
+    drifty["manifest"]["chat_template_sha256"]["math"] = "other"
+    with pytest.raises(InfrastructureError, match="beyond declared"):
+        compare_worker_eval_runs(base, drifty, "model",
+                                 model_endpoint="code")
+    # Multi-endpoint checkpoint changes still refuse (scoped allowlist).
     two = copy_mod.deepcopy(base)
     for endpoint in ("math", "code"):
         two["manifest"]["runtime_profile"]["workers"][endpoint][
             "model_id"] = "Qwen/Other"
-    with pytest.raises(InfrastructureError, match="exactly one endpoint"):
-        compare_worker_eval_runs(base, two, "model")
-    one = copy_mod.deepcopy(base)
-    one["manifest"]["runtime_profile"]["workers"]["code"].update(
-        model_id="Qwen/Qwen2.5-3B-Instruct", revision="aa8e7253" + "0" * 32)
-    comparison = compare_worker_eval_runs(base, one, "model")
-    assert comparison["case_support"] == 30
+    with pytest.raises(InfrastructureError, match="beyond declared"):
+        compare_worker_eval_runs(base, two, "model",
+                                 model_endpoint="code")
+    with pytest.raises(ProfileError, match="only to model"):
+        compare_worker_eval_runs(base, base, "prompt",
+                                 model_endpoint="code")
 
     # request_contract stays disabled until it configures the builder.
     with pytest.raises(ProfileError, match="disabled"):
@@ -1417,3 +1442,22 @@ def test_probe_compare_refuses_configuration_drift(tmp_path, capsys):
     (tmp_path / "commit.json").write_text(json.dumps(other_commit))
     assert probe_main(["compare", str(base_path),
                        str(tmp_path / "commit.json")]) == 2
+
+
+# =============================================================================
+# 86_s review response: endpoint-scoped comparisons, fixed §7.4 entry
+# point, probe self-comparison refusal.
+# =============================================================================
+
+def test_probe_compare_refuses_self_comparison(tmp_path, capsys):
+    cases, labels = probe_sample()
+    records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
+                                 cases[:3], labels, "canonical")
+    path = tmp_path / "run.json"
+    path.write_text(json.dumps(fake_p1_output(records, "canonical",
+                                              pid=777)))
+    # 86_s: one output compared with itself would manufacture the §7.2
+    # "original grouping twice" bit-stability evidence.
+    assert probe_main(["compare", str(path), str(path)]) == 2
+    out = capsys.readouterr().out
+    assert "NOT COMPARABLE" in out and "process identity" in out

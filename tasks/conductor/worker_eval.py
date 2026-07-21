@@ -1368,27 +1368,27 @@ def load_run(run_dir: str | Path,
 # always reported; dirty trees are refused outright.
 _ALWAYS_ALLOWED_DIFFS = ("run_id", "purpose", "candidate_label", "git",
                          "process", "payload_sha256")
-# A "model" difference is the pinned checkpoint identity and what follows
-# from it — never the caps or microbatch, which change results on their
-# own (82_s finding 5).
-_MODEL_DIFFS = tuple(
-    f"runtime_profile.workers.{endpoint}.{field}"
-    for endpoint in sorted(set(ENDPOINT_NAMES.values()))
-    for field in ("model_id", "revision"))
-_ALLOWED_DIFFS = {
-    "prompt": ("system_prompts", "worker_visible_fingerprint",
-               "endpoint_fingerprints"),
-    "model": _MODEL_DIFFS + ("runtime_profile_fingerprint",
-                             "worker_visible_fingerprint",
-                             "endpoint_fingerprints",
-                             "chat_template_sha256", "tokenizer_facts"),
-}
+_PROMPT_ALLOWED_DIFFS = ("system_prompts", "worker_visible_fingerprint",
+                         "endpoint_fingerprints")
 # 84_s finding 3: the declared dimension must differ in *actual bytes*,
 # not in a relabelled revision or a template-only side effect.
-_MUST_DIFFER = {
-    "prompt": ("system_prompts.text", "system_prompts.sha256"),
-    "model": _MODEL_DIFFS,
-}
+_PROMPT_MUST_DIFFER = ("system_prompts.text", "system_prompts.sha256")
+
+
+def _model_scope(endpoint: str) -> tuple[str, ...]:
+    """Manifest paths a single-endpoint model contrast may change (86_s
+    finding 1): the declared endpoint's checkpoint and what follows from
+    it (its template, tokenizer facts and endpoint fingerprint), plus
+    the global fingerprints those feed. Any other endpoint's drift is an
+    undeclared difference and refuses — never the caps or microbatch,
+    which change results on their own (82_s finding 5)."""
+    return (f"runtime_profile.workers.{endpoint}.model_id",
+            f"runtime_profile.workers.{endpoint}.revision",
+            f"chat_template_sha256.{endpoint}",
+            f"tokenizer_facts.{endpoint}",
+            f"endpoint_fingerprints.{endpoint}",
+            "runtime_profile_fingerprint",
+            "worker_visible_fingerprint")
 
 
 def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
@@ -1402,11 +1402,15 @@ def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
 
 def compare_worker_eval_runs(left: Mapping[str, Any],
                              right: Mapping[str, Any],
-                             allowed_difference: str) -> dict[str, Any]:
+                             allowed_difference: str,
+                             model_endpoint: str | None = None
+                             ) -> dict[str, Any]:
     """Compare two loaded runs that differ in exactly one declared way.
-    Requires identical population/case support and singleton generation;
-    prints the exact differing manifest fields and refuses unexpected
-    ones."""
+    A model comparison names its subject endpoint explicitly (86_s
+    finding 1), so an intended Code contrast whose arms actually differ
+    on Math refuses instead of misattributing the delta. Requires
+    identical population/case support and singleton generation; prints
+    the exact differing manifest fields and refuses unexpected ones."""
     if allowed_difference == "request_contract":
         # 84_s finding 3: the resolved contract metadata does not yet
         # configure build_worker_call, so a second registry key would
@@ -1416,10 +1420,25 @@ def compare_worker_eval_runs(left: Mapping[str, Any],
         raise ProfileError(
             "request_contract comparison is disabled until the contract "
             "key configures the request builder")
-    if allowed_difference not in _ALLOWED_DIFFS:
+    if allowed_difference == "model":
+        if model_endpoint not in set(ENDPOINT_NAMES.values()):
+            raise ProfileError(
+                "a model comparison names its endpoint explicitly: "
+                f"model_endpoint must be one of "
+                f"{sorted(set(ENDPOINT_NAMES.values()))}, got "
+                f"{model_endpoint!r}")
+        dimension_allowed = _model_scope(model_endpoint)
+        must_differ = dimension_allowed[:2]  # its model_id and revision
+    elif allowed_difference == "prompt":
+        if model_endpoint is not None:
+            raise ProfileError(
+                "model_endpoint applies only to model comparisons")
+        dimension_allowed = _PROMPT_ALLOWED_DIFFS
+        must_differ = _PROMPT_MUST_DIFFER
+    else:
         raise ProfileError(
-            f"allowed_difference must be one of "
-            f"{sorted(_ALLOWED_DIFFS)}, got {allowed_difference!r}")
+            f"allowed_difference must be one of ['model', 'prompt'], "
+            f"got {allowed_difference!r}")
     for run in (left, right):
         manifest = run["manifest"]
         if manifest["status"] != "complete":
@@ -1450,7 +1469,7 @@ def compare_worker_eval_runs(left: Mapping[str, Any],
     flat_right = _flatten(right["manifest"])
     differing = sorted(path for path in set(flat_left) | set(flat_right)
                        if flat_left.get(path) != flat_right.get(path))
-    allowed = _ALWAYS_ALLOWED_DIFFS + _ALLOWED_DIFFS[allowed_difference]
+    allowed = _ALWAYS_ALLOWED_DIFFS + dimension_allowed
     unexpected = [path for path in differing
                   if not any(path == a or path.startswith(a + ".")
                              for a in allowed)]
@@ -1463,21 +1482,14 @@ def compare_worker_eval_runs(left: Mapping[str, Any],
     # only in a label or a template side effect) is a config error.
     declared = [path for path in differing
                 if any(path == a or path.startswith(a + ".")
-                       for a in _MUST_DIFFER[allowed_difference])]
+                       for a in must_differ)]
     if not declared:
         raise InfrastructureError(
             f"declared {allowed_difference!r} difference is not present "
             "in actual bytes: the two runs are identical on that "
             "dimension")
-    if allowed_difference == "model":
-        endpoints = {path.split(".")[2] for path in declared}
-        if len(endpoints) != 1:
-            raise InfrastructureError(
-                "a model comparison changes exactly one endpoint "
-                f"checkpoint, got {sorted(endpoints)}; name a "
-                "multi-endpoint contrast explicitly if one is ever "
-                "intended")
     return {"allowed_difference": allowed_difference,
+            "model_endpoint": model_endpoint,
             "differing_fields": differing,
             "case_support": len(left_support)}
 
@@ -1503,9 +1515,7 @@ FULL_RUN_PER_CELL = 30
 
 def confirm_repeat_run(left: Mapping[str, Any],
                        right: Mapping[str, Any],
-                       expected_namespace: str,
-                       per_cell: int = FULL_RUN_PER_CELL
-                       ) -> dict[str, Any]:
+                       expected_namespace: str) -> dict[str, Any]:
     """The §7.4 confirmation over two loaded runs of one candidate: the
     declared full isolated population, singleton generation, two
     genuinely distinct fresh-process runs on one clean commit, identical
@@ -1513,7 +1523,23 @@ def confirm_repeat_run(left: Mapping[str, Any],
     generation-field equality for every called row (84_s finding 1 —
     self-confirmation must fail). Canonical generation order is already
     enforced per run by `load_run`. Required before a candidate's full
-    result enters the final comparison/freeze."""
+    result enters the final comparison/freeze.
+
+    The population size is fixed at the full §7.4 design (86_s finding
+    2): the scientific entry point takes no override. When the D1
+    erratum registers the dedicated worker-development namespace, bind
+    it here as the authoritative default rather than an operator
+    assertion."""
+    return _confirm_repeat_run(left, right, expected_namespace,
+                               FULL_RUN_PER_CELL)
+
+
+def _confirm_repeat_run(left: Mapping[str, Any],
+                        right: Mapping[str, Any],
+                        expected_namespace: str,
+                        per_cell: int) -> dict[str, Any]:
+    """Module-private mechanism behind `confirm_repeat_run`, sized only
+    so CPU tests can exercise every check on small fake populations."""
     reasons: list[str] = []
     for side, run in (("left", left), ("right", right)):
         manifest = run["manifest"]
