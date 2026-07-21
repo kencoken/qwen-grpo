@@ -4,6 +4,7 @@ generation, manifest/call-row provenance."""
 
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -872,8 +873,12 @@ def write_prompt_variant_run(tmp_path, name="run-var"):
     cases, labels = build_node_cases(POPULATION)
     latents = generate_latents(POPULATION)
     script = reference_script(cases, labels, latents)
-    rt = eval_runtime(pool=FakePool(script=script, default="garbage",
-                                    system_prompts=variant_prompts))
+    profile = profile_with(cache_path="unused.sqlite",
+                           prompts={"d16_revision": "rev0-var"})
+    rt = build_runtime(profile,
+                       pool=FakePool(script=script, default="garbage",
+                                     system_prompts=variant_prompts),
+                       cache=NullCache())
     manifest = build_manifest(
         rt, bundle, run_id=name, purpose="tranche-a-test",
         population=POPULATION,
@@ -896,7 +901,8 @@ def test_comparison_accepts_declared_and_refuses_undeclared_differences(
         tmp_path):
     base = load_run(write_isolated_run(tmp_path, "run-base"))
     variant = load_run(write_prompt_variant_run(tmp_path, "run-var"))
-    comparison = compare_worker_eval_runs(base, variant, "prompt")
+    comparison = compare_worker_eval_runs(base, variant, "prompt",
+                                          prompt_endpoint="math")
     assert comparison["case_support"] == 30
     assert any(field.startswith("system_prompts")
                for field in comparison["differing_fields"])
@@ -1205,15 +1211,18 @@ def test_comparison_requires_real_difference_crossing_and_clean_tree(
     # 82_s finding 5: identical arms under a declared "prompt" difference
     # are a configuration error, not a comparison.
     with pytest.raises(InfrastructureError, match="not present"):
-        compare_worker_eval_runs(base, twin, "prompt")
+        compare_worker_eval_runs(base, twin, "prompt",
+                                 prompt_endpoint="math")
     one_renderer = load_run(write_isolated_run(
         tmp_path, "run-1r", population=ONE_RENDERER_POP))
     with pytest.raises(InfrastructureError, match="full renderer"):
-        compare_worker_eval_runs(one_renderer, one_renderer, "prompt")
+        compare_worker_eval_runs(one_renderer, one_renderer, "prompt",
+                                 prompt_endpoint="math")
     dirty = copy_mod.deepcopy(base)
     dirty["manifest"]["git"]["dirty"] = True
     with pytest.raises(InfrastructureError, match="dirty"):
-        compare_worker_eval_runs(base, dirty, "prompt")
+        compare_worker_eval_runs(base, dirty, "prompt",
+                                 prompt_endpoint="math")
 
 
 def test_confirm_repeat_run_and_cli(tmp_path, capsys):
@@ -1329,7 +1338,8 @@ def test_comparison_requires_actual_byte_differences(tmp_path):
     relabel = copy_mod.deepcopy(base)
     relabel["manifest"]["system_prompts"]["revision"] = "rev0-alias"
     with pytest.raises(InfrastructureError, match="actual bytes"):
-        compare_worker_eval_runs(base, relabel, "prompt")
+        compare_worker_eval_runs(base, relabel, "prompt",
+                                 prompt_endpoint="math")
 
     # A chat-template-only change is not a declared model difference.
     template = copy_mod.deepcopy(base)
@@ -1373,9 +1383,11 @@ def test_comparison_requires_actual_byte_differences(tmp_path):
         compare_worker_eval_runs(base, base, "prompt",
                                  model_endpoint="code")
 
-    # request_contract stays disabled until it configures the builder.
-    with pytest.raises(ProfileError, match="disabled"):
-        compare_worker_eval_runs(base, base, "request_contract")
+    # request_contract is re-enabled (92_s §6.8) but a self-comparison
+    # has no digest difference and refuses.
+    with pytest.raises(InfrastructureError, match="not present"):
+        compare_worker_eval_runs(base, copy_mod.deepcopy(base),
+                                 "request_contract")
 
 
 def test_frozen_claim_is_intrinsic(tmp_path):
@@ -1558,3 +1570,234 @@ def test_admit_verifies_endpoint_and_request_identity_against_plan():
     assert not verdict["admitted"]
     assert any("identity differs" in reason
                for reason in verdict["reasons"])
+
+
+# =============================================================================
+# 92_s §6 implementation: contracts, candidates, sharing, runner, screen.
+# =============================================================================
+
+from tasks.conductor import render
+from tasks.conductor.candidates import (
+    CANDIDATES, arm_order, candidate_bundle, candidate_config,
+    candidate_runtime_profile, physical_layout, sentinel_order,
+)
+from tasks.conductor.worker_eval_probe import (
+    WORKER_DEV_NAMESPACE, assert_p1_nested_projection, candidate_p1_cases,
+    candidate_plan_identity, prefix_verdict, run_candidate,
+    screen_candidates, sequence_hashes,
+)
+from tasks.conductor.worker_eval_probe import (
+    run_p1_cases as _run_p1_cases,
+)
+
+
+def test_task_last_contract_renders_declared_block_order():
+    request = render.build_worker_request(
+        "The problem text.", "The task.", resource_text="R-1A1: 1 2 3",
+        previous_results={1: 7}, contract=render.CONTRACT_TASK_LAST)
+    assert request == (
+        "Problem:\nThe problem text.\n\n"
+        "Resource:\nR-1A1: 1 2 3\n\n"
+        "Previous results:\nstep_1 = 7\n\n"
+        "Task:\nThe task.\n\n" + render.TASK_LAST_FINAL_LINE)
+    # The current contract is byte-for-byte unchanged.
+    current = render.build_worker_request(
+        "The problem text.", "The task.", resource_text="R-1A1: 1 2 3",
+        previous_results={1: 7})
+    assert current == (
+        "Problem:\nThe problem text.\n\nTask:\nThe task.\n\n"
+        "Resource:\nR-1A1: 1 2 3\n\nPrevious results:\nstep_1 = 7\n\n"
+        + render.ARTIFACT_FINAL_LINE)
+    with pytest.raises(ValueError, match="unknown request contract"):
+        render.build_worker_request("p", "t", contract="task_last")
+    with pytest.raises(ValueError, match="requires a Task"):
+        render.build_worker_request("p", None,
+                                    contract=render.CONTRACT_TASK_LAST)
+
+
+def test_candidate_registry_and_physical_layout():
+    assert len(CANDIDATES) == 16
+    order = arm_order("A")
+    assert len(order) == 8 and len(set(order)) == 8
+    # Alternating models per §7.
+    models = [candidate_config(cid)["code_model"] for cid in order]
+    assert all(models[i] != models[i + 1] for i in range(7))
+    # Sharing: a generic Code arm is one physical checkpoint; a coder
+    # arm is two; either 3B arm is two.
+    generic = physical_layout(
+        candidate_runtime_profile("generic_1p5b-current-rev9"))
+    coder = physical_layout(
+        candidate_runtime_profile("coder_1p5b-current-rev9"))
+    tranche_b = physical_layout(
+        candidate_runtime_profile("coder_3b-current-rev9"))
+    assert generic["unique_checkpoints"] == 1
+    assert coder["unique_checkpoints"] == 2
+    assert tranche_b["unique_checkpoints"] == 2
+    assert generic["declared_parameter_sum"] \
+        < coder["declared_parameter_sum"] \
+        < tranche_b["declared_parameter_sum"]
+    assert sentinel_order("current", "A")[0] == \
+        "generic_1p5b-current-rev9"
+    with pytest.raises(ProfileError, match="unknown candidate"):
+        candidate_config("coder_7b-current-rev9")
+
+
+def test_candidate_plans_distinguish_contract_and_prompt():
+    base = candidate_plan_identity("coder_1p5b-current-rev9")
+    task_last = candidate_plan_identity("coder_1p5b-task_last-rev9")
+    local = candidate_plan_identity("coder_1p5b-current-code_local_v1")
+    assert [entry[0] for entry in base] == [entry[0] for entry in
+                                            task_last]
+    # A contract change moves every user message and request.
+    assert all(b[2] != t[2] and b[3] != t[3]
+               for b, t in zip(base, task_last))
+    # A Code prompt change moves only Code rendered requests; user
+    # messages are identical.
+    for b, l in zip(base, local):
+        assert b[2] == l[2]
+        assert (b[3] != l[3]) == (b[1] == "code")
+    assert_p1_nested_projection("coder_1p5b-current-rev9")
+    hashes = sequence_hashes([entry[0] for entry in base])
+    assert hashes["canonical"] != hashes["reversed"]
+
+
+def fake_candidate_runs(cid, script=None):
+    """Three admissible fake P1 runs for a registered candidate: records
+    carry the candidate plan's rendered request hashes and the headers
+    carry its registered digests."""
+    from tasks.conductor.worker_eval import resolve_request_contract
+    plan = {entry[0]: entry for entry in candidate_plan_identity(cid)}
+    cases, labels = candidate_p1_cases(cid)
+    config = candidate_config(cid)
+    runs = []
+    for order in ("canonical", "canonical", "reversed"):
+        pool = FakePool(script=script or {}, default="<artifact>1</artifact>")
+        rt = eval_runtime(pool=pool)
+        records, _, _ = _run_p1_cases(rt, list(cases), list(labels), order)
+        fixed = [dict(record,
+                      request_sha256=plan[record["case_id"]][3])
+                 for record in records]
+        runs.append(fake_p1_output(
+            fixed, order, namespace=WORKER_DEV_NAMESPACE,
+            candidate=cid,
+            runtime_profile_fingerprint=runtime_profile_fingerprint(
+                candidate_runtime_profile(cid)),
+            system_prompt_sha256=candidate_bundle(cid).sha256(),
+            request_contract=resolve_request_contract(
+                config["request_contract_key"])))
+    return runs
+
+
+def test_candidate_admission_binds_the_registered_treatment():
+    cid = "coder_1p5b-current-rev9"
+    runs = fake_candidate_runs(cid)
+    assert admit_singleton(runs, WORKER_DEV_NAMESPACE)["admitted"]
+    # 92_s §6.6: cross-admission fails — the same runs relabelled as the
+    # task-last candidate disagree with that candidate's rendered plan.
+    other = "coder_1p5b-task_last-rev9"
+    relabelled = [dict(run, candidate=other) for run in runs]
+    verdict = admit_singleton(relabelled, WORKER_DEV_NAMESPACE)
+    assert not verdict["admitted"]
+    assert any("registered" in r or "plan" in r
+               for r in verdict["reasons"])
+    # And the prompt-condition sibling likewise.
+    sibling = [dict(run, candidate="coder_1p5b-current-code_local_v1")
+               for run in runs]
+    assert not admit_singleton(sibling,
+                               WORKER_DEV_NAMESPACE)["admitted"]
+
+
+def candidate_pool(cid, script):
+    """FakePool rendering the candidate bundle's prompts, reporting the
+    candidate's physical layout as loaded."""
+    bundle = candidate_bundle(cid)
+    layout = physical_layout(candidate_runtime_profile(cid))
+    pool = FakePool(script=script, default="garbage",
+                    system_prompts={name: bundle.text(name)
+                                    for name, _ in bundle.prompts})
+    pool.checkpoint_report = lambda: [
+        {"model_id": c["model_id"], "revision": c["revision"],
+         "endpoints": c["endpoints"], "loaded": True,
+         "measured_parameters": c["declared_parameters"]}
+        for c in layout["checkpoints"]]
+    return pool
+
+
+def test_run_candidate_round_trips_through_loader(tmp_path, monkeypatch):
+    from tasks.conductor import worker_eval_probe as probe_mod
+    from tasks.conductor.worker_eval import load_run
+    small = {"namespace": "worker_dev", "per_cell": 2,
+             "renderers": list(RENDERER_IDS), "visibility": "private"}
+    monkeypatch.setattr(probe_mod, "FULL_POPULATION", small)
+    cid = "generic_1p5b-task_last-rev9"
+    key = candidate_config(cid)["request_contract_key"]
+    cases, labels = build_node_cases(small, request_contract_key=key)
+    latents = generate_latents(small)
+    script = reference_script(cases, labels, latents)
+    writer = run_candidate(cid, "isolated", str(tmp_path / "run"),
+                           pool=candidate_pool(cid, script),
+                           git_info={"commit": "0" * 40, "dirty": False,
+                                     "diff_sha256": None})
+    loaded = load_run(tmp_path / "run")
+    assert loaded["manifest"]["candidate_label"] == cid
+    assert loaded["manifest"]["request_contract"]["key"] == key
+    assert loaded["manifest"]["physical_layout"]["unique_checkpoints"] == 1
+    assert loaded["summary"]["isolated"]["node_correct"]["correct"] \
+        == len(labels)
+    # Task-last requests really were posed: the Task block is last.
+    assert loaded["calls"][0]["user_message"].split("\n\n")[-2] \
+        .startswith("Task:")
+
+    # A tampered measurement is refused by the loader (92_s §3).
+    tampered_dir = tmp_path / "tampered"
+    shutil.copytree(tmp_path / "run", tampered_dir)
+    measurements = json.loads(
+        (tampered_dir / "measurements.json").read_text())
+    measurements["checkpoints"][0]["measured_parameters"] += 1
+    (tampered_dir / "measurements.json").write_text(
+        json.dumps(measurements, indent=1, sort_keys=True) + "\n")
+    manifest = json.loads((tampered_dir / "manifest.json").read_text())
+    manifest["payload_sha256"]["measurements.json"] = hashlib.sha256(
+        (tampered_dir / "measurements.json").read_bytes()).hexdigest()
+    (tampered_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+    with pytest.raises(InfrastructureError, match="parameters"):
+        load_run(tampered_dir)
+
+
+def test_screen_admits_and_launches_with_sentinels(tmp_path):
+    cid = "coder_1p5b-current-rev9"
+    cases, labels = candidate_p1_cases(cid)
+    latents = generate_latents({"namespace": "worker_dev", "per_cell": 10,
+                                "renderers": list(RENDERER_IDS),
+                                "visibility": "private"})
+    script = reference_script(list(cases), list(labels), latents)
+    runs = fake_candidate_runs(cid, script=script)
+    for index, run in enumerate(runs, start=1):
+        (tmp_path / f"{cid}.p1-{index}.json").write_text(json.dumps(run))
+    screening = screen_candidates(tmp_path, "A")
+    entry = screening["candidates"][cid]
+    assert entry["admitted"] and entry["target_prefix_clean"] is True
+    missing = screening["candidates"]["generic_1p5b-current-rev9"]
+    assert missing["status"] == "missing"
+    assert missing["target_prefix_clean"] == "NA"
+    assert screening["launch"] == [cid]
+    assert screening["sentinels"]["current"] == cid
+    assert screening["sentinels"]["task_last"] is None
+    # The prefix verdict is a strict recompute: a wrong-but-stored-as-
+    # correct completion flips it to False.
+    dirty = json.loads(json.dumps(runs[0]))
+    dirty["cases"][0]["completion"] = "<artifact>999999</artifact>"
+    assert prefix_verdict(dirty, cid) is False
+
+
+def test_frozen_p0_cohort_fixture_loads_and_matches_rev9_chunks():
+    from tasks.conductor.worker_eval_probe import load_cohort
+    fixture = Path("tasks/conductor/fixtures/p0_rev9_code_cohort.json")
+    cohort = json.loads(fixture.read_text(encoding="utf-8"))
+    # The recorded rev9 physical grouping: two 45-request Code waves,
+    # each split 16/16/13 at microbatch 16 (78_s finding 6).
+    assert cohort["chunk_sizes"] == [16, 16, 13, 16, 16, 13]
+    endpoint, chunks = load_cohort(cohort)
+    assert endpoint == "code"
+    assert sum(len(chunk) for chunk in chunks) == 90

@@ -63,10 +63,24 @@ class WorkerPool:
                 f"prompt bundle {self._prompts.revision!r} must cover "
                 f"exactly {sorted(WORKER_ENDPOINT_SET)}")
         self._device = device
-        self._tokenizers: dict[str, Any] = {}
-        self._models: dict[str, Any] = {}
+        # Physical checkpoint sharing (92_s §3): model/tokenizer objects
+        # are keyed by (model_id, revision), so logical endpoints with the
+        # same pinned checkpoint share one resident object while keeping
+        # distinct prompts, tools and fingerprints. Sharing is structural,
+        # never introduced or removed between arms.
+        self._tokenizers: dict[tuple[str, str], Any] = {}
+        self._models: dict[tuple[str, str], Any] = {}
         for name in sorted(set(ENDPOINT_NAMES.values())):
-            self._tokenizers[name] = self._load_tokenizer(name)
+            key = self._checkpoint_key(name)
+            if key not in self._tokenizers:
+                self._tokenizers[key] = self._load_tokenizer(name)
+
+    def _checkpoint_key(self, endpoint_name: str) -> tuple[str, str]:
+        worker = self._profile["workers"][endpoint_name]
+        return (worker["model_id"], worker["revision"])
+
+    def _tokenizer(self, endpoint_name: str) -> Any:
+        return self._tokenizers[self._checkpoint_key(endpoint_name)]
 
     def _load_tokenizer(self, endpoint_name: str) -> Any:
         from transformers import AutoTokenizer
@@ -85,7 +99,7 @@ class WorkerPool:
     # --- fingerprint inputs -------------------------------------------------
 
     def chat_template_sha(self, endpoint_name: str) -> str:
-        template = self._tokenizers[endpoint_name].chat_template
+        template = self._tokenizer(endpoint_name).chat_template
         return hashlib.sha256(template.encode("utf-8")).hexdigest()
 
     def system_prompt(self, endpoint_name: str) -> str:
@@ -97,7 +111,7 @@ class WorkerPool:
         """Actual tokenizer-level facts used at render/decode time (81_f
         §6.3). The model generation-config eos set is only known after the
         lazy model load and is validated at decode, not recorded here."""
-        tokenizer = self._tokenizers[endpoint_name]
+        tokenizer = self._tokenizer(endpoint_name)
         return {
             "pad_token_id": tokenizer.pad_token_id,
             "padding_side": tokenizer.padding_side,
@@ -110,7 +124,7 @@ class WorkerPool:
         """Chat template over (system, user); system prompt comes from the
         bundle bound at construction. Returned bytes are the cache-key
         request component and the byte-stability test target."""
-        tokenizer = self._tokenizers[endpoint_name]
+        tokenizer = self._tokenizer(endpoint_name)
         text = tokenizer.apply_chat_template(
             [{"role": "system", "content": self.system_prompt(endpoint_name)},
              {"role": "user", "content": user_message}],
@@ -120,7 +134,8 @@ class WorkerPool:
     # --- generation ---------------------------------------------------------
 
     def _load_model(self, endpoint_name: str) -> Any:
-        if endpoint_name not in self._models:
+        key = self._checkpoint_key(endpoint_name)
+        if key not in self._models:
             import torch
             from transformers import (AutoModelForCausalLM,
                                       BitsAndBytesConfig)
@@ -130,7 +145,7 @@ class WorkerPool:
                        "double_quant": "true", "compute_dtype": "bfloat16"}:
                 raise InfrastructureError(
                     f"unsupported nf4 config {nf4!r}")
-            self._models[endpoint_name] = AutoModelForCausalLM.from_pretrained(
+            self._models[key] = AutoModelForCausalLM.from_pretrained(
                 worker["model_id"], revision=worker["revision"],
                 dtype=torch.bfloat16,
                 quantization_config=BitsAndBytesConfig(
@@ -138,7 +153,29 @@ class WorkerPool:
                     bnb_4bit_use_double_quant=True,
                     bnb_4bit_compute_dtype=torch.bfloat16),
                 device_map=self._device).eval()
-        return self._models[endpoint_name]
+        return self._models[key]
+
+    def checkpoint_report(self) -> list[dict[str, Any]]:
+        """Actual physical layout for the §3 execution measurements:
+        which checkpoints are loaded, which endpoints share them, and
+        the measured parameter count of each loaded model."""
+        report = []
+        endpoints_by_key: dict[tuple[str, str], list[str]] = {}
+        for name in sorted(set(ENDPOINT_NAMES.values())):
+            endpoints_by_key.setdefault(self._checkpoint_key(name),
+                                        []).append(name)
+        for key, endpoints in sorted(endpoints_by_key.items()):
+            model = self._models.get(key)
+            report.append({
+                "model_id": key[0],
+                "revision": key[1],
+                "endpoints": endpoints,
+                "loaded": model is not None,
+                "measured_parameters": (
+                    sum(p.numel() for p in model.parameters())
+                    if model is not None else None),
+            })
+        return report
 
     def generate(self, endpoint_name: str,
                  requests: list[bytes]) -> list[Generation]:
@@ -146,7 +183,7 @@ class WorkerPool:
         microbatched at the profile's per-worker cap. Returns one
         Generation per request, in order."""
         import torch
-        tokenizer = self._tokenizers[endpoint_name]
+        tokenizer = self._tokenizer(endpoint_name)
         model = self._load_model(endpoint_name)
         worker = self._profile["workers"][endpoint_name]
         cap = worker["max_new_tokens"]

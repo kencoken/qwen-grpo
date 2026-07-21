@@ -305,6 +305,61 @@ The sequence argument is always the word resource, never its name. Your \
 reply must contain <artifact> and </artifact> exactly once, with the \
 expression between them."""
 
+# 92_s §2.3 second Code prompt condition — model-neutral, derived only
+# from the retained rev1-9 evidence (no new GPU output was inspected):
+# - task-locality is the FIRST rule: the dominant alternative-renderer
+#   failure solved or composed the global Problem (78_s finding 3);
+#   rev3 carried the rule mid-prompt, rev4 cut it, rev9 never restored
+#   it explicitly;
+# - NO wrong exemplars: rev7/8 showed a concrete wrong string that
+#   flatters the model's prior becomes a template, and rev8's
+#   non-copyable phrasing still left re-invented guards — v1 states the
+#   positive rule only;
+# - the rev4 winning layout (critical rules first, worked examples,
+#   rules + envelope restated last) and the rev9 matched-regime
+#   step_1 = 10 demonstration are kept.
+# Lookup and Math texts are byte-identical to rev9 in this bundle.
+SYSTEM_CODE_LOCAL_V1 = f"""\
+You are a sequence-processing worker. Complete only the assigned Task — \
+the Problem is background context, and other numbers or operations in \
+it are not part of your answer. The sequence argument in your \
+expression is always the word resource — never a name like R-8C3 — and \
+it refers to the sequence shown under Resource: in this request. \
+Respond with exactly one <artifact>...</artifact> containing a single \
+expression built only from the whitelist calls count_gt(seq, n), \
+at(seq, n), stable_unique(seq), rotate_left(seq, n) — no arithmetic \
+operators — where seq is resource or a nested whitelist call and n is \
+a nonnegative integer or step_k, written exactly as given. In every \
+call the FIRST argument is the sequence and the SECOND is the number. \
+stable_unique keeps the first occurrence of each value; rotate_left \
+rotates left; at is zero-based, and any step_k you are given is \
+already a valid zero-based index, even when it is large.
+
+Worked example — given this resource:
+
+{_demo_payload_text("code")}
+
+the task "{DEMONSTRATIONS["code"][0]["subtask"]}" has exactly this \
+correct response:
+
+{_demo_completion("code")}
+
+Second example — with the previous result step_1 = 10, the task \
+"{DEMONSTRATIONS["code"][1]["subtask"]}" has exactly this correct \
+response:
+
+{DEMONSTRATIONS["code"][1]["completion"]}
+
+Third example — the task "{DEMONSTRATIONS["code"][2]["subtask"]}" has \
+exactly this correct response:
+
+{DEMONSTRATIONS["code"][2]["completion"]}
+
+Answer the Task alone, using the word resource for the sequence and \
+step_k or integers exactly as given. Your reply must contain \
+<artifact> and </artifact> exactly once, with the expression between \
+them."""
+
 # Unchanged from rev0: the direct arms (B1/B3/B4) run on the policy model,
 # which the worker pool does not load; revising SYSTEM_DIRECT without
 # execution evidence would be a change without measurement. Revisit when
@@ -331,6 +386,13 @@ PROMPT_REVISIONS: dict[str, dict[str, str]] = {
         "lookup": SYSTEM_LOOKUP,
         "math": SYSTEM_MATH,
         "code": SYSTEM_CODE,
+    },
+    # 92_s §2.3: the second Code prompt condition; DRAFT until reviewed
+    # and hashed into the frozen preregistration.
+    "code_local_v1": {
+        "lookup": SYSTEM_LOOKUP,
+        "math": SYSTEM_MATH,
+        "code": SYSTEM_CODE_LOCAL_V1,
     },
 }
 

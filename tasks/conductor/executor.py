@@ -70,6 +70,8 @@ class WorkflowItem:
     registry: InstanceRegistry
     overrides: Mapping[int, int] = field(default_factory=dict)
     pseudo_workers: Mapping[int, PseudoWorker] = field(default_factory=dict)
+    # 92_s §6.4: the request contract configures composed rendering too.
+    request_contract: str = render.CONTRACT_CURRENT
 
 
 def _step_failed(record: StepRecord) -> bool:
@@ -78,12 +80,15 @@ def _step_failed(record: StepRecord) -> bool:
 
 def build_worker_call(public_prompt: str, subtask: str,
                       resource: str | None, registry: InstanceRegistry,
-                      previous: Mapping[int, int] | None
+                      previous: Mapping[int, int] | None,
+                      contract: str = render.CONTRACT_CURRENT
                       ) -> tuple[str, Binding]:
     """Reference-free (request, binding) construction for one step — the
     single path shared by composed execution and isolated worker
-    evaluation (81_f §6.4), so the two cannot drift. Callers handle
-    resource-resolution failure first; an unknown handle here aborts."""
+    evaluation (81_f §6.4), so the two cannot drift. The request
+    contract configures the actual block order here (92_s §6.4).
+    Callers handle resource-resolution failure first; an unknown handle
+    aborts."""
     resource_text = None
     binding_resources: dict[str, Any] = {}
     if resource is not None:
@@ -95,7 +100,8 @@ def build_worker_call(public_prompt: str, subtask: str,
         binding_resources = {resource: payload}
     request = render.build_worker_request(
         public_prompt, subtask, resource_text=resource_text,
-        previous_results=dict(previous) if previous is not None else None)
+        previous_results=dict(previous) if previous is not None else None,
+        contract=contract)
     return request, Binding(resources=binding_resources,
                             steps=dict(previous) if previous else {})
 
@@ -158,7 +164,7 @@ def execute_workflow_batch(items: list[WorkflowItem],
                         else None)
             request, binding = build_worker_call(
                 item.public_prompt, step.subtask, step.resource,
-                item.registry, previous)
+                item.registry, previous, contract=item.request_contract)
 
             if position in item.pseudo_workers:
                 result = item.pseudo_workers[position](request)

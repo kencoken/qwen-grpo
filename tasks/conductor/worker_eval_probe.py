@@ -14,14 +14,25 @@ reversed-order run and admits only on exact generation-field equality
 within the frozen cost gate (§7.3). If admission fails, stop and write
 the §7.4 follow-up decision plan — do not fall back to the cache.
 
-Run (each invocation is its own fresh process):
+The 92_s experiment commands (candidate = one registered model x
+request-contract x Code-prompt configuration):
 
   uv run python -m tasks.conductor.worker_eval_probe p1 \
-      --namespace worker_dev --per-cell 10 --order canonical --out r1.json
-  uv run python -m tasks.conductor.worker_eval_probe p0 \
-      --cohort chunks.json --condition reversed --out p0-rev.json
-  uv run python -m tasks.conductor.worker_eval_probe compare a.json b.json
+      --candidate coder_1p5b-current-rev9 --order canonical --out r1.json
   uv run python -m tasks.conductor.worker_eval_probe admit r1.json r2.json r3.json
+  uv run python -m tasks.conductor.worker_eval_probe run \
+      --candidate coder_1p5b-current-rev9 --run-dir runs/92s/...-full
+  uv run python -m tasks.conductor.worker_eval_probe screen \
+      --runs-dir runs/92s --tranche A --out screening.json
+  uv run python -m tasks.conductor.worker_eval_probe reveal \
+      --runs-dir runs/92s --screening screening.json --out reveal.json
+
+P0 replay (each invocation is its own fresh process):
+
+  uv run python -m tasks.conductor.worker_eval_probe p0 \
+      --cohort tasks/conductor/fixtures/p0_rev9_code_cohort.json \
+      --condition original --out p0-orig-1.json
+  uv run python -m tasks.conductor.worker_eval_probe compare a.json b.json
 """
 
 from __future__ import annotations
@@ -48,7 +59,7 @@ from .types import CELL_IDS, ENDPOINT_NAMES, RENDERER_IDS, \
 from .worker_eval import (
     ENDPOINT_SCHEDULE_VERSION, NodeLabel, NullCache, WorkerEvalCase,
     endpoint_schedule, environment_versions, git_provenance,
-    node_cases_for_latent, singleton_call,
+    node_cases_for_latent, resolve_request_contract, singleton_call,
 )
 
 PROBE_SCHEMA_VERSION = 1
@@ -108,7 +119,8 @@ def assert_probe_coverage(latents: list[Mapping[str, Any]]) -> None:
 
 def build_probe_cases(namespace: str, per_cell: int,
                       renderers: list[str], visibility: str,
-                      profile: Mapping[str, Any] | None = None
+                      profile: Mapping[str, Any] | None = None,
+                      request_contract_key: str = "worker-blocks-v0"
                       ) -> tuple[list[WorkerEvalCase], list[NodeLabel]]:
     latents = probe_latents(namespace, per_cell, profile)
     assert_probe_coverage(latents)
@@ -116,10 +128,102 @@ def build_probe_cases(namespace: str, per_cell: int,
     labels: list[NodeLabel] = []
     for latent in latents:
         latent_cases, latent_labels = node_cases_for_latent(
-            latent, renderers, visibility)
+            latent, renderers, visibility, request_contract_key)
         cases.extend(latent_cases)
         labels.extend(latent_labels)
     return cases, labels
+
+
+# --- 92_s candidate plans (§6.6, §6.9) ---------------------------------------
+
+@functools.lru_cache(maxsize=8)
+def _candidate_tokenizer(model_id: str, revision: str):
+    from transformers import AutoTokenizer
+    return AutoTokenizer.from_pretrained(model_id, revision=revision)
+
+
+def _rendered_sha(model_id: str, revision: str, system_text: str,
+                  user_message: str) -> str:
+    tokenizer = _candidate_tokenizer(model_id, revision)
+    text = tokenizer.apply_chat_template(
+        [{"role": "system", "content": system_text},
+         {"role": "user", "content": user_message}],
+        tokenize=False, add_generation_prompt=True)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+@functools.lru_cache(maxsize=32)
+def candidate_p1_cases(cid: str) -> tuple[tuple[WorkerEvalCase, ...],
+                                          tuple["NodeLabel", ...]]:
+    """The candidate's exact 300-case P1 plan (worker_dev prefix under
+    its request contract)."""
+    from .candidates import candidate_config
+    config = candidate_config(cid)
+    cases, labels = build_probe_cases(
+        WORKER_DEV_NAMESPACE, P1_PER_CELL, list(RENDERER_IDS), "private",
+        request_contract_key=config["request_contract_key"])
+    return tuple(cases), tuple(labels)
+
+
+@functools.lru_cache(maxsize=32)
+def candidate_full_cases(cid: str) -> tuple[tuple[WorkerEvalCase, ...],
+                                            tuple["NodeLabel", ...]]:
+    from .candidates import candidate_config
+    config = candidate_config(cid)
+    cases, labels = build_probe_cases(
+        WORKER_DEV_NAMESPACE, 30, list(RENDERER_IDS), "private",
+        request_contract_key=config["request_contract_key"])
+    return tuple(cases), tuple(labels)
+
+
+def _latent_index(case_id: str) -> int:
+    # case_id = cell:namespace:index:hash:renderer:visibility:node
+    return int(case_id.split(":")[2])
+
+
+def assert_p1_nested_projection(cid: str) -> None:
+    """92_s §6.9: the P1 case ids are exactly the first-10-latent
+    projection of the full 30-latent plan, in plan order."""
+    p1_ids = [case.case_id for case in candidate_p1_cases(cid)[0]]
+    projected = [case.case_id for case in candidate_full_cases(cid)[0]
+                 if _latent_index(case.case_id) < P1_PER_CELL]
+    if p1_ids != projected:
+        raise InfrastructureError(
+            f"{cid}: P1 plan is not the nested first-10 projection of "
+            "the full plan")
+
+
+@functools.lru_cache(maxsize=32)
+def candidate_plan_identity(cid: str) -> tuple[tuple[str, str, str, str],
+                                               ...]:
+    """(case_id, endpoint, user_sha, rendered request_sha) per P1 case —
+    admission verifies runs against this, regenerated from the candidate
+    registry (92_s §6.6): profile, prompt bundle, chat template and
+    request contract, never a caller-provided label."""
+    from .candidates import candidate_bundle, candidate_runtime_profile
+    assert_p1_nested_projection(cid)
+    profile = candidate_runtime_profile(cid)
+    bundle = candidate_bundle(cid)
+    cases, _ = candidate_p1_cases(cid)
+    identity = []
+    for case in cases:
+        worker = profile["workers"][case.endpoint_name]
+        identity.append((
+            case.case_id, case.endpoint_name,
+            hashlib.sha256(case.user_message.encode("utf-8")).hexdigest(),
+            _rendered_sha(worker["model_id"], worker["revision"],
+                          bundle.text(case.endpoint_name),
+                          case.user_message)))
+    return tuple(identity)
+
+
+def sequence_hashes(case_ids: list[str]) -> dict[str, str]:
+    """§6.9: canonical and exact-reversal order hashes for a plan."""
+    canonical = hashlib.sha256(
+        "\n".join(case_ids).encode("utf-8")).hexdigest()
+    reversed_hash = hashlib.sha256(
+        "\n".join(reversed(case_ids)).encode("utf-8")).hexdigest()
+    return {"canonical": canonical, "reversed": reversed_hash}
 
 
 # --- per-case records --------------------------------------------------------
@@ -498,11 +602,48 @@ def admit_singleton(runs: list[Mapping[str, Any]],
                        "must be a fresh process")
     # 89_s blocking finding: regenerate the declared plan and require
     # every run to match it — support, order, endpoint and request
-    # identity. A relabelled namespace header proves nothing.
-    plan = _p1_expected_plan(expected_namespace)
-    canonical_ids = [case_id for case_id, _, _ in plan]
-    identity = {case_id: (endpoint, user_sha)
-                for case_id, endpoint, user_sha in plan}
+    # identity. A relabelled namespace or candidate header proves
+    # nothing. Candidate runs (92_s §6.6) additionally verify the
+    # rendered request hashes, profile fingerprint, prompt hashes and
+    # contract digest against the candidate registry.
+    cids = {run.get("candidate") for run in runs}
+    if len(cids) != 1:
+        reasons.append(f"runs span candidates {sorted(map(str, cids))}")
+    cid = next(iter(cids)) if len(cids) == 1 else None
+    if cid is not None:
+        from .candidates import (candidate_bundle, candidate_config,
+                                 candidate_runtime_profile)
+        config = candidate_config(cid)
+        if expected_namespace != WORKER_DEV_NAMESPACE:
+            reasons.append("candidate admission is defined only against "
+                           f"{WORKER_DEV_NAMESPACE!r}")
+        expected_rtp = runtime_profile_fingerprint(
+            candidate_runtime_profile(cid))
+        if runs[0].get("runtime_profile_fingerprint") != expected_rtp:
+            reasons.append(f"runtime profile fingerprint is not "
+                           f"{cid!r}'s registered profile")
+        if runs[0].get("system_prompt_sha256") \
+                != candidate_bundle(cid).sha256():
+            reasons.append(f"prompt hashes are not {cid!r}'s registered "
+                           "bundle")
+        registered_contract = resolve_request_contract(
+            config["request_contract_key"])
+        if runs[0].get("request_contract", {}).get("digest") \
+                != registered_contract["digest"]:
+            reasons.append(f"request-contract digest is not {cid!r}'s "
+                           "registered contract")
+        plan4 = candidate_plan_identity(cid)
+        canonical_ids = [case_id for case_id, _, _, _ in plan4]
+        identity = {c: (e, u, r) for c, e, u, r in plan4}
+        record_key = lambda record: (record["endpoint_name"],
+                                     record["user_message_sha256"],
+                                     record["request_sha256"])
+    else:
+        plan3 = _p1_expected_plan(expected_namespace)
+        canonical_ids = [case_id for case_id, _, _ in plan3]
+        identity = {c: (e, u) for c, e, u in plan3}
+        record_key = lambda record: (record["endpoint_name"],
+                                     record["user_message_sha256"])
     for index, run in enumerate(runs):
         sequence = [record["case_id"] for record in run["cases"]]
         expected_sequence = (canonical_ids if run["order"] == "canonical"
@@ -513,9 +654,7 @@ def admit_singleton(runs: list[Mapping[str, Any]],
                 f"{expected_namespace} plan in {run['order']} order")
             continue
         drifted = [record["case_id"] for record in run["cases"]
-                   if (record["endpoint_name"],
-                       record["user_message_sha256"])
-                   != identity[record["case_id"]]]
+                   if record_key(record) != identity[record["case_id"]]]
         if drifted:
             reasons.append(
                 f"run {index + 1}: endpoint/request identity differs "
@@ -569,6 +708,247 @@ def admit_singleton(runs: list[Mapping[str, Any]],
     }
 
 
+# --- 92_s candidate runner (§6.7) and screening/reveal (§6.10) ---------------
+
+class _TimedRuntime:
+    """Delegating wrapper recording per-endpoint call counts and wall
+    seconds for the §3 execution measurements."""
+
+    def __init__(self, runtime: Any) -> None:
+        self._runtime = runtime
+        self.stats: dict[str, dict[str, float]] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._runtime, name)
+
+    def worker_call_batch(self, endpoint_name: str,
+                          user_messages: list) -> list:
+        started = time.monotonic()
+        records = self._runtime.worker_call_batch(endpoint_name,
+                                                  user_messages)
+        entry = self.stats.setdefault(endpoint_name,
+                                      {"calls": 0, "seconds": 0.0})
+        entry["calls"] += len(user_messages)
+        entry["seconds"] += time.monotonic() - started
+        return records
+
+
+def _reserved_bytes() -> int:
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return int(torch.cuda.memory_reserved())
+    except ImportError:
+        pass
+    return 0
+
+
+FULL_POPULATION = {"namespace": "worker_dev", "per_cell": 30,
+                   "renderers": list(RENDERER_IDS),
+                   "visibility": "private"}
+
+
+def run_candidate(cid: str, mode: str, run_dir: str,
+                  device: str = "cuda", pool: Any = None,
+                  git_info: Mapping[str, Any] | None = None,
+                  process_info: Mapping[str, Any] | None = None) -> Any:
+    """One complete 92_s candidate evaluation artifact: the thin
+    experiment command (§6.7), not an orchestration framework. An
+    interrupted run stays on disk; restarts use a fresh run id/dir."""
+    from .candidates import (candidate_bundle, candidate_config,
+                             candidate_runtime_profile, physical_layout)
+    from .worker_eval import (RunWriter, build_manifest, build_node_cases,
+                              case_identities, run_composed_workflows,
+                              run_node_cases, score_node_calls,
+                              score_workflow_calls, summarize_worker_eval)
+    config = candidate_config(cid)
+    profile = candidate_runtime_profile(cid)
+    bundle = candidate_bundle(cid)
+    if pool is None:
+        from .workers import WorkerPool
+        pool = WorkerPool(profile, device=device)
+    runtime = build_runtime(profile, pool=pool, cache=NullCache())
+    contract_key = config["request_contract_key"]
+    if mode == "isolated":
+        cases, labels = build_node_cases(
+            FULL_POPULATION, request_contract_key=contract_key)
+        expected_calls, expected_scores = len(cases), len(labels)
+    elif mode == "composed":
+        expected_calls = 10 * 30 * len(RENDERER_IDS)  # steps per pass
+        expected_scores = 6 * 30 * len(RENDERER_IDS)  # workflows
+    else:
+        raise ProfileError(f"unknown mode {mode!r}")
+    manifest = build_manifest(
+        runtime, bundle, run_id=Path(run_dir).name,
+        purpose=f"92_s candidate {cid} ({mode})",
+        population=FULL_POPULATION,
+        endpoint_schedule_version=ENDPOINT_SCHEDULE_VERSION,
+        candidate_label=cid, request_contract_key=contract_key,
+        expected_calls=expected_calls, expected_scores=expected_scores,
+        evaluation_mode=mode, physical_layout=physical_layout(profile),
+        git_info=git_info, process_info=process_info)
+    timed = _TimedRuntime(runtime)
+    peak = _vram_tracker()
+    started = time.monotonic()
+    with RunWriter(run_dir, manifest) as writer:
+        if mode == "isolated":
+            rows = run_node_cases(timed, list(cases), writer,
+                                  case_identities(list(labels)))
+            scores = score_node_calls(rows, list(labels))
+        else:
+            rows, wlabels = run_composed_workflows(
+                timed, FULL_POPULATION, writer,
+                request_contract_key=contract_key)
+            scores = score_workflow_calls(rows, wlabels)
+        for row in scores:
+            writer.write_score(row)
+        writer.write_summary(summarize_worker_eval(manifest, rows, scores))
+        writer.write_extra("measurements.json", {
+            "wall_seconds": time.monotonic() - started,
+            "idle_reserved_bytes": _reserved_bytes(),
+            "peak_reserved_bytes": peak() or 0,
+            "per_endpoint": timed.stats,
+            "checkpoints": pool.checkpoint_report(),
+        })
+    return writer
+
+
+def prefix_verdict(run: Mapping[str, Any], cid: str) -> bool:
+    """§7 target_prefix_clean for a P1-admitted run: strict recompute —
+    labels regenerated, tools re-run; stored semantic fields are never
+    trusted (92_s §6.6)."""
+    cases, labels = candidate_p1_cases(cid)
+    by_id = {case.case_id: (case, label)
+             for case, label in zip(cases, labels)}
+    if len(run["cases"]) != P1_CASES:
+        return False
+    groups: dict[tuple, list[bool]] = {}
+    for record in run["cases"]:
+        if record["generation_hit_token_cap"]:
+            return False
+        case, label = by_id[record["case_id"]]
+        result = contract.run_worker_output(
+            _ENDPOINT_ID[case.endpoint_name], record["completion"],
+            case.binding())
+        groups.setdefault(
+            (case.endpoint_name, label.cell_id, label.renderer_id),
+            []).append(result.status == "success"
+                       and result.value == label.expected_value)
+    return all(len(outcomes) == P1_PER_CELL and all(outcomes)
+               for outcomes in groups.values())
+
+
+def screen_candidates(runs_dir: str | Path, tranche: str
+                      ) -> dict[str, Any]:
+    """§6.10 screening: expose only candidate id, admission/cost and the
+    three-state prefix verdict; fix the full-run launch set (prefix-clean
+    candidates plus one sentinel per contract) mechanically."""
+    from .candidates import (REQUEST_CONTRACT_KEYS, arm_order,
+                             sentinel_order)
+    runs_dir = Path(runs_dir)
+    table: dict[str, dict[str, Any]] = {}
+    for cid in arm_order(tranche):
+        paths = [runs_dir / f"{cid}.p1-{i}.json" for i in (1, 2, 3)]
+        if not all(path.exists() for path in paths):
+            table[cid] = {"status": "missing",
+                          "target_prefix_clean": "NA"}
+            continue
+        runs = [json.loads(path.read_text(encoding="utf-8"))
+                for path in paths]
+        verdict = admit_singleton(runs, WORKER_DEV_NAMESPACE)
+        table[cid] = {
+            "status": "screened",
+            "admitted": verdict["admitted"],
+            "projected_full_run_seconds":
+                verdict["projected_full_run_seconds"],
+            "peak_vram_bytes": verdict["peak_vram_bytes"],
+            "target_prefix_clean": (prefix_verdict(runs[0], cid)
+                                    if verdict["admitted"] else "NA"),
+        }
+    launch = [cid for cid, entry in table.items()
+              if entry.get("admitted")
+              and entry["target_prefix_clean"] is True]
+    sentinels = {}
+    for contract_label in REQUEST_CONTRACT_KEYS:
+        sentinels[contract_label] = next(
+            (cid for cid in sentinel_order(contract_label, tranche)
+             if table.get(cid, {}).get("admitted")), None)
+        chosen = sentinels[contract_label]
+        if chosen is not None and chosen not in launch:
+            launch.append(chosen)
+    return {"tranche": tranche, "candidates": table,
+            "launch": launch, "sentinels": sentinels}
+
+
+# §8 lexicographic selection orders (lower is better).
+_CONTRACT_RANK = {"current": 0, "task_last": 1}
+_PROMPT_RANK = {"rev9": 0, "code_local_v1": 1}
+
+
+def reveal_tranche(runs_dir: str | Path,
+                   screening: Mapping[str, Any]) -> dict[str, Any]:
+    """§6.10 joint reveal: strict-load every launched full run, enforce
+    unchanged-endpoint equality per contract, derive §4.1 target
+    verdicts and apply the §8 mechanical selection."""
+    from .candidates import (candidate_config, candidate_runtime_profile,
+                             physical_layout)
+    from .worker_eval import load_run
+    runs_dir = Path(runs_dir)
+    loaded = {cid: load_run(runs_dir / f"{cid}-full")
+              for cid in screening["launch"]}
+    # Unchanged-endpoint equality (§5): Lookup/Math generation fields are
+    # byte-identical across arms sharing a contract.
+    by_contract: dict[str, list[str]] = {}
+    for cid in loaded:
+        by_contract.setdefault(
+            candidate_config(cid)["contract_label"], []).append(cid)
+    for contract_label, cids in by_contract.items():
+        reference: dict[str, tuple] = {}
+        for cid in sorted(cids):
+            for row in loaded[cid]["calls"]:
+                if row["endpoint_name"] == "code":
+                    continue
+                key = row["case_id"]
+                fields = (row["request_sha256"], row["completion"],
+                          row["finish_reason"], row["generated_tokens"],
+                          row["generation_hit_token_cap"])
+                if key in reference and reference[key] != fields:
+                    raise InfrastructureError(
+                        f"unchanged endpoint call {key} differs across "
+                        f"{contract_label!r} arms — reproducibility "
+                        "stop (92_s §5)")
+                reference.setdefault(key, fields)
+    results = {}
+    for cid, run in loaded.items():
+        groups: dict[str, dict[str, int]] = {}
+        for score in run["scores"]:
+            key = "|".join((score["endpoint_name"], score["cell_id"],
+                            score["renderer_id"]))
+            entry = groups.setdefault(key, {"n": 0, "correct": 0})
+            entry["n"] += 1
+            entry["correct"] += int(score["node_correct"])
+        outcomes = run["summary"]["isolated"]["outcomes"]
+        target = (all(entry["n"] == 30 and entry["correct"] == 30
+                      for entry in groups.values())
+                  and outcomes["scheduled"] == outcomes["called"] == 900
+                  and outcomes["envelope_failed"] == 0
+                  and outcomes["grammar_failed"] == 0
+                  and outcomes["token_cap"] == 0)
+        results[cid] = {"groups": groups, "target": target}
+    targets = sorted(
+        (cid for cid, entry in results.items() if entry["target"]),
+        key=lambda cid: (
+            physical_layout(candidate_runtime_profile(cid))[
+                "declared_parameter_sum"],
+            physical_layout(candidate_runtime_profile(cid))[
+                "unique_checkpoints"],
+            _CONTRACT_RANK[candidate_config(cid)["contract_label"]],
+            _PROMPT_RANK[candidate_config(cid)["code_prompt"]],
+            cid))
+    return {"tranche": screening["tranche"], "results": results,
+            "selected": targets[0] if targets else None}
+
+
 # --- command line ------------------------------------------------------------
 
 def _write_output(path: str, payload: Mapping[str, Any]) -> None:
@@ -591,7 +971,11 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="command", required=True)
 
     p1 = sub.add_parser("p1", help="one fresh-process singleton pass")
-    p1.add_argument("--namespace", required=True)
+    p1.add_argument("--candidate", default=None,
+                    help="registered 92_s candidate id; resolves the "
+                         "exact profile, prompts and request contract")
+    p1.add_argument("--namespace", default=None,
+                    help="diagnostic mode only; ignored with --candidate")
     p1.add_argument("--per-cell", type=int, default=10)
     p1.add_argument("--order", choices=["canonical", "reversed"],
                     default="canonical")
@@ -599,6 +983,25 @@ def main(argv: list[str] | None = None) -> int:
     p1.add_argument("--visibility", default="private")
     p1.add_argument("--out", required=True)
     p1.add_argument("--device", default="cuda")
+
+    runp = sub.add_parser("run", help="92_s §6.7 candidate evaluation")
+    runp.add_argument("--candidate", required=True)
+    runp.add_argument("--mode", choices=["isolated", "composed"],
+                      default="isolated")
+    runp.add_argument("--run-dir", required=True)
+    runp.add_argument("--device", default="cuda")
+
+    scr = sub.add_parser("screen", help="92_s §6.10 P1 screening table + "
+                                        "launch manifest")
+    scr.add_argument("--runs-dir", required=True)
+    scr.add_argument("--tranche", choices=["A", "B"], required=True)
+    scr.add_argument("--out", required=True)
+
+    rev = sub.add_parser("reveal", help="92_s §6.10 joint reveal after "
+                                        "all launched full runs complete")
+    rev.add_argument("--runs-dir", required=True)
+    rev.add_argument("--screening", required=True)
+    rev.add_argument("--out", required=True)
 
     p0 = sub.add_parser("p0", help="replay a frozen physical cohort")
     p0.add_argument("--cohort", required=True)
@@ -632,19 +1035,75 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     if args.command == "p1":
-        profile, pool, runtime = _build_real(args.device)
-        cases, labels = build_probe_cases(
-            args.namespace, args.per_cell, list(args.renderers),
-            args.visibility)
+        if args.candidate:
+            from .candidates import (candidate_config,
+                                     candidate_runtime_profile)
+            from .workers import WorkerPool
+            config = candidate_config(args.candidate)
+            profile = candidate_runtime_profile(args.candidate)
+            pool = WorkerPool(profile, device=args.device)
+            runtime = build_runtime(profile, pool=pool, cache=NullCache())
+            cases, labels = (list(part) for part in
+                             candidate_p1_cases(args.candidate))
+            extra = {
+                "candidate": args.candidate,
+                "request_contract": resolve_request_contract(
+                    config["request_contract_key"]),
+                "sequence_sha256": sequence_hashes(
+                    [case.case_id for case in cases]),
+                "namespace": WORKER_DEV_NAMESPACE,
+                "per_cell": P1_PER_CELL,
+                "renderers": list(RENDERER_IDS),
+                "visibility": "private",
+            }
+        else:
+            if not args.namespace:
+                ap.error("p1 requires --candidate or --namespace")
+            profile, pool, runtime = _build_real(args.device)
+            cases, labels = build_probe_cases(
+                args.namespace, args.per_cell, list(args.renderers),
+                args.visibility)
+            extra = {"namespace": args.namespace,
+                     "per_cell": args.per_cell,
+                     "renderers": list(args.renderers),
+                     "visibility": args.visibility}
         records, wall, vram = run_p1_cases(runtime, cases, labels,
                                            args.order)
         _write_output(args.out, _header(
-            "p1", pool, profile, order=args.order,
-            namespace=args.namespace, per_cell=args.per_cell,
-            renderers=list(args.renderers), visibility=args.visibility,
-            wall_seconds=wall, peak_vram_bytes=vram, cases=records))
+            "p1", pool, profile, order=args.order, wall_seconds=wall,
+            peak_vram_bytes=vram, cases=records, **extra))
         print(f"p1 {args.order}: {len(records)} cases in {wall:.1f}s, "
               f"peak VRAM {vram} B -> {args.out}")
+        return 0
+
+    if args.command == "run":
+        writer = run_candidate(args.candidate, args.mode, args.run_dir,
+                               device=args.device)
+        print(f"candidate {args.candidate} {args.mode} run complete -> "
+              f"{args.run_dir} (manifest sha {writer.manifest_sha256})")
+        return 0
+
+    if args.command == "screen":
+        screening = screen_candidates(args.runs_dir, args.tranche)
+        _write_output(args.out, screening)
+        digest = hashlib.sha256(
+            Path(args.out).read_bytes()).hexdigest()
+        for cid, entry in screening["candidates"].items():
+            print(f"{cid}: admitted={entry.get('admitted')} "
+                  f"prefix={entry.get('target_prefix_clean')}")
+        print(f"launch: {screening['launch']}")
+        print(f"sentinels: {screening['sentinels']}")
+        print(f"screening manifest sha256 {digest} -> {args.out}")
+        return 0
+
+    if args.command == "reveal":
+        screening = json.loads(
+            Path(args.screening).read_text(encoding="utf-8"))
+        outcome = reveal_tranche(args.runs_dir, screening)
+        _write_output(args.out, outcome)
+        for cid, entry in outcome["results"].items():
+            print(f"{cid}: target={entry['target']}")
+        print(f"selected: {outcome['selected']} -> {args.out}")
         return 0
 
     if args.command == "p0":
