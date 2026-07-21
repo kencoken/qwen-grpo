@@ -103,6 +103,11 @@ machine-verified §3 worked examples.
 
 from __future__ import annotations
 
+import hashlib
+from dataclasses import dataclass
+from typing import Mapping
+
+from .profiles import ProfileError
 from .types import IntegerList, IntegerRecord, Resource
 
 D16_STATUS = "DRAFT"  # flips to "FROZEN <date>" only via its own review
@@ -314,6 +319,73 @@ SYSTEM_PROMPTS = {
     "code": SYSTEM_CODE,
     "direct": SYSTEM_DIRECT,
 }
+
+
+# --- revision-keyed worker prompt registry (worker-eval plan 81_f §5.2) -----
+# A named revision is valid only if it resolves to exact strings; the pool
+# binds a resolved bundle at construction and never re-reads module globals.
+# `SYSTEM_DIRECT` status is deliberately separate (§5.2) and not in bundles.
+
+PROMPT_REVISIONS: dict[str, dict[str, str]] = {
+    D16_REVISION: {
+        "lookup": SYSTEM_LOOKUP,
+        "math": SYSTEM_MATH,
+        "code": SYSTEM_CODE,
+    },
+}
+
+WORKER_ENDPOINT_SET = frozenset({"lookup", "math", "code"})
+
+
+@dataclass(frozen=True)
+class PromptBundle:
+    """Immutable resolved worker prompts: (endpoint, exact text) pairs bound
+    to a revision name and freeze status. Deeply immutable — safe to retain
+    in frozen evaluator cases and to hash for provenance."""
+
+    revision: str
+    status: str  # D16_STATUS at resolution time: "DRAFT" | "FROZEN <date>"
+    prompts: tuple[tuple[str, str], ...]  # sorted (endpoint, text)
+
+    def text(self, endpoint_name: str) -> str:
+        for name, text in self.prompts:
+            if name == endpoint_name:
+                return text
+        raise ProfileError(f"bundle {self.revision!r} has no prompt for "
+                           f"endpoint {endpoint_name!r}")
+
+    def sha256(self) -> dict[str, str]:
+        return {name: hashlib.sha256(text.encode("utf-8")).hexdigest()
+                for name, text in self.prompts}
+
+
+def resolve_prompts(revision: str = D16_REVISION,
+                    expected_sha256: Mapping[str, str] | None = None
+                    ) -> PromptBundle:
+    """Fail-closed prompt binding: unknown revision or declared-hash
+    mismatch raises before any generation can occur."""
+    if revision not in PROMPT_REVISIONS:
+        raise ProfileError(
+            f"unknown worker prompt revision {revision!r}; known: "
+            f"{sorted(PROMPT_REVISIONS)}")
+    prompts = PROMPT_REVISIONS[revision]
+    if set(prompts) != WORKER_ENDPOINT_SET:
+        raise ProfileError(
+            f"revision {revision!r} must cover exactly "
+            f"{sorted(WORKER_ENDPOINT_SET)}, got {sorted(prompts)}")
+    bundle = PromptBundle(revision=revision, status=D16_STATUS,
+                          prompts=tuple(sorted(prompts.items())))
+    if expected_sha256 is not None:
+        actual = bundle.sha256()
+        declared = dict(expected_sha256)
+        if declared != actual:
+            wrong = sorted(name for name in set(actual) | set(declared)
+                           if actual.get(name) != declared.get(name))
+            raise ProfileError(
+                f"prompt revision {revision!r} content mismatch for "
+                f"endpoints {wrong}: declared hashes do not match the "
+                "registered strings")
+    return bundle
 
 
 def demo_binding(demo: dict[str, object]):
