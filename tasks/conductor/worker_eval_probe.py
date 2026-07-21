@@ -216,19 +216,40 @@ def run_p1_cases(runtime: Any, cases: list[WorkerEvalCase],
 # --- P0: frozen physical-chunk replay (81_f §7.2) ----------------------------
 
 def load_cohort(cohort: Mapping[str, Any],
-                profile: Mapping[str, Any] | None = None
+                profile: Mapping[str, Any] | None = None,
+                runtime_profile: Mapping[str, Any] | None = None
                 ) -> tuple[str, list[list[tuple[WorkerEvalCase,
                                                 NodeLabel]]]]:
     """Regenerate the cohort's cases from the frozen generator. Each chunk
-    entry names one reference node; an optional pinned
-    `user_message_sha256` must match the regenerated request exactly."""
+    entry names one reference node and pins its `user_message_sha256`,
+    which must match the regenerated request exactly. Chunk sizes must be
+    executable as declared: a chunk larger than the endpoint microbatch
+    would silently split inside `pool.generate` and the condition run
+    would not be the physical batch the manifest claims (82_s finding 2)."""
     endpoint = cohort["endpoint"]
     if endpoint not in ENDPOINT_NAMES.values():
         raise ProfileError(f"unknown endpoint {endpoint!r}")
+    microbatch = (dict(runtime_profile) if runtime_profile is not None
+                  else DEFAULT_RUNTIME_PROFILE)["workers"][endpoint][
+                      "microbatch"]
+    seen_entries: set[tuple[str, int, str, str]] = set()
     chunks: list[list[tuple[WorkerEvalCase, NodeLabel]]] = []
-    for chunk in cohort["chunks"]:
+    for chunk_index, chunk in enumerate(cohort["chunks"]):
+        if not chunk:
+            raise InfrastructureError(f"chunk {chunk_index} is empty")
+        if len(chunk) > microbatch:
+            raise InfrastructureError(
+                f"chunk {chunk_index} has {len(chunk)} requests but the "
+                f"{endpoint} microbatch is {microbatch}; pool.generate "
+                "would split it and the replayed condition would not be "
+                "the declared physical batch")
         resolved = []
         for entry in chunk:
+            key = (entry["cell_id"], entry["latent_index"],
+                   entry["renderer_id"], entry["node_id"])
+            if key in seen_entries:
+                raise InfrastructureError(f"duplicate cohort entry {key}")
+            seen_entries.add(key)
             latent = program.generate_latent(
                 entry["cell_id"], cohort["namespace"],
                 entry["latent_index"],
@@ -249,9 +270,14 @@ def load_cohort(cohort: Mapping[str, Any],
                     f"{case.endpoint_name!r}, cohort declares "
                     f"{endpoint!r}")
             pinned = entry.get("user_message_sha256")
+            if pinned is None:
+                raise InfrastructureError(
+                    f"{case.case_id}: cohort entries must pin "
+                    "user_message_sha256; an unpinned replay cannot show "
+                    "it reproduced the retained requests")
             actual = hashlib.sha256(
                 case.user_message.encode("utf-8")).hexdigest()
-            if pinned is not None and pinned != actual:
+            if pinned != actual:
                 raise InfrastructureError(
                     f"{case.case_id}: regenerated request does not match "
                     "the retained cohort request; the generator or "
@@ -338,14 +364,23 @@ _P1_HELD_FIXED = ("namespace", "per_cell", "renderers", "visibility",
                   "runtime_profile_fingerprint", "system_prompt_sha256",
                   "chat_template_sha256", "environment")
 
+# The §7.3 registered P1 design: 10 latents per cell crossed with all
+# renderers, private visibility — 300 node cases. Diagnostic runs with
+# other shapes are legal probe invocations but never admissible.
+P1_PER_CELL = 10
+P1_CASES = 300
+
 
 def admit_singleton(runs: list[Mapping[str, Any]],
+                    expected_namespace: str,
                     max_seconds: int = MAX_FULL_RUN_SECONDS,
                     max_vram_bytes: int = MAX_PEAK_VRAM_BYTES,
                     full_cases: int = 900) -> dict[str, Any]:
     """The §7.3 verdict over three fresh-process P1 outputs (canonical,
-    canonical, reversed). Exact generation-field equality for every case
-    plus the frozen cost gate, or FAIL — there is no partial credit."""
+    canonical, reversed). The runs must be the registered design against
+    the declared namespace (82_s finding 1) — not merely mutually
+    consistent — with exact generation-field equality for every case and
+    the frozen cost gate. FAIL has no partial credit."""
     reasons: list[str] = []
     if len(runs) != 3:
         raise ProfileError("admission takes exactly three P1 runs")
@@ -360,6 +395,28 @@ def admit_singleton(runs: list[Mapping[str, Any]],
         if any(value != values[0] for value in values):
             reasons.append(f"held-fixed field {field!r} differs "
                            f"across runs: {values}")
+    design = {"namespace": expected_namespace, "per_cell": P1_PER_CELL,
+              "visibility": "private"}
+    for field, expected in design.items():
+        if runs[0].get(field) != expected:
+            reasons.append(f"{field} {runs[0].get(field)!r} is not the "
+                           f"registered {expected!r}")
+    if sorted(runs[0].get("renderers", [])) != sorted(RENDERER_IDS):
+        reasons.append(f"renderers {runs[0].get('renderers')} are not "
+                       f"the full crossing {sorted(RENDERER_IDS)}")
+    if len(runs[0]["cases"]) != P1_CASES:
+        reasons.append(f"{len(runs[0]['cases'])} cases is not the "
+                       f"registered {P1_CASES}-case design")
+    commits = [run["git"]["commit"] for run in runs]
+    if any(run["git"]["dirty"] for run in runs):
+        reasons.append("a run came from a dirty worktree")
+    if len(set(commits)) != 1:
+        reasons.append(f"runs span commits {sorted(set(commits))}; "
+                       "admission requires one clean commit")
+    pids = [run["process"]["pid"] for run in runs]
+    if len(set(pids)) != 3:
+        reasons.append(f"process ids {pids} are not distinct; each run "
+                       "must be a fresh process")
     for index in (1, 2):
         for diff in compare_records(runs[0]["cases"], runs[index]["cases"]):
             unequal = [field for field in diff["fields"]
@@ -368,6 +425,16 @@ def admit_singleton(runs: list[Mapping[str, Any]],
                 reasons.append(
                     f"run {index + 1} vs run 1: {diff['case_id']} "
                     f"differs on {unequal}")
+        requests = [
+            {record["case_id"]: record["request_sha256"]
+             for record in run["cases"]} for run in (runs[0], runs[index])]
+        if requests[0] != requests[1]:
+            drifted = sorted(case for case in requests[0]
+                             if requests[0].get(case)
+                             != requests[1].get(case))
+            reasons.append(f"run {index + 1} vs run 1: request bytes "
+                           f"differ for {drifted[:5]} — the runs did not "
+                           "pose identical requests")
     n_cases = len(runs[0]["cases"])
     projected = [run["wall_seconds"] * full_cases / n_cases
                  for run in runs]
@@ -389,6 +456,10 @@ def admit_singleton(runs: list[Mapping[str, Any]],
         "policy": "singleton-v1",
         "reasons": reasons,
         "cases": n_cases,
+        "expected_namespace": expected_namespace,
+        # The thresholds this verdict applied (82_s low-severity note).
+        "max_seconds": max_seconds,
+        "max_vram_bytes": max_vram_bytes,
         "projected_full_run_seconds": max(projected),
         "peak_vram_bytes": (max(vram)
                             if all(v is not None for v in vram) else None),
@@ -441,9 +512,17 @@ def main(argv: list[str] | None = None) -> int:
 
     adm = sub.add_parser("admit", help="§7.3 singleton-v1 verdict")
     adm.add_argument("runs", nargs=3)
+    adm.add_argument("--namespace", required=True,
+                     help="the registered P1 namespace the runs must use")
     adm.add_argument("--max-seconds", type=int,
                      default=MAX_FULL_RUN_SECONDS)
     adm.add_argument("--max-vram-gib", type=float, default=None)
+
+    conf = sub.add_parser(
+        "confirm", help="§7.4 full-run repeat confirmation for a "
+                        "candidate (two evaluator run directories)")
+    conf.add_argument("left")
+    conf.add_argument("right")
 
     args = ap.parse_args(argv)
 
@@ -466,7 +545,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "p0":
         cohort = json.loads(Path(args.cohort).read_text(encoding="utf-8"))
         profile, pool, runtime = _build_real(args.device)
-        endpoint, chunks = load_cohort(cohort)
+        endpoint, chunks = load_cohort(cohort, runtime_profile=profile)
         records, wall, vram = run_p0_condition(pool, runtime, endpoint,
                                                chunks, args.condition)
         _write_output(args.out, _header(
@@ -497,13 +576,25 @@ def main(argv: list[str] | None = None) -> int:
         max_vram = (int(args.max_vram_gib * 2 ** 30)
                     if args.max_vram_gib is not None
                     else MAX_PEAK_VRAM_BYTES)
-        verdict = admit_singleton(runs, max_seconds=args.max_seconds,
+        verdict = admit_singleton(runs, args.namespace,
+                                  max_seconds=args.max_seconds,
                                   max_vram_bytes=max_vram)
         print(json.dumps(verdict, indent=1, sort_keys=True))
         print("ADMIT singleton-v1" if verdict["admitted"]
               else "FAIL: singleton-v1 not admitted (see §7.4: stop and "
                    "write the follow-up decision plan)")
         return 0 if verdict["admitted"] else 1
+
+    if args.command == "confirm":
+        from .worker_eval import confirm_repeat_run, load_run
+        verdict = confirm_repeat_run(load_run(args.left),
+                                     load_run(args.right))
+        print(json.dumps(verdict, indent=1, sort_keys=True))
+        print("CONFIRMED: repeat run is generation-identical"
+              if verdict["confirmed"]
+              else "FAIL: repeat run differs; the candidate result is "
+                   "not confirmed (81_f §7.4)")
+        return 0 if verdict["confirmed"] else 1
 
     raise AssertionError(args.command)
 

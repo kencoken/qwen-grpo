@@ -135,13 +135,16 @@ def test_nullcache_identical_requests_stay_two_generations():
     assert first.request_sha256 == second.request_sha256
 
 
-def test_singleton_call_refuses_cache_hits(tmp_path):
+def test_singleton_call_requires_noop_cache_before_generation(tmp_path):
     profile = profile_with(cache_path=str(tmp_path / "cache.sqlite"))
-    rt = build_runtime(profile, pool=FakePool(),
+    pool = FakePool()
+    rt = build_runtime(profile, pool=pool,
                        cache=CompletionCache(profile["cache_path"]))
-    singleton_call(rt, "math", "message")  # miss: generated, then stored
-    with pytest.raises(InfrastructureError, match="cache"):
+    # 82_s finding 3: an enabled cold cache would miss, store, and
+    # mislabel rows "disabled" — refuse before generating, not on a hit.
+    with pytest.raises(InfrastructureError, match="no-op cache"):
         singleton_call(rt, "math", "message")
+    assert pool.generate_calls == []
 
 
 def test_call_record_request_text_round_trips():
@@ -405,7 +408,8 @@ def test_rev9_math_code_index19_fixture_scores_incorrect():
     cases, labels = node_cases_for_latent(fixture_latent(),
                                           ["resource_first"], "private")
     (code_case, code_label), = [(c, l) for c, l in zip(cases, labels)
-                                if l.node_family == "code"]
+                                if c.endpoint_name == "code"]
+    assert code_label.node_family == "seq_at"  # operator, not endpoint
     script = {(code_case.endpoint_name, code_case.user_message):
               REV9_FIXTURE_COMPLETION}
     rows, scores = run_isolated([code_case], [code_label], script)
@@ -429,8 +433,9 @@ def test_downstream_called_with_gold_after_upstream_failure():
                                           "private")
     case_by_id = {case.case_id: case for case in cases}
     (math_label,), (code_label,) = (
-        [lab for lab in labels if lab.node_family == family]
-        for family in ("math", "code"))
+        [lab for lab in labels
+         if case_by_id[lab.case_id].endpoint_name == endpoint]
+        for endpoint in ("math", "code"))
     code_case = case_by_id[code_label.case_id]
     # Upstream math emits garbage; downstream code answers correctly.
     script = {(code_case.endpoint_name, code_case.user_message):
@@ -641,7 +646,7 @@ def test_composed_upstream_failure_blocks_downstream_and_reconciles():
     # Remove the math step of math_code: it falls to the garbage default.
     (math_case,) = [case_by_id[lab.case_id] for lab in labels
                     if lab.cell_id == "math_code"
-                    and lab.node_family == "math"]
+                    and case_by_id[lab.case_id].endpoint_name == "math"]
     del script[(math_case.endpoint_name, math_case.user_message)]
     rt = eval_runtime(pool=FakePool(script=script, default="garbage"))
     rows, wlabels = run_composed_workflows(rt, ONE_RENDERER_POP, None)
@@ -701,6 +706,8 @@ def test_hand_calculated_paired_renderer_summary():
         "bound_var": {"n": 2, "correct": 1}}
     assert isolated["worst_renderer"] == {"renderer_id": "bound_var",
                                           "n": 2, "correct": 1}
+    assert isolated["best_renderer"] == {"renderer_id": "resource_first",
+                                         "n": 2, "correct": 2}
     assert isolated["paired"] == {"groups": 2, "flipped": 1}
     assert isolated["by_stratum"]["code|code_atomic|code|bound_var"] \
         == {"n": 2, "correct": 1}
@@ -716,12 +723,12 @@ def bundle_pool(**kwargs):
                     **kwargs)
 
 
-def write_isolated_run(tmp_path, name="run-iso"):
-    cases, labels = build_node_cases(POPULATION)
-    latents = generate_latents(POPULATION)
+def write_isolated_run(tmp_path, name="run-iso", population=POPULATION):
+    cases, labels = build_node_cases(population)
+    latents = generate_latents(population)
     script = reference_script(cases, labels, latents)
     rt = eval_runtime(pool=bundle_pool(script=script, default="garbage"))
-    manifest = make_manifest(rt, population=POPULATION,
+    manifest = make_manifest(rt, population=population,
                              expected_calls=len(cases),
                              expected_scores=len(labels))
     with RunWriter(tmp_path / name, manifest) as writer:
@@ -734,7 +741,7 @@ def write_isolated_run(tmp_path, name="run-iso"):
 
 
 def tampered(src, dst, mutate_calls=None, mutate_scores=None,
-             status=None):
+             status=None, mutate_manifest=None):
     """Copy a run and re-establish internal consistency after mutation:
     payload hashes and counts are recomputed, so only the loader's
     regeneration checks can catch the change."""
@@ -758,6 +765,8 @@ def tampered(src, dst, mutate_calls=None, mutate_scores=None,
     manifest["expected_rows"] = dict(manifest["written_rows"])
     if status is not None:
         manifest["status"] = status
+    if mutate_manifest is not None:
+        mutate_manifest(manifest)
     (dst / "manifest.json").write_text(
         json.dumps(manifest, indent=1, sort_keys=True) + "\n")
     return dst
@@ -822,7 +831,7 @@ def test_composed_run_round_trips_through_loader(tmp_path):
     case_by_id = {c.case_id: c for c in cases}
     (math_case,) = [case_by_id[lab.case_id] for lab in labels
                     if lab.cell_id == "math_code"
-                    and lab.node_family == "math"]
+                    and case_by_id[lab.case_id].endpoint_name == "math"]
     del script[(math_case.endpoint_name, math_case.user_message)]
     rt = eval_runtime(pool=bundle_pool(script=script, default="garbage"))
     manifest = make_manifest(rt, population=ONE_RENDERER_POP,
@@ -905,24 +914,38 @@ def test_probe_coverage_assertion():
         assert_probe_coverage(probe_latents("construction", 1))
 
 
+import functools
+
+
+@functools.lru_cache(maxsize=1)
 def probe_sample():
+    """Cached: three tests reuse the 300-case sample; none mutate it."""
     return build_probe_cases("construction", 10, list(RENDERER_IDS),
                              "private")
 
 
-def fake_p1_output(records, order, wall=60.0, vram=3 * 2 ** 30):
+def fake_p1_output(records, order, wall=60.0, vram=3 * 2 ** 30,
+                   pid=None, commit="c" * 40, dirty=False, **overrides):
     """Output-dict shape the admit verdict consumes; held-fixed fields
-    constant across runs by construction."""
-    return {"probe": "p1", "order": order, "namespace": "construction",
-            "per_cell": 10, "renderers": list(RENDERER_IDS),
-            "visibility": "private", "generator_version": "g",
-            "endpoint_schedule_version": "s",
-            "runtime_profile_fingerprint": "rtp-x",
-            "system_prompt_sha256": {"lookup": "a"},
-            "chat_template_sha256": {"lookup": "b"},
-            "environment": {"torch": "t"},
-            "wall_seconds": wall, "peak_vram_bytes": vram,
-            "cases": records}
+    constant across runs by construction, pids distinct by default."""
+    out = {"probe": "p1", "order": order, "namespace": "construction",
+           "per_cell": 10, "renderers": list(RENDERER_IDS),
+           "visibility": "private", "generator_version": "g",
+           "endpoint_schedule_version": "s",
+           "runtime_profile_fingerprint": "rtp-x",
+           "system_prompt_sha256": {"lookup": "a"},
+           "chat_template_sha256": {"lookup": "b"},
+           "environment": {"torch": "t"},
+           "git": {"commit": commit, "dirty": dirty, "diff_sha256": None},
+           "process": {"pid": pid if pid is not None
+                       else fake_p1_output.next_pid()},
+           "wall_seconds": wall, "peak_vram_bytes": vram,
+           "cases": records}
+    out.update(overrides)
+    return out
+
+
+fake_p1_output.next_pid = iter(range(10_000, 20_000)).__next__
 
 
 def test_p1_sample_is_300_cases_and_runs_singleton():
@@ -944,15 +967,16 @@ def test_admit_requires_exact_equality_and_cost_gate():
         records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
                                      cases, labels, order)
         runs.append(fake_p1_output(records, order))
-    verdict = admit_singleton(runs)
+    verdict = admit_singleton(runs, "construction")
     assert verdict["admitted"] and verdict["reasons"] == []
     assert verdict["cases"] == 300
+    assert verdict["max_seconds"] > 0  # applied thresholds are recorded
 
     # One byte-different completion in the reversed run fails admission.
     tampered = [json.loads(json.dumps(run)) for run in runs]
     victim = tampered[2]["cases"][7]
     victim["completion"] = victim["completion"] + " "
-    verdict = admit_singleton(tampered)
+    verdict = admit_singleton(tampered, "construction")
     assert not verdict["admitted"]
     assert any(victim["case_id"] in reason
                for reason in verdict["reasons"])
@@ -960,14 +984,16 @@ def test_admit_requires_exact_equality_and_cost_gate():
     # Wrong order schedule, missing VRAM, or a blown cost gate each fail.
     bad_orders = [fake_p1_output(runs[0]["cases"], o)
                   for o in ("canonical", "reversed", "reversed")]
-    assert not admit_singleton(bad_orders)["admitted"]
+    assert not admit_singleton(bad_orders, "construction")["admitted"]
     no_vram = [dict(run, peak_vram_bytes=None) for run in runs]
-    assert any("measurement" in r
-               for r in admit_singleton(no_vram)["reasons"])
+    assert any("measurement" in r for r in
+               admit_singleton(no_vram, "construction")["reasons"])
     slow = [dict(run, wall_seconds=3000.0) for run in runs]
-    assert any("frozen" in r for r in admit_singleton(slow)["reasons"])
+    assert any("frozen" in r for r in
+               admit_singleton(slow, "construction")["reasons"])
     hungry = [dict(run, peak_vram_bytes=23 * 2 ** 30) for run in runs]
-    assert any("VRAM" in r for r in admit_singleton(hungry)["reasons"])
+    assert any("VRAM" in r for r in
+               admit_singleton(hungry, "construction")["reasons"])
 
 
 def test_compare_records_field_diffs_and_alignment():
@@ -990,8 +1016,13 @@ def code_cohort_entry(cell, index):
                                      DEFAULT_PROFILE).latent
     (node_id,) = [node for node, family
                   in endpoint_schedule(latent).items() if family == "code"]
+    cases, labels = node_cases_for_latent(latent, ["resource_first"],
+                                          "private")
+    (case,) = [c for c, l in zip(cases, labels) if l.node_id == node_id]
     return {"cell_id": cell, "latent_index": index,
-            "renderer_id": "resource_first", "node_id": node_id}
+            "renderer_id": "resource_first", "node_id": node_id,
+            "user_message_sha256": hashlib.sha256(
+                case.user_message.encode("utf-8")).hexdigest()}
 
 
 def test_p0_conditions_reconstruct_physical_chunks():
@@ -1045,24 +1076,196 @@ def test_p0_cohort_pinning_and_endpoint_fail_closed():
 def test_probe_cli_compare_and_admit_verdicts(tmp_path, capsys):
     cases, labels = probe_sample()
     records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
-                                 cases[:5], labels, "canonical")
+                                 cases, labels, "canonical")
     paths = []
     for index, order in enumerate(("canonical", "canonical", "reversed")):
         path = tmp_path / f"run{index}.json"
-        # wall=10s over 5 cases projects 1800s for 900, inside the gate.
-        path.write_text(json.dumps(fake_p1_output(records, order,
-                                                  wall=10.0)))
+        path.write_text(json.dumps(fake_p1_output(records, order)))
         paths.append(str(path))
     assert probe_main(["compare", paths[0], paths[1]]) == 0
-    assert probe_main(["admit", *paths]) == 0
+    assert probe_main(["admit", *paths,
+                       "--namespace", "construction"]) == 0
     assert "ADMIT singleton-v1" in capsys.readouterr().out
 
     tampered = fake_p1_output(
-        [dict(records[0], completion="x")] + records[1:], "reversed",
-        wall=10.0)
+        [dict(records[0], completion="x")] + records[1:], "reversed")
     (tmp_path / "bad.json").write_text(json.dumps(tampered))
     assert probe_main(["compare", paths[0],
                        str(tmp_path / "bad.json")]) == 1
     assert probe_main(["admit", paths[0], paths[1],
-                       str(tmp_path / "bad.json")]) == 1
+                       str(tmp_path / "bad.json"),
+                       "--namespace", "construction"]) == 1
     assert "FAIL" in capsys.readouterr().out
+
+
+# =============================================================================
+# 82_s review response: admission/provenance boundary fixes.
+# =============================================================================
+
+import copy as copy_mod
+
+from tasks.conductor.worker_eval import confirm_repeat_run
+
+
+def test_manifest_refuses_profile_mutated_after_build():
+    rt = eval_runtime()
+    rt.profile["workers"]["math"]["max_new_tokens"] = 1
+    with pytest.raises(ProfileError, match="mutated"):
+        make_manifest(rt)
+
+
+def test_frozen_candidate_refuses_forged_bundle():
+    forged_prompts = {"lookup": "x", "math": "y", "code": "z"}
+    forged = PromptBundle(revision=D16_REVISION, status="FROZEN forged",
+                          prompts=tuple(sorted(forged_prompts.items())))
+    rt = eval_runtime(pool=FakePool(system_prompts=forged_prompts))
+    with pytest.raises(ProfileError, match="registry"):
+        build_manifest(
+            rt, forged, run_id="run-1", purpose="t",
+            population=POPULATION,
+            endpoint_schedule_version="d16-operator-aligned-v1",
+            candidate_label="forged", request_contract_key="worker-blocks-v0",
+            expected_calls=1, frozen_candidate=True,
+            git_info={"commit": "0" * 40, "dirty": False,
+                      "diff_sha256": None})
+
+
+def test_frozen_candidate_requires_full_renderer_crossing(monkeypatch):
+    monkeypatch.setattr(prompts_mod, "D16_STATUS", "FROZEN test")
+    bundle = resolve_prompts()
+    rt = eval_runtime(pool=FakePool(
+        system_prompts={name: bundle.text(name)
+                        for name, _ in bundle.prompts}))
+    with pytest.raises(ProfileError, match="full renderer"):
+        build_manifest(
+            rt, bundle, run_id="run-1", purpose="t",
+            population=ONE_RENDERER_POP,
+            endpoint_schedule_version="d16-operator-aligned-v1",
+            candidate_label="c", request_contract_key="worker-blocks-v0",
+            expected_calls=1, frozen_candidate=True,
+            git_info={"commit": "0" * 40, "dirty": False,
+                      "diff_sha256": None})
+
+
+def test_loader_rejects_relabelled_and_impossible_rows(tmp_path):
+    run_dir = write_isolated_run(tmp_path)
+
+    def relabel_endpoint(rows):
+        swapped = "math" if rows[0]["endpoint_name"] != "math" else "code"
+        return [dict(rows[0], endpoint_name=swapped)] + rows[1:]
+    with pytest.raises(InfrastructureError, match="disagree"):
+        load_run(tampered(run_dir, tmp_path / "t-endpoint",
+                          mutate_calls=relabel_endpoint))
+
+    def blocked_with_value(rows):
+        # Nulls the generation fields so only the called-status identity
+        # check can catch the retained successful value.
+        return [dict(rows[0], call_status="dependency_blocked",
+                     completion=None, request_text=None)] + rows[1:]
+    with pytest.raises(InfrastructureError, match="must all be called"):
+        load_run(tampered(run_dir, tmp_path / "t-blocked",
+                          mutate_calls=blocked_with_value))
+
+    def altered_profile(manifest):
+        manifest["runtime_profile"]["workers"]["math"][
+            "max_new_tokens"] = 1
+    with pytest.raises(InfrastructureError, match="fingerprint"):
+        load_run(tampered(run_dir, tmp_path / "t-profile",
+                          mutate_manifest=altered_profile))
+
+
+def test_comparison_requires_real_difference_crossing_and_clean_tree(
+        tmp_path):
+    base = load_run(write_isolated_run(tmp_path, "run-a"))
+    twin = load_run(write_isolated_run(tmp_path, "run-b"))
+    # 82_s finding 5: identical arms under a declared "prompt" difference
+    # are a configuration error, not a comparison.
+    with pytest.raises(InfrastructureError, match="not present"):
+        compare_worker_eval_runs(base, twin, "prompt")
+    one_renderer = load_run(write_isolated_run(
+        tmp_path, "run-1r", population=ONE_RENDERER_POP))
+    with pytest.raises(InfrastructureError, match="full renderer"):
+        compare_worker_eval_runs(one_renderer, one_renderer, "prompt")
+    dirty = copy_mod.deepcopy(base)
+    dirty["manifest"]["git"]["dirty"] = True
+    with pytest.raises(InfrastructureError, match="dirty"):
+        compare_worker_eval_runs(base, dirty, "prompt")
+
+
+def test_confirm_repeat_run_and_cli(tmp_path, capsys):
+    left_dir = write_isolated_run(tmp_path, "run-a")
+    right_dir = write_isolated_run(tmp_path, "run-b")
+    left, right = load_run(left_dir), load_run(right_dir)
+    verdict = confirm_repeat_run(left, right)
+    assert verdict["confirmed"] and verdict["cases"] == 30
+    assert probe_main(["confirm", str(left_dir), str(right_dir)]) == 0
+    assert "CONFIRMED" in capsys.readouterr().out
+
+    altered = copy_mod.deepcopy(right)
+    altered["calls"][0]["completion"] += " "
+    unequal = confirm_repeat_run(left, altered)
+    assert not unequal["confirmed"]
+    assert any("generation fields" in reason
+               for reason in unequal["reasons"])
+    # A different candidate is not a "repeat" however equal its outputs.
+    variant = load_run(write_prompt_variant_run(tmp_path, "run-v"))
+    drifted = confirm_repeat_run(left, variant)
+    assert not drifted["confirmed"]
+    assert any("hold the whole candidate fixed" in reason
+               for reason in drifted["reasons"])
+
+
+def test_p0_cohort_requires_pins_and_exact_physical_chunks():
+    entry = code_cohort_entry("math_code", 19)
+    other = code_cohort_entry("code_atomic", 0)
+    base = {"endpoint": "code", "namespace": "construction",
+            "visibility": "private"}
+    unpinned = {k: v for k, v in entry.items()
+                if k != "user_message_sha256"}
+    with pytest.raises(InfrastructureError, match="must pin"):
+        load_cohort({**base, "chunks": [[unpinned]]})
+    with pytest.raises(InfrastructureError, match="empty"):
+        load_cohort({**base, "chunks": [[]]})
+    with pytest.raises(InfrastructureError, match="duplicate cohort"):
+        load_cohort({**base, "chunks": [[entry], [entry]]})
+    small = copy_mod.deepcopy(DEFAULT_RUNTIME_PROFILE)
+    small["workers"]["code"]["microbatch"] = 1
+    with pytest.raises(InfrastructureError, match="microbatch"):
+        load_cohort({**base, "chunks": [[entry, other]]},
+                    runtime_profile=small)
+
+
+def test_admit_preconditions_reject_unregistered_designs():
+    cases, labels = probe_sample()
+    runs = []
+    for order in ("canonical", "canonical", "reversed"):
+        records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
+                                     cases, labels, order)
+        runs.append(fake_p1_output(records, order))
+    assert admit_singleton(runs, "construction")["admitted"]
+
+    def reasons(bad_runs, namespace="construction"):
+        return admit_singleton(bad_runs, namespace)["reasons"]
+
+    # 82_s finding 1: the registered design, not mutual consistency.
+    assert any("registered" in r for r in reasons(runs, "worker_dev"))
+    subset = [dict(run, renderers=["resource_first"]) for run in runs]
+    assert any("full crossing" in r for r in reasons(subset))
+    keep = {record["case_id"] for record in runs[0]["cases"][:5]}
+    short = [dict(run, cases=[record for record in run["cases"]
+                              if record["case_id"] in keep])
+             for run in runs]
+    assert any("300-case" in r for r in reasons(short))
+    resha = copy_mod.deepcopy(runs)
+    resha[2]["cases"][0]["request_sha256"] = "0" * 64
+    assert any("request bytes" in r for r in reasons(resha))
+    shared_pid = [dict(run, process={"pid": 1}) for run in runs]
+    assert any("distinct" in r for r in reasons(shared_pid))
+    dirty = [runs[0], runs[1],
+             dict(runs[2], git={"commit": "c" * 40, "dirty": True,
+                                "diff_sha256": "d"})]
+    assert any("dirty" in r for r in reasons(dirty))
+    split = [runs[0], runs[1],
+             dict(runs[2], git={"commit": "e" * 40, "dirty": False,
+                                "diff_sha256": None})]
+    assert any("one clean commit" in r for r in reasons(split))

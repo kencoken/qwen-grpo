@@ -41,10 +41,10 @@ from . import contract, executor, parser, program
 from .agreement import ENDPOINT_FOR_OP
 from .profiles import DEFAULT_PROFILE, ProfileError, canonical_json, \
     profile_version
-from .prompts import PromptBundle
+from .prompts import PromptBundle, resolve_prompts
 from .render import ARTIFACT_FINAL_LINE
 from .resources import InstanceRegistry
-from .runtime import CallRecord, Runtime
+from .runtime import CallRecord, Runtime, runtime_profile_fingerprint
 from .tools import Binding, ToolRejection, binding_sha256
 from .types import (
     CELL_IDS, ENDPOINT_NAMES, RENDERER_IDS, SYNTAX_REJECTION_CODES,
@@ -87,8 +87,16 @@ def singleton_call(runtime: Runtime, endpoint_name: str,
                    user_message: str) -> CallRecord:
     """One physical generation for one case: one request per
     `worker_call_batch` call makes miss deduplication vacuous and the
-    microbatch a single unpadded sequence (81_f §6.2). A cache hit here
-    means the runtime was not built cache-disabled — abort, don't shrug."""
+    microbatch a single unpadded sequence (81_f §6.2). The cache must
+    *be* the no-op cache before generation (82_s finding 3): a cold
+    `CompletionCache` would miss, store, and mislabel every row
+    `disabled` — `build_runtime`'s default cache is one forgotten
+    argument away."""
+    if not isinstance(runtime.cache, NullCache):
+        raise InfrastructureError(
+            f"scientific singleton calls require the no-op cache, got "
+            f"{type(runtime.cache).__name__}; build the runtime with "
+            "cache=NullCache()")
     (record,) = runtime.worker_call_batch(endpoint_name, [user_message])
     if record.cache_hit:
         raise InfrastructureError(
@@ -154,7 +162,7 @@ class NodeLabel:
     renderer_id: str
     cell_id: str
     node_id: str
-    node_family: str
+    node_family: str        # the node's operator (seq_at, modular, ...)
     position: int
     call_role: str          # constant CALL_ROLE_ON_CONTRACT in this change
     predecessor_source: str  # "gold" | "none"
@@ -185,7 +193,10 @@ def node_cases_for_latent(latent: Mapping[str, Any], renderers: list[str],
             "with reference re-evaluation")
     steps = program.workflow_steps(latent)
     schedule = endpoint_schedule(latent)
-    families = {node["id"]: ENDPOINT_NAMES[ENDPOINT_FOR_OP[node["op"]]]
+    # Node family is the operator itself (82_s): worst-node-stratum
+    # analysis needs seq_at vs seq_count, not the endpoint class, which
+    # the endpoint column already carries.
+    families = {node["id"]: node["op"]
                 for node in latent["reference_program"]["nodes"]}
     cases, labels = [], []
     for renderer_id in renderers:
@@ -665,6 +676,13 @@ def environment_versions() -> dict[str, Any]:
         facts["bitsandbytes"] = None
     facts["cublas_workspace_config"] = os.environ.get(
         "CUBLAS_WORKSPACE_CONFIG")
+    try:
+        facts["nvidia_driver"] = subprocess.run(
+            ["nvidia-smi", "--query-gpu=driver_version",
+             "--format=csv,noheader"], capture_output=True, text=True,
+            check=True).stdout.strip().splitlines()[0]
+    except (OSError, subprocess.CalledProcessError, IndexError):
+        facts["nvidia_driver"] = None
     return facts
 
 
@@ -689,7 +707,8 @@ def build_manifest(runtime: Runtime, prompts: PromptBundle, *,
 
     Fail-closed bindings: the declared prompt bundle must hash to exactly
     what the pool renders; the request-contract key must resolve; a
-    frozen-candidate run refuses a DRAFT prompt bundle.
+    frozen-candidate run refuses a DRAFT bundle, a hand-built bundle that
+    bypasses the registry, or a renderer subset.
     """
     declared = prompts.sha256()
     actual = dict(runtime.system_prompt_shas)
@@ -700,13 +719,32 @@ def build_manifest(runtime: Runtime, prompts: PromptBundle, *,
             f"prompt bundle {prompts.revision!r} does not match the "
             f"prompts the pool actually renders (endpoints {wrong}); "
             "a declared revision is valid only for its exact strings")
-    if frozen_candidate and not prompts.status.startswith("FROZEN"):
-        raise ProfileError(
-            f"frozen-candidate run refuses prompt bundle "
-            f"{prompts.revision!r} with status {prompts.status!r}")
+    if frozen_candidate:
+        # 82_s finding 5: freeze status comes from the authoritative
+        # registry, never from a caller-constructed dataclass.
+        registered = resolve_prompts(prompts.revision)
+        if prompts != registered:
+            raise ProfileError(
+                f"frozen-candidate bundle {prompts.revision!r} does not "
+                "match the registered revision; frozen prompts resolve "
+                "only through the registry")
+        if not registered.status.startswith("FROZEN"):
+            raise ProfileError(
+                f"frozen-candidate run refuses prompt bundle "
+                f"{prompts.revision!r} with status {registered.status!r}")
+        if sorted(population["renderers"]) != sorted(RENDERER_IDS):
+            raise ProfileError(
+                "frozen-candidate runs require the full renderer "
+                f"crossing {sorted(RENDERER_IDS)}, got "
+                f"{sorted(population['renderers'])}")
     if evaluation_mode not in ("isolated", "composed"):
         raise ProfileError(f"unknown evaluation mode {evaluation_mode!r}")
     profile = runtime.profile
+    if runtime_profile_fingerprint(profile) \
+            != runtime.runtime_profile_fingerprint:
+        raise ProfileError(
+            "runtime profile was mutated after build_runtime; the "
+            "manifest would describe a configuration that did not run")
     return {
         "schema_version": WORKER_EVAL_SCHEMA_VERSION,
         "run_id": run_id,
@@ -959,17 +997,20 @@ def summarize_worker_eval(manifest: Mapping[str, Any],
                              []).append(score["node_correct"])
         flipped = sum(1 for outcomes_list in pairs.values()
                       if len(set(outcomes_list)) > 1)
-        worst = (min(by_renderer.items(),
-                     key=lambda kv: (Fraction(kv[1]["correct"],
-                                              kv[1]["n"]), kv[0]))
-                 if by_renderer else None)
+        by_rate = sorted(by_renderer.items(),
+                         key=lambda kv: (Fraction(kv[1]["correct"],
+                                                  kv[1]["n"]), kv[0]))
         summary["isolated"] = {
             "outcomes": outcomes,
             "node_correct": {"n": len(node_scores), "correct": correct},
             "by_stratum": by_stratum,
             "by_renderer": by_renderer,
-            "worst_renderer": ({"renderer_id": worst[0], **worst[1]}
-                               if worst else None),
+            # The §5.5 max-min renderer gap as its two endpoints; rates
+            # and the gap itself derive exactly from these counts.
+            "worst_renderer": ({"renderer_id": by_rate[0][0],
+                                **by_rate[0][1]} if by_rate else None),
+            "best_renderer": ({"renderer_id": by_rate[-1][0],
+                               **by_rate[-1][1]} if by_rate else None),
             "paired": {"groups": len(pairs), "flipped": flipped},
         }
     composed = [row for row in calls
@@ -1131,6 +1172,11 @@ def load_run(run_dir: str | Path,
         raise InfrastructureError(
             f"schema {manifest['schema_version']} != "
             f"{WORKER_EVAL_SCHEMA_VERSION}")
+    if runtime_profile_fingerprint(manifest["runtime_profile"]) \
+            != manifest["runtime_profile_fingerprint"]:
+        raise InfrastructureError(
+            "manifest runtime profile does not rederive its own "
+            "fingerprint; the stored configuration was altered")
 
     payload_shas = manifest["payload_sha256"]
     on_disk = {path.name for path in run_dir.iterdir()
@@ -1195,13 +1241,35 @@ def load_run(run_dir: str | Path,
                 f"planned population mismatch: missing {missing}, "
                 f"extra {extra}")
         check_renderer_support(labels, list(population["renderers"]))
+        label_by_id = {label.case_id: label for label in labels}
         for row in calls:
             case = case_by_id[row["case_id"]]
-            if row["user_message"] != case.user_message \
-                    or row["binding_sha256"] != case.binding_sha256:
+            label = label_by_id[row["case_id"]]
+            # 82_s finding 4: every isolated row must be a real call whose
+            # identity matches the regenerated case — a relabelled
+            # endpoint or an impossible blocked-with-value state must not
+            # load, however internally consistent the file is.
+            if row["call_status"] != "called":
                 raise InfrastructureError(
-                    f"{row['case_id']}: stored request disagrees with "
-                    "regenerated case")
+                    f"{row['case_id']}: isolated rows must all be "
+                    f"called, got {row['call_status']!r} (§4.3 "
+                    "scheduled == called)")
+            regenerated = {
+                "evaluation_mode": "isolated",
+                "endpoint_name": case.endpoint_name,
+                "observation_id": case.observation_id,
+                "position": label.position,
+                "predecessor_source": label.predecessor_source,
+                "predecessor_positions": [k for k, _ in case.steps],
+                "user_message": case.user_message,
+                "binding_sha256": case.binding_sha256,
+            }
+            wrong = sorted(field for field, expected in regenerated.items()
+                           if row[field] != expected)
+            if wrong:
+                raise InfrastructureError(
+                    f"{row['case_id']}: stored fields {wrong} disagree "
+                    "with the regenerated case")
         rederived = score_node_calls(calls, labels)
     elif mode == "composed":
         _, labels, identities = build_workflow_plan(
@@ -1216,6 +1284,19 @@ def load_run(run_dir: str | Path,
             raise InfrastructureError(
                 f"planned workflow steps mismatch: missing {missing}, "
                 f"extra {extra}")
+        for row in calls:
+            identity = identities[(row["case_id"], row["position"])]
+            wrong = sorted(
+                field for field in ("latent_program_id", "cell_id",
+                                    "renderer_id", "node_id",
+                                    "endpoint_name", "predecessor_source",
+                                    "predecessor_positions")
+                if row[field] != identity[field])
+            if wrong or row["evaluation_mode"] != "composed":
+                raise InfrastructureError(
+                    f"({row['case_id']}, {row['position']}): stored "
+                    f"fields {wrong or ['evaluation_mode']} disagree "
+                    "with the regenerated plan")
         rederived = score_workflow_calls(calls, labels)
     else:
         raise InfrastructureError(f"unknown evaluation mode {mode!r}")
@@ -1234,17 +1315,32 @@ def load_run(run_dir: str | Path,
 
 # Manifest paths permitted to differ, per declared difference. Everything
 # else must match exactly; the comparison refuses surprises rather than
-# explaining them away.
+# explaining them away. Commit identity may differ (comparability comes
+# from the held-fixed fields plus population regeneration, and refusing
+# would invalidate hour-scale GPU runs over docs-only commits) but is
+# always reported; dirty trees are refused outright.
 _ALWAYS_ALLOWED_DIFFS = ("run_id", "purpose", "candidate_label", "git",
                          "payload_sha256")
+# A "model" difference is the pinned checkpoint identity and what follows
+# from it — never the caps or microbatch, which change results on their
+# own (82_s finding 5).
+_MODEL_DIFFS = tuple(
+    f"runtime_profile.workers.{endpoint}.{field}"
+    for endpoint in sorted(set(ENDPOINT_NAMES.values()))
+    for field in ("model_id", "revision"))
 _ALLOWED_DIFFS = {
     "prompt": ("system_prompts", "worker_visible_fingerprint",
                "endpoint_fingerprints"),
-    "model": ("runtime_profile.workers", "runtime_profile_fingerprint",
-              "worker_visible_fingerprint", "endpoint_fingerprints",
-              "chat_template_sha256", "tokenizer_facts"),
+    "model": _MODEL_DIFFS + ("runtime_profile_fingerprint",
+                             "worker_visible_fingerprint",
+                             "endpoint_fingerprints",
+                             "chat_template_sha256", "tokenizer_facts"),
     "request_contract": ("request_contract",),
 }
+# Fingerprint paths follow from any declared difference; their presence
+# alone must not satisfy the declared-difference requirement below.
+_DERIVED_DIFFS = ("runtime_profile_fingerprint",
+                  "worker_visible_fingerprint", "endpoint_fingerprints")
 
 
 def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
@@ -1275,6 +1371,16 @@ def compare_worker_eval_runs(left: Mapping[str, Any],
             raise InfrastructureError(
                 "comparison requires singleton generation, got "
                 f"{manifest['generation_policy']!r}")
+        if manifest["git"]["dirty"]:
+            raise InfrastructureError(
+                "comparison refuses runs from a dirty worktree "
+                "(81_f §5.1: dirty-state digests are diagnostic-only)")
+        renderers = sorted(manifest["population"]["renderers"])
+        if renderers != sorted(RENDERER_IDS):
+            raise InfrastructureError(
+                f"comparison requires the full renderer crossing "
+                f"{sorted(RENDERER_IDS)}, got {renderers}; diagnostic "
+                "renderer subsets are not comparable (81_f §4.5)")
     left_support = sorted((row["case_id"], row["position"])
                           for row in left["calls"])
     right_support = sorted((row["case_id"], row["position"])
@@ -1295,6 +1401,73 @@ def compare_worker_eval_runs(left: Mapping[str, Any],
         raise InfrastructureError(
             f"manifest fields differ beyond declared "
             f"{allowed_difference!r} difference: {unexpected}")
+    # 82_s finding 5: the declared dimension must actually differ — a
+    # comparison whose arms are secretly identical is a config error,
+    # not a result.
+    declared = [path for path in differing
+                if any(path == a or path.startswith(a + ".")
+                       for a in _ALLOWED_DIFFS[allowed_difference])
+                and not any(path == d or path.startswith(d + ".")
+                            for d in _DERIVED_DIFFS)]
+    if not declared:
+        raise InfrastructureError(
+            f"declared {allowed_difference!r} difference is not present: "
+            "the two runs are identical on that dimension")
     return {"allowed_difference": allowed_difference,
             "differing_fields": differing,
             "case_support": len(left_support)}
+
+
+# --- §7.4 full-population repeat confirmation --------------------------------
+
+# Generation fields that must be bit-equal between the two fresh-process
+# runs of an accepted candidate (81_f §7.4).
+CONFIRMATION_FIELDS = ("request_sha256", "completion", "finish_reason",
+                       "generated_tokens", "generation_hit_token_cap")
+
+# Manifest paths that may legitimately differ between two runs of the
+# same candidate: run identity and the payload hashes that embed it.
+_REPEAT_ALLOWED_DIFFS = ("run_id", "purpose", "git", "payload_sha256")
+
+
+def confirm_repeat_run(left: Mapping[str, Any],
+                       right: Mapping[str, Any]) -> dict[str, Any]:
+    """The §7.4 confirmation over two loaded runs of one candidate:
+    identical manifests (up to run identity), identical case support, and
+    exact generation-field equality for every called row. Required before
+    a candidate's full result enters the final comparison/freeze."""
+    reasons: list[str] = []
+    for run in (left, right):
+        if run["manifest"]["git"]["dirty"]:
+            reasons.append("run from a dirty worktree")
+    flat_left = _flatten(left["manifest"])
+    flat_right = _flatten(right["manifest"])
+    unexpected = sorted(
+        path for path in set(flat_left) | set(flat_right)
+        if flat_left.get(path) != flat_right.get(path)
+        and not any(path == a or path.startswith(a + ".")
+                    for a in _REPEAT_ALLOWED_DIFFS))
+    if unexpected:
+        reasons.append(f"manifests differ on {unexpected}; a repeat run "
+                       "must hold the whole candidate fixed")
+    left_rows = {(row["case_id"], row["position"]): row
+                 for row in left["calls"]}
+    right_rows = {(row["case_id"], row["position"]): row
+                  for row in right["calls"]}
+    if set(left_rows) != set(right_rows):
+        reasons.append("case support differs between the two runs")
+    else:
+        for key in sorted(left_rows):
+            if left_rows[key]["call_status"] != \
+                    right_rows[key]["call_status"]:
+                reasons.append(f"{key}: call status differs")
+                continue
+            if left_rows[key]["call_status"] != "called":
+                continue
+            unequal = [field for field in CONFIRMATION_FIELDS
+                       if left_rows[key][field] != right_rows[key][field]]
+            if unequal:
+                reasons.append(f"{key}: generation fields {unequal} "
+                               "differ between fresh processes")
+    return {"confirmed": not reasons, "reasons": reasons,
+            "cases": len(left_rows)}
