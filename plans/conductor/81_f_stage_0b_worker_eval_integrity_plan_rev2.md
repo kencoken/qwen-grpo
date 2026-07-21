@@ -47,6 +47,11 @@ Per `80_f` findings, none of which weaken a contract:
 Minor: score rows drop the repeated call-file SHA-256; the run comparison is
 a manifest dict-diff against a per-enum allowlist.
 
+Clarified in place after issue (2026-07-21, Ken): §8 now states the
+sequential execution order for Tranches A–C and that Tranche D is executed
+later on the D16 branch, not on this branch — Gate D is not a merge
+criterion (§11).
+
 ## 1. Decision summary
 
 Build one deliberately small worker-evaluation path, not a general experiment
@@ -700,6 +705,19 @@ Stage-3 free-form subtasks.
 
 ## 8. Implementation tranches
 
+Tranches A–C are the work of this branch and are implemented **sequentially**:
+each tranche lands as its own commit(s) with its gate's CPU tests written
+alongside it, and its gate must pass before the next tranche begins. The
+gates are cheap fake-pool tests, so gating early costs minutes, and Tranche B
+builds directly on Tranche A's writer and provenance surface — validating A
+first avoids reworking both when a gate finds a leak. The tranche gates are
+accumulated evidence for one review of the completed branch, not three
+separate review cycles.
+
+Tranche D is **not executed on this branch**. It belongs to the post-merge
+D16 close-out sequence (§11): this branch only ships the probe command and
+its CPU tests.
+
 ### Tranche A — provenance and singleton path
 
 - own/deep-copy the runtime configuration;
@@ -735,13 +753,18 @@ execution.
 reconcile; a hand-calculated paired-renderer fixture matches; unexpected
 manifest differences block comparison.
 
-### Tranche D — D16 GPU probe after integration
+### Tranche D — D16 GPU probe (later; executed on the D16 branch, not here)
 
-Merge A–C plus the probe command into `conductor_stage_0b`, bring it into the
-D16 branch, then run P0/P1 on `picome` under the exact candidate configurations.
+After A–C are reviewed and merged into `conductor_stage_0b` and brought into
+`conductor_stage_0b_d16`, and after the D1 `worker_dev` erratum is approved
+and the population generated, run P0/P1 on `picome` under the exact candidate
+configurations.
 
 **Gate D:** either singleton is admitted with retained raw evidence and timing,
-or work stops with the follow-up decision called for by §7.4.
+or work stops with the follow-up decision called for by §7.4. Gate D is a
+D16-sequence gate, not a merge criterion for this branch: if P1 later fails,
+the evaluator remains correct and the §7.4 follow-up happens on the D16
+branch without reopening this one.
 
 No cache redesign is part of these tranches.
 
@@ -841,7 +864,9 @@ prompt.
 
 The policy-neutral branch is ready to merge when Tranches A–C and all applicable
 CPU tests pass, the cache-disabled P0/P1 command is present, and no D16 candidate
-content or cache-policy redesign has entered the branch.
+content or cache-policy redesign has entered the branch. Tranche D / Gate D is
+deliberately absent from this list: it runs on `conductor_stage_0b_d16` as
+steps 2–4 below.
 
 After merge:
 
