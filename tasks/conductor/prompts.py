@@ -19,6 +19,17 @@ Revision cycle (evidence per revision in `plans/conductor/60_f_…`):
   text cannot drift from what the runtime actually accepts); explicit
   "literal word resource, never the handle"; explicit "the tool computes,
   you do not"; brevity instruction targeting the token-cap truncations.
+  Eval (60_f): Lookup fixed 15/15; Code envelope fixed but handle
+  substitution persisted (E_PARSE 10/10); Math unchanged (E_NO_ARTIFACT
+  15/15 — CoT alignment overrides prose format contracts).
+- rev2 (levers ranked in 61_f): Math reply is artifact-ONLY (removes the
+  CoT foothold; §1.6 permits but does not require text before the
+  envelope) with a contrastive wrong/right pair showing that the
+  computed value is wrong output; Code gets a contrastive pair naming
+  the handle mistake verbatim plus "resource is the only name the
+  interpreter understands"; Math and Code each gain a second
+  machine-verified demonstration exercising step_k (composite-cell
+  request shapes); Lookup unchanged (15/15 — keep the diff minimal).
 
 The §1.5 request skeleton — chat template over exactly (system, user) —
 is frozen; demonstrations enter as worked examples INSIDE the system
@@ -34,7 +45,7 @@ from __future__ import annotations
 from .types import IntegerList, IntegerRecord, Resource
 
 D16_STATUS = "DRAFT"  # flips to "FROZEN <date>" only via its own review
-D16_REVISION = "rev1"  # bumps with any change to the strings below
+D16_REVISION = "rev2"  # bumps with any change to the strings below
 
 
 # --- demonstrations (endpoint -> [(subtask, resource, completion)]) ---------
@@ -67,6 +78,13 @@ DEMONSTRATIONS: dict[str, list[dict[str, object]]] = {
         "handle": "R-2P6", "resource": _DEMO_MATH_RECORD,
         "completion": "<artifact>(a * b - c) / d</artifact>",
         "value": 599986,
+    }, {
+        # step_k form: the lookup_math n2 / fork_join n3 request shape
+        # (no resource, previous results only).
+        "subtask": "Multiply step_1 by 8, then add 12.",
+        "handle": None, "resource": None, "steps": {1: 84},
+        "completion": "<artifact>step_1 * 8 + 12</artifact>",
+        "value": 684,
     }],
     "code": [{
         "subtask": "Remove later occurrences of repeated values from the "
@@ -76,6 +94,14 @@ DEMONSTRATIONS: dict[str, list[dict[str, object]]] = {
         "completion": "<artifact>count_gt(stable_unique(resource), 5)"
                       "</artifact>",
         "value": 4,
+    }, {
+        # step_k form: the math_code n2 request shape (resource + one
+        # previous result as the index).
+        "subtask": "Return the value at zero-based index step_1 in the "
+                   "integer sequence from the requested resource.",
+        "handle": "R-8C3", "resource": _DEMO_CODE_LIST, "steps": {1: 2},
+        "completion": "<artifact>at(resource, step_1)</artifact>",
+        "value": 6,
     }],
 }
 
@@ -114,46 +140,63 @@ expression between them."""
 
 SYSTEM_MATH = f"""\
 You are an exact-arithmetic worker. An exact calculator evaluates the one \
-expression you emit — do NOT compute the value yourself and do NOT show \
-numeric working. Respond with exactly one <artifact>...</artifact> \
-containing a single expression. Allowed: integer literals, single-letter \
-operand names from the resource (a, b, c, d, m), previous results \
-(step_1, step_2), parentheses, and the operators + - * / %. Division must \
-be exact; write subtraction with the - operator (no negative literals). \
-Plain ASCII only — no LaTeX.
+expression you emit — you never compute the value yourself. Respond with \
+exactly one <artifact>...</artifact> containing a single expression. \
+Allowed: integer literals, single-letter operand names from the resource \
+(a, b, c, d, m), previous results (step_1, step_2), parentheses, and the \
+operators + - * / %. Division must be exact; write subtraction with the \
+- operator (no negative literals). Plain ASCII only — no LaTeX.
 
 Worked example — given this resource:
 
 {_demo_payload_text("math")}
 
-the task "{DEMONSTRATIONS["math"][0]["subtask"]}" has this complete, \
+the task "{DEMONSTRATIONS["math"][0]["subtask"]}" has exactly this \
 correct response:
 
 {_demo_completion("math")}
 
-Reply with at most one short sentence of reasoning, then the artifact. \
-Your reply must contain <artifact> and </artifact> exactly once, with the \
-expression between them."""
+Wrong: {DEMONSTRATIONS["math"][0]["value"]} (a computed number). Wrong: \
+a step-by-step solution. The calculator computes the value; you only \
+write the expression.
+
+Second example — with no resource and the previous result step_1 = 84, \
+the task "{DEMONSTRATIONS["math"][1]["subtask"]}" has exactly this \
+correct response:
+
+{DEMONSTRATIONS["math"][1]["completion"]}
+
+Your entire reply must be exactly the artifact — no text before it, no \
+text after it."""
 
 SYSTEM_CODE = f"""\
 You are a sequence-processing worker. Respond with exactly one \
 <artifact>...</artifact> containing a single expression over the \
 whitelist: count_gt(seq, n), at(seq, n), stable_unique(seq), \
-rotate_left(seq, n), where seq is the literal word resource or a nested \
-whitelist call — never the resource's name (such as R-8C3) — and n is a \
-nonnegative integer or step_k. stable_unique keeps the first occurrence \
-of each value; rotate_left rotates left; at is zero-based. The expression \
-is executed by a whitelist interpreter against the resource shown in the \
-request; its result is your answer.
+rotate_left(seq, n), where seq is the word resource or a nested \
+whitelist call, and n is a nonnegative integer or step_k. The word \
+resource is the only name the interpreter understands — it refers to the \
+sequence shown in the request. stable_unique keeps the first occurrence \
+of each value; rotate_left rotates left; at is zero-based.
 
 Worked example — given this resource:
 
 {_demo_payload_text("code")}
 
-the task "{DEMONSTRATIONS["code"][0]["subtask"]}" has this complete, \
+the task "{DEMONSTRATIONS["code"][0]["subtask"]}" has exactly this \
 correct response:
 
 {_demo_completion("code")}
+
+Wrong: count_gt(stable_unique(R-8C3), 5) — R-8C3 is the resource's name, \
+and the interpreter does not understand names; always write the word \
+resource.
+
+Second example — given the same resource and the previous result \
+step_1 = 2, the task "{DEMONSTRATIONS["code"][1]["subtask"]}" has \
+exactly this correct response:
+
+{DEMONSTRATIONS["code"][1]["completion"]}
 
 Reply with at most one short sentence of reasoning, then the artifact. \
 Your reply must contain <artifact> and </artifact> exactly once, with the \
@@ -178,5 +221,10 @@ SYSTEM_PROMPTS = {
 def demo_binding(demo: dict[str, object]):
     from .tools import Binding
     resource = demo["resource"]
-    assert isinstance(resource, (IntegerRecord, IntegerList))
-    return Binding(resources={str(demo["handle"]): resource})
+    resources: dict[str, Resource] = {}
+    if resource is not None:
+        assert isinstance(resource, (IntegerRecord, IntegerList))
+        resources[str(demo["handle"])] = resource
+    steps = demo.get("steps") or {}
+    assert isinstance(steps, dict)
+    return Binding(resources=resources, steps=dict(steps))
