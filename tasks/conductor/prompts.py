@@ -30,6 +30,18 @@ Revision cycle (evidence per revision in `plans/conductor/60_f_…`):
   interpreter understands"; Math and Code each gain a second
   machine-verified demonstration exercising step_k (composite-cell
   request shapes); Lookup unchanged (15/15 — keep the diff minimal).
+  Eval (62_f): Lookup stable; Code 4/10 (every demonstrated shape now
+  succeeds; select-shape — undemonstrated — garbled 0/3); Math unmoved
+  (0/17; template interference ruled out by rendered-byte check —
+  boxed-CoT alignment overrides even artifact-only instructions).
+- rev3 (levers ranked in 63_f): Math reframed as expression TRANSLATION
+  ("you translate tasks into calculator expressions; you never solve
+  them"; "Evaluate" redefined) and the boxed habit co-opted ("where you
+  would normally write \\boxed{...}, write <artifact>...</artifact>
+  containing the unevaluated expression"); Code gains the missing
+  select-shape demonstration (canonical nesting) plus scope discipline
+  ("whitelist calls only — no arithmetic operators; answer only the
+  Task, ignore other arithmetic in the Problem").
 
 The §1.5 request skeleton — chat template over exactly (system, user) —
 is frozen; demonstrations enter as worked examples INSIDE the system
@@ -45,7 +57,7 @@ from __future__ import annotations
 from .types import IntegerList, IntegerRecord, Resource
 
 D16_STATUS = "DRAFT"  # flips to "FROZEN <date>" only via its own review
-D16_REVISION = "rev2"  # bumps with any change to the strings below
+D16_REVISION = "rev3"  # bumps with any change to the strings below
 
 
 # --- demonstrations (endpoint -> [(subtask, resource, completion)]) ---------
@@ -102,6 +114,17 @@ DEMONSTRATIONS: dict[str, list[dict[str, object]]] = {
         "handle": "R-8C3", "resource": _DEMO_CODE_LIST, "steps": {1: 2},
         "completion": "<artifact>at(resource, step_1)</artifact>",
         "value": 6,
+    }, {
+        # select shape (code_atomic): the canonical nesting the rev2
+        # traces showed the model garbling when undemonstrated.
+        "subtask": "Remove later occurrences of repeated values from the "
+                   "integer sequence in the requested resource, rotate "
+                   "the remaining sequence left by 2 positions, and "
+                   "return the value at zero-based index 3.",
+        "handle": "R-8C3", "resource": _DEMO_CODE_LIST,
+        "completion": "<artifact>at(rotate_left(stable_unique(resource), "
+                      "2), 3)</artifact>",
+        "value": 3,
     }],
 }
 
@@ -139,13 +162,17 @@ Your reply must contain <artifact> and </artifact> exactly once, with the \
 expression between them."""
 
 SYSTEM_MATH = f"""\
-You are an exact-arithmetic worker. An exact calculator evaluates the one \
-expression you emit — you never compute the value yourself. Respond with \
-exactly one <artifact>...</artifact> containing a single expression. \
-Allowed: integer literals, single-letter operand names from the resource \
-(a, b, c, d, m), previous results (step_1, step_2), parentheses, and the \
-operators + - * / %. Division must be exact; write subtraction with the \
-- operator (no negative literals). Plain ASCII only — no LaTeX.
+You are an expression translator for an exact calculator. You translate \
+each task into a single calculator expression — you never solve the \
+task. When a task says "Evaluate", it means: write the expression the \
+calculator should evaluate. Where you would normally write \\boxed{{...}}, \
+write <artifact>...</artifact> instead, containing the UNevaluated \
+expression. Respond with exactly one <artifact>...</artifact>. Allowed \
+in the expression: integer literals, single-letter operand names from \
+the resource (a, b, c, d, m), previous results (step_1, step_2), \
+parentheses, and the operators + - * / %. Division must be exact; write \
+subtraction with the - operator (no negative literals). Plain ASCII only \
+— no LaTeX.
 
 Worked example — given this resource:
 
@@ -177,7 +204,9 @@ rotate_left(seq, n), where seq is the word resource or a nested \
 whitelist call, and n is a nonnegative integer or step_k. The word \
 resource is the only name the interpreter understands — it refers to the \
 sequence shown in the request. stable_unique keeps the first occurrence \
-of each value; rotate_left rotates left; at is zero-based.
+of each value; rotate_left rotates left; at is zero-based. The artifact \
+may contain whitelist calls only — no arithmetic operators. Answer only \
+the Task; ignore any other arithmetic mentioned in the Problem.
 
 Worked example — given this resource:
 
@@ -197,6 +226,12 @@ step_1 = 2, the task "{DEMONSTRATIONS["code"][1]["subtask"]}" has \
 exactly this correct response:
 
 {DEMONSTRATIONS["code"][1]["completion"]}
+
+Third example — given the same resource, the task \
+"{DEMONSTRATIONS["code"][2]["subtask"]}" has exactly this correct \
+response:
+
+{DEMONSTRATIONS["code"][2]["completion"]}
 
 Reply with at most one short sentence of reasoning, then the artifact. \
 Your reply must contain <artifact> and </artifact> exactly once, with the \
