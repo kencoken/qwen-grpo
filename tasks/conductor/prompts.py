@@ -42,6 +42,18 @@ Revision cycle (evidence per revision in `plans/conductor/60_f_…`):
   select-shape demonstration (canonical nesting) plus scope discipline
   ("whitelist calls only — no arithmetic operators; answer only the
   Task, ignore other arithmetic in the Problem").
+  Eval (64_f): Code select nesting fixed but handle substitution
+  regressed 4/10 → 1/10 (rule got buried mid-prompt); Math 0/15 third
+  consecutive revision; probes showed (1) three maximally different Math
+  prompts all score 0/20 — content irrelevant — and (2) base
+  Qwen2.5-1.5B-Instruct with the same prompt scores 20/20 legal →
+  endpoint-model question escalated to the D16/spec review.
+- rev4 (levers ranked in 65_f): Code restructured to Lookup's winning
+  layout — identifier rule in the FIRST sentence, three examples, rule +
+  envelope contract restated LAST (recency); "given the same resource"
+  repetitions and the "ignore other arithmetic" sentence cut. Math
+  frozen at the rev3 text as the documented best-effort candidate
+  (probe 2 proves a compliant model follows it).
 
 The §1.5 request skeleton — chat template over exactly (system, user) —
 is frozen; demonstrations enter as worked examples INSIDE the system
@@ -57,7 +69,7 @@ from __future__ import annotations
 from .types import IntegerList, IntegerRecord, Resource
 
 D16_STATUS = "DRAFT"  # flips to "FROZEN <date>" only via its own review
-D16_REVISION = "rev3"  # bumps with any change to the strings below
+D16_REVISION = "rev4"  # bumps with any change to the strings below
 
 
 # --- demonstrations (endpoint -> [(subtask, resource, completion)]) ---------
@@ -197,16 +209,16 @@ Your entire reply must be exactly the artifact — no text before it, no \
 text after it."""
 
 SYSTEM_CODE = f"""\
-You are a sequence-processing worker. Respond with exactly one \
-<artifact>...</artifact> containing a single expression over the \
-whitelist: count_gt(seq, n), at(seq, n), stable_unique(seq), \
-rotate_left(seq, n), where seq is the word resource or a nested \
-whitelist call, and n is a nonnegative integer or step_k. The word \
-resource is the only name the interpreter understands — it refers to the \
-sequence shown in the request. stable_unique keeps the first occurrence \
-of each value; rotate_left rotates left; at is zero-based. The artifact \
-may contain whitelist calls only — no arithmetic operators. Answer only \
-the Task; ignore any other arithmetic mentioned in the Problem.
+You are a sequence-processing worker. The sequence argument in your \
+expression is always the word resource — never a name like R-8C3; \
+resource is the only name the interpreter understands, and it refers to \
+the sequence shown in the request. Respond with exactly one \
+<artifact>...</artifact> containing a single expression built only from \
+the whitelist calls count_gt(seq, n), at(seq, n), stable_unique(seq), \
+rotate_left(seq, n) — no arithmetic operators — where seq is resource or \
+a nested whitelist call and n is a nonnegative integer or step_k. \
+stable_unique keeps the first occurrence of each value; rotate_left \
+rotates left; at is zero-based.
 
 Worked example — given this resource:
 
@@ -221,20 +233,19 @@ Wrong: count_gt(stable_unique(R-8C3), 5) — R-8C3 is the resource's name, \
 and the interpreter does not understand names; always write the word \
 resource.
 
-Second example — given the same resource and the previous result \
-step_1 = 2, the task "{DEMONSTRATIONS["code"][1]["subtask"]}" has \
-exactly this correct response:
+Second example — with the previous result step_1 = 2, the task \
+"{DEMONSTRATIONS["code"][1]["subtask"]}" has exactly this correct \
+response:
 
 {DEMONSTRATIONS["code"][1]["completion"]}
 
-Third example — given the same resource, the task \
-"{DEMONSTRATIONS["code"][2]["subtask"]}" has exactly this correct \
-response:
+Third example — the task "{DEMONSTRATIONS["code"][2]["subtask"]}" has \
+exactly this correct response:
 
 {DEMONSTRATIONS["code"][2]["completion"]}
 
-Reply with at most one short sentence of reasoning, then the artifact. \
-Your reply must contain <artifact> and </artifact> exactly once, with the \
+The sequence argument is always the word resource, never its name. Your \
+reply must contain <artifact> and </artifact> exactly once, with the \
 expression between them."""
 
 # Unchanged from rev0: the direct arms (B1/B3/B4) run on the policy model,
