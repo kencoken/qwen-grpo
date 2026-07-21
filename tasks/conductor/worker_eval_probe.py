@@ -571,11 +571,12 @@ def main(argv: list[str] | None = None) -> int:
 
     adm = sub.add_parser("admit", help="§7.3 singleton-v1 verdict")
     adm.add_argument("runs", nargs=3)
-    # When the D1 erratum registers the worker-development namespace,
-    # bind it here as the authoritative default (86_s deferred-gates
-    # note): a green verdict against any other namespace is not Gate D.
-    adm.add_argument("--namespace", required=True,
-                     help="the declared P1 namespace the runs must use")
+    # The authoritative namespace bound per the D1 erratum (88_f) and
+    # the 86_s deferred-gates note: a green verdict against any other
+    # namespace is diagnostics, not Gate D.
+    adm.add_argument("--namespace", default="worker_dev",
+                     help="the declared P1 namespace the runs must use "
+                          "(default: the registered worker_dev universe)")
     adm.add_argument("--max-seconds", type=int,
                      default=MAX_FULL_RUN_SECONDS)
     adm.add_argument("--max-vram-gib", type=float, default=None)
@@ -585,8 +586,9 @@ def main(argv: list[str] | None = None) -> int:
                         "candidate (two evaluator run directories)")
     conf.add_argument("left")
     conf.add_argument("right")
-    conf.add_argument("--namespace", required=True,
-                      help="the declared full-population namespace")
+    conf.add_argument("--namespace", default="worker_dev",
+                      help="the declared full-population namespace "
+                           "(default: the registered worker_dev universe)")
 
     args = ap.parse_args(argv)
 

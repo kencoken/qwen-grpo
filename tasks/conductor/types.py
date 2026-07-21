@@ -593,7 +593,11 @@ FIELD_POOL = (
 )
 
 # §1.13: namespaces are disjoint generation universes.
-NAMESPACES = ("construction", "qualification", "train", "dev", "test")
+NAMESPACES = ("construction", "qualification", "train", "dev", "test",
+              # D1 erratum (88_f): dedicated worker-development
+              # universe — adaptive inspection permitted, permanently
+              # barred from screens/estimates.
+              "worker_dev")
 
 # §1.4: renderer ids; `resource_first` is canonical.
 RENDERER_IDS = ("resource_first", "goal_first", "bound_var")

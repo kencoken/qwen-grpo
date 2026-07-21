@@ -1461,3 +1461,47 @@ def test_probe_compare_refuses_self_comparison(tmp_path, capsys):
     assert probe_main(["compare", str(path), str(path)]) == 2
     out = capsys.readouterr().out
     assert "NOT COMPARABLE" in out and "process identity" in out
+
+
+# =============================================================================
+# D1 erratum (88_f): the worker_dev namespace.
+# =============================================================================
+
+def test_worker_dev_namespace_is_capped_disjoint_and_deterministic():
+    latent = program.generate_latent("math_code", "worker_dev", 19,
+                                     DEFAULT_PROFILE).latent
+    construction = program.generate_latent("math_code", "construction", 19,
+                                           DEFAULT_PROFILE).latent
+    # Seed identity separates the universes; nothing is laundered.
+    assert latent["latent_program_id"] \
+        != construction["latent_program_id"]
+    assert latent["private_registry"] != construction["private_registry"]
+    # Deterministic regeneration, same as every namespace.
+    again = program.generate_latent("math_code", "worker_dev", 19,
+                                    DEFAULT_PROFILE).latent
+    assert again == latent
+    # The cap is the stopping rule: index 30 refuses.
+    assert program.namespace_cap("worker_dev", "fork_join") == 30
+    with pytest.raises(Exception, match="range"):
+        program.generate_latent("math_code", "worker_dev", 30,
+                                DEFAULT_PROFILE)
+
+
+def test_worker_dev_p1_prefix_clears_coverage():
+    assert_probe_coverage(probe_latents("worker_dev", 10))
+
+
+def test_probe_cli_namespace_defaults_to_worker_dev(tmp_path, capsys):
+    cases, labels = probe_sample()
+    records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
+                                 cases, labels, "canonical")
+    paths = []
+    for order in ("canonical", "canonical", "reversed"):
+        path = tmp_path / f"{order}-{len(paths)}.json"
+        path.write_text(json.dumps(fake_p1_output(records, order)))
+        paths.append(str(path))
+    # Without --namespace the verdict holds runs to worker_dev; these
+    # construction-based diagnostics therefore fail admission.
+    assert probe_main(["admit", *paths]) == 1
+    out = capsys.readouterr().out
+    assert "worker_dev" in out

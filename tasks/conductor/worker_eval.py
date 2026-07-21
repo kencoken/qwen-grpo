@@ -1526,10 +1526,9 @@ def confirm_repeat_run(left: Mapping[str, Any],
     result enters the final comparison/freeze.
 
     The population size is fixed at the full §7.4 design (86_s finding
-    2): the scientific entry point takes no override. When the D1
-    erratum registers the dedicated worker-development namespace, bind
-    it here as the authoritative default rather than an operator
-    assertion."""
+    2): the scientific entry point takes no override. The registered
+    worker-development namespace (D1 erratum, 88_f) is the CLI's
+    authoritative default."""
     return _confirm_repeat_run(left, right, expected_namespace,
                                FULL_RUN_PER_CELL)
 
