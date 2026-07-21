@@ -44,14 +44,23 @@ class FakePool:
     a default completion."""
 
     def __init__(self, script=None, default="<artifact>1</artifact>",
-                 telemetry=None):
+                 telemetry=None, system_prompts=None):
         self.script = script or {}
         self.default = default
         self.telemetry = telemetry or {}
         self.generate_calls = []
+        self.system_prompts = system_prompts or {}
 
     def chat_template_sha(self, endpoint_name):
         return f"sha-{endpoint_name}"
+
+    def system_prompt(self, endpoint_name):
+        return self.system_prompts.get(endpoint_name,
+                                       f"system-{endpoint_name}")
+
+    def tokenizer_facts(self, endpoint_name):
+        return {"pad_token_id": 0, "padding_side": "left",
+                "eos_token_id": 0}
 
     def render_request(self, endpoint_name, user_message):
         return f"{endpoint_name}\x00{user_message}".encode()
@@ -130,14 +139,15 @@ def test_encode_float_shortest_round_trip():
 # --- fingerprint scopes (§1.10) ---------------------------------------------
 
 SHAS = {"lookup": "sha-lookup", "math": "sha-math", "code": "sha-code"}
+PSHAS = {"lookup": "psha-lookup", "math": "psha-math", "code": "psha-code"}
 
 
 def test_visibility_enters_profile_but_not_worker_visible_fingerprint():
     visible = profile_with(visibility_condition="visible")
     assert (runtime_profile_fingerprint(PROFILE)
             != runtime_profile_fingerprint(visible))
-    assert (worker_visible_fingerprint(PROFILE, SHAS)
-            == worker_visible_fingerprint(visible, SHAS))
+    assert (worker_visible_fingerprint(PROFILE, SHAS, PSHAS)
+            == worker_visible_fingerprint(visible, SHAS, PSHAS))
 
 
 def test_conductor_only_fields_do_not_touch_worker_visible():
@@ -150,9 +160,9 @@ def test_conductor_only_fields_do_not_touch_worker_visible():
         profile_with(cell_mixture={**PROFILE["cell_mixture"],
                                    "fork_join": 1}),
     ]
-    base = worker_visible_fingerprint(PROFILE, SHAS)
+    base = worker_visible_fingerprint(PROFILE, SHAS, PSHAS)
     for variant in variants:
-        assert worker_visible_fingerprint(variant, SHAS) == base
+        assert worker_visible_fingerprint(variant, SHAS, PSHAS) == base
         assert (runtime_profile_fingerprint(variant)
                 != runtime_profile_fingerprint(PROFILE))
 
@@ -166,24 +176,32 @@ def test_worker_visible_fields_change_worker_visible():
         profile_with(tools={**PROFILE["tools"], "math": "v0.9"}),
         profile_with(resource_policy="other-policy"),
     ]
-    base = worker_visible_fingerprint(PROFILE, SHAS)
+    base = worker_visible_fingerprint(PROFILE, SHAS, PSHAS)
     for variant in variants:
-        assert worker_visible_fingerprint(variant, SHAS) != base
+        assert worker_visible_fingerprint(variant, SHAS, PSHAS) != base
     # The resolved chat template is part of the worker-visible scope.
     assert worker_visible_fingerprint(
-        PROFILE, {**SHAS, "math": "other"}) != base
+        PROFILE, {**SHAS, "math": "other"}, PSHAS) != base
+    # So is the actual system prompt (81_f §5.2).
+    assert worker_visible_fingerprint(
+        PROFILE, SHAS, {**PSHAS, "math": "other"}) != base
 
 
 def test_endpoint_fingerprints_distinct_and_pinned():
-    fps = {name: endpoint_fingerprint(PROFILE, name, SHAS[name])
+    fps = {name: endpoint_fingerprint(PROFILE, name, SHAS[name],
+                                      PSHAS[name])
            for name in SHAS}
     assert len(set(fps.values())) == 3
-    assert endpoint_fingerprint(PROFILE, "math", "other") != fps["math"]
+    assert endpoint_fingerprint(PROFILE, "math", "other",
+                                PSHAS["math"]) != fps["math"]
+    assert endpoint_fingerprint(PROFILE, "math", SHAS["math"],
+                                "other") != fps["math"]
     prof = copy.deepcopy(dict(PROFILE))
     prof["workers"]["math"]["max_new_tokens"] = 128
-    assert endpoint_fingerprint(prof, "math", SHAS["math"]) != fps["math"]
+    assert endpoint_fingerprint(prof, "math", SHAS["math"],
+                                PSHAS["math"]) != fps["math"]
     with pytest.raises(ProfileError):
-        endpoint_fingerprint(PROFILE, "direct", "x")
+        endpoint_fingerprint(PROFILE, "direct", "x", "y")
 
 
 # --- cache: write-through, isolation, telemetry survival --------------------
