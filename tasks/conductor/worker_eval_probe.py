@@ -217,6 +217,52 @@ def candidate_plan_identity(cid: str) -> tuple[tuple[str, str, str, str],
     return tuple(identity)
 
 
+SUPPORT_DIGESTS_PATH = (Path(__file__).parent / "fixtures"
+                        / "support_digests.json")
+
+
+@functools.lru_cache(maxsize=1)
+def support_digests() -> dict[str, dict[str, Any]]:
+    """The pre-P1 frozen support registry (94_s finding 6): per
+    candidate, content hashes of the complete 300- and 900-case
+    identities including rendered request digests. Committed before any
+    P1 output exists; admission and reveal verify against it."""
+    if not SUPPORT_DIGESTS_PATH.exists():
+        raise InfrastructureError(
+            "support digest registry is missing; generate it with "
+            "gen_support_digests before any P1 run")
+    return json.loads(SUPPORT_DIGESTS_PATH.read_text(encoding="utf-8"))
+
+
+def _identity_sha(rows: list[tuple]) -> str:
+    return hashlib.sha256(json.dumps(
+        [list(row) for row in rows],
+        separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def compute_support_digest(cid: str) -> dict[str, Any]:
+    """Recompute one candidate's support digests from the frozen
+    generator, registry and tokenizers."""
+    from .candidates import candidate_bundle, candidate_runtime_profile
+    profile = candidate_runtime_profile(cid)
+    bundle = candidate_bundle(cid)
+    p1_rows = list(candidate_plan_identity(cid))
+    full_rows = []
+    for case in candidate_full_cases(cid)[0]:
+        worker = profile["workers"][case.endpoint_name]
+        full_rows.append((
+            case.case_id, case.endpoint_name,
+            hashlib.sha256(case.user_message.encode("utf-8")).hexdigest(),
+            _rendered_sha(worker["model_id"], worker["revision"],
+                          bundle.text(case.endpoint_name),
+                          case.user_message)))
+    return {
+        "p1_identity_sha256": _identity_sha(p1_rows),
+        "p1_sequence": sequence_hashes([row[0] for row in p1_rows]),
+        "full_identity_sha256": _identity_sha(full_rows),
+    }
+
+
 def sequence_hashes(case_ids: list[str]) -> dict[str, str]:
     """§6.9: canonical and exact-reversal order hashes for a plan."""
     canonical = hashlib.sha256(
@@ -633,6 +679,16 @@ def admit_singleton(runs: list[Mapping[str, Any]],
             reasons.append(f"request-contract digest is not {cid!r}'s "
                            "registered contract")
         plan4 = candidate_plan_identity(cid)
+        registered_digest = support_digests().get(cid)
+        if registered_digest is None:
+            raise InfrastructureError(
+                f"{cid!r} has no entry in the frozen support-digest "
+                "registry")
+        if _identity_sha(list(plan4)) \
+                != registered_digest["p1_identity_sha256"]:
+            raise InfrastructureError(
+                f"{cid!r}: the regenerated P1 plan does not match the "
+                "pre-registered support digest — plan drift, abort")
         canonical_ids = [case_id for case_id, _, _, _ in plan4]
         identity = {c: (e, u, r) for c, e, u, r in plan4}
         record_key = lambda record: (record["endpoint_name"],
@@ -807,9 +863,23 @@ def run_candidate(cid: str, mode: str, run_dir: str,
             "wall_seconds": time.monotonic() - started,
             "idle_reserved_bytes": _reserved_bytes(),
             "peak_reserved_bytes": peak() or 0,
+            "device": device,
             "per_endpoint": timed.stats,
             "checkpoints": pool.checkpoint_report(),
         })
+    # 94_s finding 3: the completion index maps each candidate to its
+    # actual fresh run directory and manifest hash, so restarts (fresh
+    # dirs, per RunWriter's refusal to reuse) stay reveal-addressable.
+    index_path = Path(run_dir).parent / "completion_index.json"
+    index = (json.loads(index_path.read_text(encoding="utf-8"))
+             if index_path.exists() else {})
+    index[f"{cid}:{mode}"] = {
+        "run_dir": Path(run_dir).name,
+        "manifest_sha256": writer.manifest_sha256,
+    }
+    index_path.write_text(
+        json.dumps(index, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
     return writer
 
 
@@ -838,66 +908,311 @@ def prefix_verdict(run: Mapping[str, Any], cid: str) -> bool:
                for outcomes in groups.values())
 
 
-def screen_candidates(runs_dir: str | Path, tranche: str
-                      ) -> dict[str, Any]:
-    """§6.10 screening: expose only candidate id, admission/cost and the
-    three-state prefix verdict; fix the full-run launch set (prefix-clean
-    candidates plus one sentinel per contract) mechanically."""
+def _screen(runs_dir: Path, tranche: str,
+            eligible: list[str]) -> dict[str, Any]:
+    """Deterministic screening over the exact triggered candidate set.
+    94_s findings 1/2/4: incomplete tranches, candidate-less files,
+    mismatched embedded candidates, dirty trees or split commits all
+    refuse — no partial launch manifest ever exists."""
     from .candidates import (REQUEST_CONTRACT_KEYS, arm_order,
-                             sentinel_order)
-    runs_dir = Path(runs_dir)
-    table: dict[str, dict[str, Any]] = {}
-    for cid in arm_order(tranche):
-        paths = [runs_dir / f"{cid}.p1-{i}.json" for i in (1, 2, 3)]
-        if not all(path.exists() for path in paths):
-            table[cid] = {"status": "missing",
-                          "target_prefix_clean": "NA"}
+                             candidate_config, sentinel_order)
+    arms = [cid for cid in arm_order(tranche)
+            if candidate_config(cid)["contract_label"] in eligible]
+    problems: list[str] = []
+    runs_by_cid: dict[str, list[dict]] = {}
+    p1_hashes: dict[str, list[str]] = {}
+    for cid in arms:
+        paths = [runs_dir / f"{cid}.p1-{index}.json" for index in (1, 2, 3)]
+        missing = [path.name for path in paths if not path.exists()]
+        if missing:
+            problems.append(f"{cid}: missing {missing}")
             continue
         runs = [json.loads(path.read_text(encoding="utf-8"))
                 for path in paths]
-        verdict = admit_singleton(runs, WORKER_DEV_NAMESPACE)
+        foreign = [path.name for path, run in zip(paths, runs)
+                   if run.get("candidate") != cid]
+        if foreign:
+            problems.append(f"{cid}: {foreign} do not embed candidate "
+                            f"{cid!r}")
+            continue
+        runs_by_cid[cid] = runs
+        p1_hashes[cid] = [hashlib.sha256(path.read_bytes()).hexdigest()
+                          for path in paths]
+    if problems:
+        raise InfrastructureError(
+            "screening requires the complete triggered tranche with "
+            "embedded candidate identity: " + "; ".join(problems))
+    commits = {run["git"]["commit"]
+               for runs in runs_by_cid.values() for run in runs}
+    if len(commits) != 1 or any(run["git"]["dirty"]
+                                for runs in runs_by_cid.values()
+                                for run in runs):
+        raise InfrastructureError(
+            "92_s §2.4: one clean executable commit across the whole "
+            f"tranche; got commits {sorted(commits)}")
+    table: dict[str, dict[str, Any]] = {}
+    for cid in arms:
+        verdict = admit_singleton(runs_by_cid[cid], WORKER_DEV_NAMESPACE)
         table[cid] = {
-            "status": "screened",
             "admitted": verdict["admitted"],
             "projected_full_run_seconds":
                 verdict["projected_full_run_seconds"],
             "peak_vram_bytes": verdict["peak_vram_bytes"],
-            "target_prefix_clean": (prefix_verdict(runs[0], cid)
-                                    if verdict["admitted"] else "NA"),
+            "target_prefix_clean": (
+                prefix_verdict(runs_by_cid[cid][0], cid)
+                if verdict["admitted"] else "NA"),
         }
     launch = [cid for cid, entry in table.items()
-              if entry.get("admitted")
+              if entry["admitted"]
               and entry["target_prefix_clean"] is True]
-    sentinels = {}
+    sentinels: dict[str, str | None] = {}
     for contract_label in REQUEST_CONTRACT_KEYS:
+        if contract_label not in eligible:
+            sentinels[contract_label] = None
+            continue
         sentinels[contract_label] = next(
             (cid for cid in sentinel_order(contract_label, tranche)
              if table.get(cid, {}).get("admitted")), None)
         chosen = sentinels[contract_label]
         if chosen is not None and chosen not in launch:
             launch.append(chosen)
-    return {"tranche": tranche, "candidates": table,
-            "launch": launch, "sentinels": sentinels}
+    return {"tranche": tranche, "commit": commits.pop(),
+            "eligible_contracts": list(eligible), "candidates": table,
+            "launch": launch, "sentinels": sentinels,
+            "p1_sha256": p1_hashes}
+
+
+def screen_candidates(runs_dir: str | Path, tranche: str,
+                      reveal_a: Mapping[str, Any] | None = None
+                      ) -> dict[str, Any]:
+    """§6.10 screening. Tranche B (94_s finding 5) consumes the
+    validated Tranche A reveal: it never opens after an A target, and
+    only contracts not proven non-target remain eligible."""
+    from .candidates import REQUEST_CONTRACT_KEYS
+    runs_dir = Path(runs_dir)
+    if tranche == "B":
+        if reveal_a is None:
+            raise InfrastructureError(
+                "Tranche B screening requires the Tranche A reveal "
+                "artifact (92_s §5)")
+        if reveal_a.get("selected"):
+            raise InfrastructureError(
+                "Tranche A selected a target configuration; Tranche B "
+                "is never opened (92_s §8)")
+        states = reveal_a.get("contract_states", {})
+        eligible = [label for label in REQUEST_CONTRACT_KEYS
+                    if states.get(label) != "proven_non_target"]
+        if not eligible:
+            raise InfrastructureError(
+                "both request contracts are proven non-target for "
+                "unchanged Lookup/Math; stop (92_s §5)")
+    else:
+        if reveal_a is not None:
+            raise InfrastructureError("reveal_a applies only to Tranche B")
+        eligible = list(REQUEST_CONTRACT_KEYS)
+    return _screen(runs_dir, tranche, eligible)
 
 
 # §8 lexicographic selection orders (lower is better).
 _CONTRACT_RANK = {"current": 0, "task_last": 1}
 _PROMPT_RANK = {"rev9": 0, "code_local_v1": 1}
 
+# §4.2 fallback floor: envelope-or-grammar integer maxima per endpoint.
+_FALLBACK_PARSE_MAXIMA = {"lookup": 5, "math": 7, "code": 5}
+
+
+def p1_case_outcomes(run: Mapping[str, Any], cid: str
+                     ) -> dict[str, bool]:
+    """Per-case strict recompute of P1 correctness (labels regenerated,
+    tools re-run); the basis for the prefix verdict and §9 prefix
+    contrasts."""
+    cases, labels = candidate_p1_cases(cid)
+    by_id = {case.case_id: (case, label)
+             for case, label in zip(cases, labels)}
+    outcomes: dict[str, bool] = {}
+    for record in run["cases"]:
+        case, label = by_id[record["case_id"]]
+        result = contract.run_worker_output(
+            _ENDPOINT_ID[case.endpoint_name], record["completion"],
+            case.binding())
+        outcomes[record["case_id"]] = (
+            not record["generation_hit_token_cap"]
+            and result.status == "success"
+            and result.value == label.expected_value)
+    return outcomes
+
+
+def prefix_verdict(run: Mapping[str, Any], cid: str) -> bool:
+    """§7 target_prefix_clean for a P1-admitted run."""
+    if len(run["cases"]) != P1_CASES:
+        return False
+    cases, labels = candidate_p1_cases(cid)
+    label_by_id = {label.case_id: label for label in labels}
+    endpoint_by_id = {case.case_id: case.endpoint_name for case in cases}
+    outcomes = p1_case_outcomes(run, cid)
+    groups: dict[tuple, list[bool]] = {}
+    for case_id, correct in outcomes.items():
+        label = label_by_id[case_id]
+        groups.setdefault((endpoint_by_id[case_id], label.cell_id,
+                           label.renderer_id), []).append(correct)
+    return all(len(group) == P1_PER_CELL and all(group)
+               for group in groups.values())
+
+
+def _verify_candidate_run(cid: str, run: Mapping[str, Any],
+                          commit: str) -> None:
+    """94_s finding 2: reveal never trusts a filename or index label —
+    the loaded manifest must BE the registered candidate, on the
+    tranche's one clean commit, posing the pre-registered support."""
+    from .candidates import (candidate_bundle, candidate_config,
+                             candidate_runtime_profile, physical_layout)
+    manifest = run["manifest"]
+    profile = candidate_runtime_profile(cid)
+    checks = {
+        "candidate_label": (manifest["candidate_label"], cid),
+        "evaluation_mode": (manifest["evaluation_mode"], "isolated"),
+        "commit": (manifest["git"]["commit"], commit),
+        "dirty": (manifest["git"]["dirty"], False),
+        "runtime_profile_fingerprint": (
+            manifest["runtime_profile_fingerprint"],
+            runtime_profile_fingerprint(profile)),
+        "system_prompt_sha256": (
+            manifest["system_prompts"]["sha256"],
+            candidate_bundle(cid).sha256()),
+        "request_contract_digest": (
+            manifest["request_contract"]["digest"],
+            resolve_request_contract(candidate_config(cid)[
+                "request_contract_key"])["digest"]),
+        "physical_layout": (manifest["physical_layout"],
+                            physical_layout(profile)),
+        "population": (manifest["population"], FULL_POPULATION),
+    }
+    wrong = sorted(name for name, (actual, expected) in checks.items()
+                   if actual != expected)
+    if wrong:
+        raise InfrastructureError(
+            f"{cid}: loaded run is not the registered candidate — "
+            f"{wrong} disagree with the registry")
+    rows = [(row["case_id"], row["endpoint_name"],
+             hashlib.sha256(row["user_message"].encode("utf-8"))
+             .hexdigest(), row["request_sha256"])
+            for row in run["calls"]]
+    if _identity_sha(rows) \
+            != support_digests()[cid]["full_identity_sha256"]:
+        raise InfrastructureError(
+            f"{cid}: the run's support does not match the "
+            "pre-registered full-plan digest")
+
+
+def _fallback_floor(run: Mapping[str, Any]) -> bool:
+    """§4.2 recorded fallback verdict for a fully evaluated run."""
+    groups: dict[tuple, dict[str, int]] = {}
+    for score in run["scores"]:
+        entry = groups.setdefault(
+            (score["endpoint_name"], score["cell_id"],
+             score["renderer_id"]), {"n": 0, "correct": 0})
+        entry["n"] += 1
+        entry["correct"] += int(score["node_correct"])
+    if any(entry["correct"] < entry["n"] - 1
+           or entry["n"] != FULL_POPULATION["per_cell"]
+           for entry in groups.values()):
+        return False
+    if run["summary"]["isolated"]["outcomes"]["token_cap"] != 0:
+        return False
+    parse_failures = {name: 0 for name in _FALLBACK_PARSE_MAXIMA}
+    for row in run["calls"]:
+        if row["envelope_outcome"] != "ok" \
+                or row["grammar_outcome"] not in (None, "ok"):
+            parse_failures[row["endpoint_name"]] += 1
+    return all(parse_failures[name] <= maximum
+               for name, maximum in _FALLBACK_PARSE_MAXIMA.items())
+
+
+def _single_factor_pairs(cids: list[str]) -> list[tuple[str, str, str]]:
+    from .candidates import candidate_config
+    factors = ("code_model", "contract_label", "code_prompt")
+    pairs = []
+    ordered = sorted(cids)
+    for index, left in enumerate(ordered):
+        for right in ordered[index + 1:]:
+            left_config = candidate_config(left)
+            right_config = candidate_config(right)
+            differing = [factor for factor in factors
+                         if left_config[factor] != right_config[factor]]
+            if len(differing) == 1:
+                pairs.append((left, right, differing[0]))
+    return pairs
+
+
+def _paired_contrast(outcomes_left: Mapping[str, bool],
+                     outcomes_right: Mapping[str, bool],
+                     group_of: Mapping[str, str]) -> dict[str, Any]:
+    """Exact paired win/loss/tie counts, overall and per group, on
+    identical support (§9). Counts only; no intervals."""
+    if set(outcomes_left) != set(outcomes_right):
+        raise InfrastructureError("paired contrast requires identical "
+                                  "case support")
+
+    def counts() -> dict[str, int]:
+        return {"n": 0, "left_correct": 0, "right_correct": 0,
+                "left_wins": 0, "right_wins": 0, "ties": 0}
+
+    overall = counts()
+    by_group: dict[str, dict[str, int]] = {}
+    for case_id in sorted(outcomes_left):
+        left, right = outcomes_left[case_id], outcomes_right[case_id]
+        group = by_group.setdefault(group_of[case_id], counts())
+        for entry in (overall, group):
+            entry["n"] += 1
+            entry["left_correct"] += int(left)
+            entry["right_correct"] += int(right)
+            entry["left_wins"] += int(left and not right)
+            entry["right_wins"] += int(right and not left)
+            entry["ties"] += int(left == right)
+    return {"overall": overall, "by_group": by_group}
+
 
 def reveal_tranche(runs_dir: str | Path,
                    screening: Mapping[str, Any]) -> dict[str, Any]:
-    """§6.10 joint reveal: strict-load every launched full run, enforce
-    unchanged-endpoint equality per contract, derive §4.1 target
-    verdicts and apply the §8 mechanical selection."""
-    from .candidates import (candidate_config, candidate_runtime_profile,
+    """§6.10 joint reveal. The stored screening must rederive exactly
+    from the raw P1 artifacts (94_s finding 3); full runs are addressed
+    through the completion index and verified as the registered
+    candidates on the tranche's one clean commit; contract states,
+    fallback statuses and the §9 descriptive contrasts are derived; §8
+    selects mechanically."""
+    from .candidates import (REQUEST_CONTRACT_KEYS, arm_order,
+                             candidate_config, candidate_runtime_profile,
                              physical_layout)
     from .worker_eval import load_run
     runs_dir = Path(runs_dir)
-    loaded = {cid: load_run(runs_dir / f"{cid}-full")
-              for cid in screening["launch"]}
-    # Unchanged-endpoint equality (§5): Lookup/Math generation fields are
-    # byte-identical across arms sharing a contract.
+    rederived = _screen(runs_dir, screening["tranche"],
+                        list(screening["eligible_contracts"]))
+    if rederived != dict(screening):
+        raise InfrastructureError(
+            "the stored screening manifest does not rederive from the "
+            "P1 artifacts; it is not a trusted input")
+    index_path = runs_dir / "completion_index.json"
+    if not index_path.exists():
+        raise InfrastructureError("completion_index.json is missing")
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    loaded: dict[str, Any] = {}
+    for cid in screening["launch"]:
+        entry = index.get(f"{cid}:isolated")
+        if entry is None:
+            raise InfrastructureError(
+                f"{cid}: no completed isolated run in the completion "
+                "index")
+        run_dir = runs_dir / entry["run_dir"]
+        manifest_sha = hashlib.sha256(
+            (run_dir / "manifest.json").read_bytes()).hexdigest()
+        if manifest_sha != entry["manifest_sha256"]:
+            raise InfrastructureError(
+                f"{cid}: manifest hash differs from the completion "
+                "index")
+        run = load_run(run_dir)
+        _verify_candidate_run(cid, run, screening["commit"])
+        loaded[cid] = run
+    # Unchanged-endpoint equality (§5) across arms sharing a contract.
     by_contract: dict[str, list[str]] = {}
     for cid in loaded:
         by_contract.setdefault(
@@ -908,18 +1223,24 @@ def reveal_tranche(runs_dir: str | Path,
             for row in loaded[cid]["calls"]:
                 if row["endpoint_name"] == "code":
                     continue
-                key = row["case_id"]
                 fields = (row["request_sha256"], row["completion"],
                           row["finish_reason"], row["generated_tokens"],
                           row["generation_hit_token_cap"])
-                if key in reference and reference[key] != fields:
+                if reference.setdefault(row["case_id"],
+                                        fields) != fields:
                     raise InfrastructureError(
-                        f"unchanged endpoint call {key} differs across "
-                        f"{contract_label!r} arms — reproducibility "
-                        "stop (92_s §5)")
-                reference.setdefault(key, fields)
-    results = {}
-    for cid, run in loaded.items():
+                        f"unchanged endpoint call {row['case_id']} "
+                        f"differs across {contract_label!r} arms — "
+                        "reproducibility stop (92_s §5)")
+    # Per-arm results: executed arms get target + fallback verdicts;
+    # screened-out arms are recorded, never imputed (§4.2, §9).
+    results: dict[str, dict[str, Any]] = {}
+    for cid in arm_order(screening["tranche"]):
+        if cid not in loaded:
+            results[cid] = {"status": "not_evaluated",
+                            "fallback": "fallback_not_evaluated"}
+            continue
+        run = loaded[cid]
         groups: dict[str, dict[str, int]] = {}
         for score in run["scores"]:
             key = "|".join((score["endpoint_name"], score["cell_id"],
@@ -928,15 +1249,100 @@ def reveal_tranche(runs_dir: str | Path,
             entry["n"] += 1
             entry["correct"] += int(score["node_correct"])
         outcomes = run["summary"]["isolated"]["outcomes"]
-        target = (all(entry["n"] == 30 and entry["correct"] == 30
+        per_cell = FULL_POPULATION["per_cell"]
+        expected_calls = per_cell * 10 * len(
+            FULL_POPULATION["renderers"])
+        target = (all(entry["n"] == per_cell
+                      and entry["correct"] == per_cell
                       for entry in groups.values())
-                  and outcomes["scheduled"] == outcomes["called"] == 900
+                  and outcomes["scheduled"] == outcomes["called"]
+                  == expected_calls
                   and outcomes["envelope_failed"] == 0
                   and outcomes["grammar_failed"] == 0
                   and outcomes["token_cap"] == 0)
-        results[cid] = {"groups": groups, "target": target}
+        results[cid] = {"status": "executed", "groups": groups,
+                        "target": target,
+                        "fallback": _fallback_floor(run)}
+    # Contract states (§5) from the sentinels' unchanged Lookup/Math.
+    contract_states: dict[str, str] = {}
+    for contract_label in REQUEST_CONTRACT_KEYS:
+        if contract_label not in screening["eligible_contracts"]:
+            contract_states[contract_label] = "proven_non_target"
+            continue
+        sentinel = screening["sentinels"].get(contract_label)
+        if sentinel is None or sentinel not in loaded:
+            contract_states[contract_label] = "unaudited"
+            continue
+        lookup_math = {
+            key: entry
+            for key, entry in results[sentinel]["groups"].items()
+            if not key.startswith("code|")}
+        per_cell = FULL_POPULATION["per_cell"]
+        contract_states[contract_label] = (
+            "viable" if all(entry["n"] == per_cell
+                            and entry["correct"] == per_cell
+                            for entry in lookup_math.values())
+            else "proven_non_target")
+    # §9 descriptive contrasts: full-population pairs on executed arms,
+    # prefix pairs on admitted candidates, complete rectangles only.
+    full_outcomes = {
+        cid: {score["case_id"]: bool(score["node_correct"])
+              for score in run["scores"]}
+        for cid, run in loaded.items()}
+    group_of_full: dict[str, str] = {}
+    for cid, run in loaded.items():
+        for score in run["scores"]:
+            group_of_full[score["case_id"]] = "|".join(
+                (score["endpoint_name"], score["cell_id"],
+                 score["renderer_id"]))
+        break
+    contrasts: dict[str, Any] = {"full_pairs": {}, "prefix_pairs": {},
+                                 "rectangles": []}
+    for left, right, factor in _single_factor_pairs(list(loaded)):
+        contrasts["full_pairs"][f"{left} vs {right}"] = {
+            "factor": factor,
+            **_paired_contrast(full_outcomes[left], full_outcomes[right],
+                               group_of_full)}
+    admitted = [cid for cid, entry in screening["candidates"].items()
+                if entry.get("admitted")]
+    prefix_outcomes = {}
+    for cid in admitted:
+        run1 = json.loads(
+            (runs_dir / f"{cid}.p1-1.json").read_text(encoding="utf-8"))
+        prefix_outcomes[cid] = p1_case_outcomes(run1, cid)
+    for cid in admitted:
+        cases, labels = candidate_p1_cases(cid)
+        group_of_prefix = {
+            label.case_id: "|".join((case.endpoint_name, label.cell_id,
+                                     label.renderer_id))
+            for case, label in zip(cases, labels)}
+        break
+    for left, right, factor in _single_factor_pairs(admitted):
+        contrasts["prefix_pairs"][f"{left} vs {right}"] = {
+            "factor": factor,
+            **_paired_contrast(prefix_outcomes[left],
+                               prefix_outcomes[right], group_of_prefix)}
+    executed = sorted(loaded)
+    factors = ("code_model", "contract_label", "code_prompt")
+    for fixed_factor in factors:
+        others = [factor for factor in factors if factor != fixed_factor]
+        for fixed_value in {candidate_config(cid)[fixed_factor]
+                            for cid in executed}:
+            rectangle = [cid for cid in executed
+                         if candidate_config(cid)[fixed_factor]
+                         == fixed_value]
+            if len(rectangle) == 4 and len(
+                    {(candidate_config(cid)[others[0]],
+                      candidate_config(cid)[others[1]])
+                     for cid in rectangle}) == 4:
+                contrasts["rectangles"].append({
+                    "fixed": {fixed_factor: fixed_value},
+                    "varying": others,
+                    "correct_counts": {
+                        cid: sum(full_outcomes[cid].values())
+                        for cid in rectangle}})
     targets = sorted(
-        (cid for cid, entry in results.items() if entry["target"]),
+        (cid for cid in executed if results[cid]["target"]),
         key=lambda cid: (
             physical_layout(candidate_runtime_profile(cid))[
                 "declared_parameter_sum"],
@@ -946,6 +1352,7 @@ def reveal_tranche(runs_dir: str | Path,
             _PROMPT_RANK[candidate_config(cid)["code_prompt"]],
             cid))
     return {"tranche": screening["tranche"], "results": results,
+            "contract_states": contract_states, "contrasts": contrasts,
             "selected": targets[0] if targets else None}
 
 
@@ -995,6 +1402,8 @@ def main(argv: list[str] | None = None) -> int:
                                         "launch manifest")
     scr.add_argument("--runs-dir", required=True)
     scr.add_argument("--tranche", choices=["A", "B"], required=True)
+    scr.add_argument("--reveal-a", default=None,
+                     help="Tranche A reveal artifact (required for B)")
     scr.add_argument("--out", required=True)
 
     rev = sub.add_parser("reveal", help="92_s §6.10 joint reveal after "
@@ -1084,7 +1493,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "screen":
-        screening = screen_candidates(args.runs_dir, args.tranche)
+        reveal_a = (json.loads(Path(args.reveal_a).read_text(
+            encoding="utf-8")) if args.reveal_a else None)
+        screening = screen_candidates(args.runs_dir, args.tranche,
+                                      reveal_a=reveal_a)
         _write_output(args.out, screening)
         digest = hashlib.sha256(
             Path(args.out).read_bytes()).hexdigest()

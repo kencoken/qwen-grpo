@@ -1765,31 +1765,155 @@ def test_run_candidate_round_trips_through_loader(tmp_path, monkeypatch):
         load_run(tampered_dir)
 
 
-def test_screen_admits_and_launches_with_sentinels(tmp_path):
-    cid = "coder_1p5b-current-rev9"
-    cases, labels = candidate_p1_cases(cid)
-    latents = generate_latents({"namespace": "worker_dev", "per_cell": 10,
-                                "renderers": list(RENDERER_IDS),
-                                "visibility": "private"})
-    script = reference_script(list(cases), list(labels), latents)
-    runs = fake_candidate_runs(cid, script=script)
-    for index, run in enumerate(runs, start=1):
-        (tmp_path / f"{cid}.p1-{index}.json").write_text(json.dumps(run))
-    screening = screen_candidates(tmp_path, "A")
-    entry = screening["candidates"][cid]
-    assert entry["admitted"] and entry["target_prefix_clean"] is True
-    missing = screening["candidates"]["generic_1p5b-current-rev9"]
-    assert missing["status"] == "missing"
-    assert missing["target_prefix_clean"] == "NA"
-    assert screening["launch"] == [cid]
-    assert screening["sentinels"]["current"] == cid
-    assert screening["sentinels"]["task_last"] is None
-    # The prefix verdict is a strict recompute: a wrong-but-stored-as-
-    # correct completion flips it to False.
-    dirty = json.loads(json.dumps(runs[0]))
-    dirty["cases"][0]["completion"] = "<artifact>999999</artifact>"
-    assert prefix_verdict(dirty, cid) is False
+WORKER_DEV_P1_POP = {"namespace": "worker_dev", "per_cell": 10,
+                     "renderers": list(RENDERER_IDS),
+                     "visibility": "private"}
 
+
+def build_tranche_a_p1_files(tmp_path):
+    """All eight Tranche-A P1 triplets: the two current-contract rev9
+    arms answer with reference artifacts (prefix-clean); every other arm
+    emits a legal-but-wrong default. Returns the shared script for the
+    current contract."""
+    clean_arms = ("coder_1p5b-current-rev9", "generic_1p5b-current-rev9")
+    cases, labels = candidate_p1_cases(clean_arms[0])
+    latents = generate_latents(WORKER_DEV_P1_POP)
+    script = reference_script(list(cases), list(labels), latents)
+    for cid in arm_order("A"):
+        runs = fake_candidate_runs(
+            cid, script=script if cid in clean_arms else None)
+        for index, run in enumerate(runs, start=1):
+            (tmp_path / f"{cid}.p1-{index}.json").write_text(
+                json.dumps(run))
+    return script
+
+
+def test_screen_requires_the_complete_tranche(tmp_path):
+    build_tranche_a_p1_files(tmp_path)
+    screening = screen_candidates(tmp_path, "A")
+    clean = {cid for cid, entry in screening["candidates"].items()
+             if entry["target_prefix_clean"] is True}
+    assert clean == {"coder_1p5b-current-rev9",
+                     "generic_1p5b-current-rev9"}
+    assert all(entry["admitted"]
+               for entry in screening["candidates"].values())
+    # Launch = prefix-clean arms + the task_last sentinel (current's
+    # sentinel, generic-current-rev9, is already clean).
+    assert screening["sentinels"]["current"] == \
+        "generic_1p5b-current-rev9"
+    assert screening["sentinels"]["task_last"] == \
+        "generic_1p5b-task_last-rev9"
+    assert set(screening["launch"]) == clean | {
+        "generic_1p5b-task_last-rev9"}
+    assert len(screening["p1_sha256"]) == 8
+    assert screening["commit"] == "c" * 40
+
+    # 94_s finding 1: a missing triplet refuses — no partial manifest.
+    (tmp_path / "coder_1p5b-task_last-rev9.p1-2.json").unlink()
+    with pytest.raises(InfrastructureError, match="complete triggered"):
+        screen_candidates(tmp_path, "A")
+
+
+def test_screen_rejects_foreign_and_candidate_less_files(tmp_path):
+    build_tranche_a_p1_files(tmp_path)
+    victim = tmp_path / "coder_1p5b-current-rev9.p1-1.json"
+    run = json.loads(victim.read_text())
+    # 94_s finding 2: a candidate-less diagnostic file cannot screen.
+    run.pop("candidate")
+    victim.write_text(json.dumps(run))
+    with pytest.raises(InfrastructureError, match="embed candidate"):
+        screen_candidates(tmp_path, "A")
+    # And a split commit refuses (94_s finding 4).
+    run["candidate"] = "coder_1p5b-current-rev9"
+    run["git"] = {"commit": "e" * 40, "dirty": False, "diff_sha256": None}
+    victim.write_text(json.dumps(run))
+    with pytest.raises(InfrastructureError, match="one clean executable"):
+        screen_candidates(tmp_path, "A")
+
+
+def test_tranche_b_screening_follows_the_state_machine(tmp_path):
+    with pytest.raises(InfrastructureError, match="requires the Tranche"):
+        screen_candidates(tmp_path, "B")
+    with pytest.raises(InfrastructureError, match="never opened"):
+        screen_candidates(tmp_path, "B",
+                          reveal_a={"selected": "generic_1p5b-current-rev9",
+                                    "contract_states": {}})
+    with pytest.raises(InfrastructureError, match="proven non-target"):
+        screen_candidates(tmp_path, "B", reveal_a={
+            "selected": None,
+            "contract_states": {"current": "proven_non_target",
+                                "task_last": "proven_non_target"}})
+
+
+def fake_full_digest(cid, population):
+    """The full-support digest a FakePool-backed run should pose."""
+    from tasks.conductor.worker_eval_probe import _identity_sha
+    key = candidate_config(cid)["request_contract_key"]
+    cases, _ = build_node_cases(population, request_contract_key=key)
+    return _identity_sha([
+        (case.case_id, case.endpoint_name,
+         hashlib.sha256(case.user_message.encode()).hexdigest(),
+         hashlib.sha256(
+             f"{case.endpoint_name}\x00{case.user_message}".encode()
+         ).hexdigest())
+        for case in cases])
+
+
+def test_reveal_end_to_end_selects_mechanically(tmp_path, monkeypatch):
+    from tasks.conductor import worker_eval_probe as probe_mod
+    from tasks.conductor.worker_eval_probe import (reveal_tranche,
+                                                   support_digests)
+    small = {"namespace": "worker_dev", "per_cell": 2,
+             "renderers": list(RENDERER_IDS), "visibility": "private"}
+    monkeypatch.setattr(probe_mod, "FULL_POPULATION", small)
+    build_tranche_a_p1_files(tmp_path)
+    screening = screen_candidates(tmp_path, "A")
+
+    # Support digests: real P1 entries; full entries for the fake pool.
+    merged = json.loads(json.dumps(support_digests()))
+    for cid in screening["launch"]:
+        merged[cid]["full_identity_sha256"] = fake_full_digest(cid, small)
+    monkeypatch.setattr(probe_mod, "support_digests", lambda: merged)
+
+    latents = generate_latents(small)
+    for cid in screening["launch"]:
+        key = candidate_config(cid)["request_contract_key"]
+        cases, labels = build_node_cases(small, request_contract_key=key)
+        script = reference_script(cases, labels, latents)
+        run_candidate(cid, "isolated", str(tmp_path / f"{cid}-full-r1"),
+                      pool=candidate_pool(cid, script),
+                      git_info={"commit": "c" * 40, "dirty": False,
+                                "diff_sha256": None})
+    outcome = reveal_tranche(tmp_path, screening)
+    # All three launched arms hit the (small-population) target; §8
+    # selects the structurally smallest pool under the current contract.
+    assert all(outcome["results"][cid]["target"]
+               for cid in screening["launch"])
+    assert outcome["results"]["coder_1p5b-task_last-rev9"]["status"] \
+        == "not_evaluated"
+    assert outcome["contract_states"] == {"current": "viable",
+                                          "task_last": "viable"}
+    assert outcome["selected"] == "generic_1p5b-current-rev9"
+    pair = outcome["contrasts"]["full_pairs"][
+        "coder_1p5b-current-rev9 vs generic_1p5b-current-rev9"]
+    assert pair["factor"] == "code_model"
+    assert pair["overall"]["ties"] == pair["overall"]["n"]
+    assert len(outcome["contrasts"]["prefix_pairs"]) > 0
+
+    # 94_s finding 2: a run swapped under another candidate's index
+    # entry is refused, not selected.
+    index_path = tmp_path / "completion_index.json"
+    index = json.loads(index_path.read_text())
+    coder = index["coder_1p5b-current-rev9:isolated"]
+    index["generic_1p5b-current-rev9:isolated"] = coder
+    index_path.write_text(json.dumps(index, indent=1, sort_keys=True))
+    with pytest.raises(InfrastructureError, match="not the registered"):
+        reveal_tranche(tmp_path, screening)
+    # 94_s finding 3: an edited screening manifest does not rederive.
+    doctored = json.loads(json.dumps(screening))
+    doctored["launch"] = ["coder_1p5b-current-rev9"]
+    with pytest.raises(InfrastructureError, match="does not rederive"):
+        reveal_tranche(tmp_path, doctored)
 
 def test_frozen_p0_cohort_fixture_loads_and_matches_rev9_chunks():
     from tasks.conductor.worker_eval_probe import load_cohort

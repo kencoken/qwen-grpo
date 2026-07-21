@@ -36,6 +36,10 @@ CODE_MODELS: dict[str, dict[str, Any]] = {
         "revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
         "parameters": 1_543_714_304,
     },
+    # coder_3b is the one checkpoint never exercised locally; its
+    # declared parameter count is validated at first Tranche-B load, and
+    # a mismatch is a HARD STOP requiring a new preregistration — never
+    # an in-place post-freeze registry correction (94_s).
     "coder_3b": {
         "model_id": "Qwen/Qwen2.5-Coder-3B-Instruct",
         "revision": "488639f1ff808d1d3d0ba301aef8c11461451ec5",
@@ -160,5 +164,6 @@ def physical_layout(profile: Mapping[str, Any]) -> dict[str, Any]:
         "unique_checkpoints": len(checkpoints),
         "declared_parameter_sum": sum(c["declared_parameters"]
                                       for c in checkpoints),
+        "quantization": copy.deepcopy(profile["nf4"]),
         "checkpoints": checkpoints,
     }

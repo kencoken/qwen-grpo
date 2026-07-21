@@ -1231,6 +1231,25 @@ def _validate_measurements(run_dir: Path,
                 or value != value:
             raise InfrastructureError(
                 f"measurement {field!r} is missing or invalid: {value!r}")
+    per_endpoint = measurements.get("per_endpoint")
+    expected_endpoints = set(ENDPOINT_NAMES.values())
+    if not isinstance(per_endpoint, dict) \
+            or set(per_endpoint) != expected_endpoints:
+        raise InfrastructureError(
+            f"per-endpoint telemetry must cover exactly "
+            f"{sorted(expected_endpoints)}")
+    for endpoint, entry in per_endpoint.items():
+        calls, seconds = entry.get("calls"), entry.get("seconds")
+        if not isinstance(calls, int) or calls < 1 \
+                or not isinstance(seconds, (int, float)) or seconds < 0 \
+                or seconds != seconds:
+            raise InfrastructureError(
+                f"per-endpoint telemetry for {endpoint!r} is invalid: "
+                f"{entry!r}")
+    layout_quant = manifest["physical_layout"].get("quantization")
+    if layout_quant != manifest["runtime_profile"]["nf4"]:
+        raise InfrastructureError(
+            "physical layout quantization does not match the profile")
     planned = manifest["physical_layout"]["checkpoints"]
     actual = measurements.get("checkpoints")
     if not isinstance(actual, list):
@@ -1475,7 +1494,10 @@ def _model_scope(endpoint: str) -> tuple[str, ...]:
             f"tokenizer_facts.{endpoint}",
             f"endpoint_fingerprints.{endpoint}",
             "runtime_profile_fingerprint",
-            "worker_visible_fingerprint")
+            "worker_visible_fingerprint",
+            # 94_s finding 7: the planned physical layout follows from
+            # the declared endpoint's checkpoint.
+            "physical_layout")
 
 
 def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
