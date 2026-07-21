@@ -171,8 +171,14 @@ class WorkerPool:
                 "revision": key[1],
                 "endpoints": endpoints,
                 "loaded": model is not None,
+                # NF4 packs 4-bit weights two per byte, so Params4bit
+                # reports half its logical size; unpack to count actual
+                # model parameters (verified against all three cached
+                # checkpoints, 2026-07-21).
                 "measured_parameters": (
-                    sum(p.numel() for p in model.parameters())
+                    sum((p.numel() * 2
+                         if p.__class__.__name__ == "Params4bit"
+                         else p.numel()) for p in model.parameters())
                     if model is not None else None),
             })
         return report
