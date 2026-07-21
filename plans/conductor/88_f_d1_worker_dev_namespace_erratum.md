@@ -7,6 +7,12 @@ This is the narrow erratum called for by plan `81_f` §4.6/D1 and
 required as a Tranche-D precondition (§8); it discharges the binding
 obligation recorded in `86_s`/`87_f`.
 
+**Amended in place (2026-07-21, per 89_s):** admission now proves the
+regenerated plan rather than trusting the namespace label; the Gate-D
+CLI is hard-bound with no override; §7 step 4's sequencing is corrected
+to the joint scope × model design. Ratification per 89_s step 1 follows
+these fixes.
+
 **Amends:** the §1.13 predeclared namespace table (root
 `conductor_cell_specs.md`, frozen at v0.8). On ratification this
 document is the normative record; consolidation into the root
@@ -72,11 +78,14 @@ sets exist yet, so the cost is nil.
    **permanently barred** from the construction screen, qualification,
    and any train/dev/test estimate. No result computed on it can feed a
    Stage-1 gate (consistent with §5.6's gate-scope rule).
-3. **Authoritative binding (86_s obligation):** on ratification,
-   `worker_dev` becomes the default `--namespace` for the probe `admit`
-   and `confirm` commands. Explicit overrides remain possible at the
-   function level for CPU tests and diagnostics, but a Gate-D verdict is
-   valid only against this namespace.
+3. **Authoritative binding (86_s obligation, tightened per 89_s):**
+   the public `admit` and `confirm` commands are hard-bound to
+   `worker_dev` — no CLI namespace override exists. Other namespaces
+   remain reachable only through the Python functions, for CPU tests
+   and diagnostics, and never produce the Gate-D verdict wording.
+   Admission additionally regenerates the declared plan and requires
+   every run to match it case by case (support, order, endpoint,
+   request identity) — the namespace label on a run is not evidence.
 4. **D4 is not resolved here.** The consumed `construction` prefix 0–29
    remains consumed; how the formal 100-per-cell construction screen
    accounts for it is a separate decision that must be closed before
@@ -122,11 +131,10 @@ namespace table is frozen §1.13 surface:
 
 - `types.py`: `NAMESPACES` gains `"worker_dev"` (checklist 1).
 - `program.py`: the §2 `NAMESPACE_CONFIG` entry, verbatim (checklist 2).
-- `worker_eval_probe.py`: `admit`/`confirm` `--namespace` now defaults
-  to `worker_dev` (checklist 3; the 86_s obligation discharged — a
-  green verdict against any other namespace requires an explicit
-  override and is diagnostics, not Gate D). The `confirm_repeat_run`
-  docstring notes the binding.
+- `worker_eval_probe.py`: `admit`/`confirm` are hard-bound to
+  `worker_dev` with no CLI override (checklist 3 as amended per 89_s),
+  and admission verifies the regenerated plan case by case. The
+  `confirm_repeat_run` docstring notes the binding.
 - Tests (checklist 4, three tests): cap refusal at index 30 and
   namespace-cap 30 for every cell including `fork_join`; disjointness
   from `construction` (different latent program id and registry at the
@@ -168,17 +176,18 @@ In order:
    canonical, reversed) under default backend flags; `admit` requires
    exact generation-field equality and the frozen cost gate (≤3600 s
    projected 900-case run, <22 GiB). Fail closed per §7.4.
-4. **The crossed candidate re-testing** (the bounded comparison `78_s`
-   called for instead of further wordsmithing): Code endpoint
-   candidates (Coder-1.5B, generic-1.5B, Coder-3B, generic-3B) run
-   cache-disabled on the full 30-per-cell `worker_dev` population,
-   isolated scoring plus composed diagnostics, all three renderers;
-   compared only via `compare_worker_eval_runs(..., "model",
-   model_endpoint="code")` — selecting on the worst renderer/node-
-   operator stratum, not the pooled mean. The request-scope arm
-   (Problem/Task salience) follows once a scope option parameterizes
-   `build_worker_request`, which also re-enables the disabled
-   request-contract comparison dimension.
+4. **The crossed candidate re-testing** — CORRECTED per 89_s (this
+   section originally sequenced model-then-scope, reversing 78_s's
+   conclusion that model and request-salience interact): scope and
+   model vary *jointly*, starting with the bounded
+   {current, task-last} × {Coder-1.5B, generic-1.5B} design and the
+   89_s escalation rules, preregistered in `91_f` before any P1 output
+   is inspected. Runs are cache-disabled on the full 30-per-cell
+   `worker_dev` population, isolated scoring, all three renderers;
+   model contrasts compare via `compare_worker_eval_runs(..., "model",
+   model_endpoint="code")`, scope contrasts via the request-contract
+   dimension once the task-last builder option lands — selecting on
+   the worst renderer/node-operator stratum, not the pooled mean.
 5. **§7.4 confirmation for finalists**: each candidate advanced to the
    final comparison gets its full 900-case run repeated in a fresh
    process with exact generation equality (`confirm`, bound to

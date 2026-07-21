@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import functools
 import hashlib
 import json
 import os
@@ -422,12 +423,31 @@ _P1_HELD_FIXED = ("namespace", "per_cell", "renderers", "visibility",
                   "runtime_profile_fingerprint", "system_prompt_sha256",
                   "chat_template_sha256", "environment")
 
-# The declared §7.3 P1 design (namespace registration pends the D1
-# erratum): 10 latents per cell crossed with all renderers, private
-# visibility — 300 node cases. Diagnostic runs with other shapes are
-# legal probe invocations but never admissible.
+# The registered §7.3 P1 design (D1 erratum, 88_f): 10 latents per cell
+# crossed with all renderers, private visibility — 300 node cases.
+# Diagnostic runs with other shapes are legal probe invocations but
+# never admissible.
 P1_PER_CELL = 10
 P1_CASES = 300
+
+# The authoritative Gate-D namespace (88_f §3.3, ratified per 89_s):
+# the public admit/confirm commands are hard-bound to it.
+WORKER_DEV_NAMESPACE = "worker_dev"
+
+
+@functools.lru_cache(maxsize=4)
+def _p1_expected_plan(namespace: str
+                      ) -> tuple[tuple[str, str, str], ...]:
+    """(case_id, endpoint, user_message_sha256) in canonical plan order,
+    regenerated from the frozen generator. 89_s blocking finding: the
+    namespace *label* on a run is not evidence — admission must prove
+    the runs posed exactly the declared plan."""
+    cases, _ = build_probe_cases(namespace, P1_PER_CELL,
+                                 list(RENDERER_IDS), "private")
+    return tuple(
+        (case.case_id, case.endpoint_name,
+         hashlib.sha256(case.user_message.encode("utf-8")).hexdigest())
+        for case in cases)
 
 
 def admit_singleton(runs: list[Mapping[str, Any]],
@@ -476,6 +496,30 @@ def admit_singleton(runs: list[Mapping[str, Any]],
     if len(set(pids)) != 3:
         reasons.append(f"process ids {pids} are not distinct; each run "
                        "must be a fresh process")
+    # 89_s blocking finding: regenerate the declared plan and require
+    # every run to match it — support, order, endpoint and request
+    # identity. A relabelled namespace header proves nothing.
+    plan = _p1_expected_plan(expected_namespace)
+    canonical_ids = [case_id for case_id, _, _ in plan]
+    identity = {case_id: (endpoint, user_sha)
+                for case_id, endpoint, user_sha in plan}
+    for index, run in enumerate(runs):
+        sequence = [record["case_id"] for record in run["cases"]]
+        expected_sequence = (canonical_ids if run["order"] == "canonical"
+                             else list(reversed(canonical_ids)))
+        if sequence != expected_sequence:
+            reasons.append(
+                f"run {index + 1}: case sequence is not the "
+                f"{expected_namespace} plan in {run['order']} order")
+            continue
+        drifted = [record["case_id"] for record in run["cases"]
+                   if (record["endpoint_name"],
+                       record["user_message_sha256"])
+                   != identity[record["case_id"]]]
+        if drifted:
+            reasons.append(
+                f"run {index + 1}: endpoint/request identity differs "
+                f"from the regenerated plan for {drifted[:3]}")
     for index in (1, 2):
         for diff in compare_records(runs[0]["cases"], runs[index]["cases"]):
             unequal = [field for field in diff["fields"]
@@ -571,12 +615,10 @@ def main(argv: list[str] | None = None) -> int:
 
     adm = sub.add_parser("admit", help="§7.3 singleton-v1 verdict")
     adm.add_argument("runs", nargs=3)
-    # The authoritative namespace bound per the D1 erratum (88_f) and
-    # the 86_s deferred-gates note: a green verdict against any other
-    # namespace is diagnostics, not Gate D.
-    adm.add_argument("--namespace", default="worker_dev",
-                     help="the declared P1 namespace the runs must use "
-                          "(default: the registered worker_dev universe)")
+    # Hard-bound to the registered worker_dev universe (88_f §3.3 as
+    # amended per 89_s): the public Gate-D commands take no namespace
+    # override; diagnostics against other namespaces use the Python
+    # functions, whose output is never the Gate-D wording.
     adm.add_argument("--max-seconds", type=int,
                      default=MAX_FULL_RUN_SECONDS)
     adm.add_argument("--max-vram-gib", type=float, default=None)
@@ -586,9 +628,6 @@ def main(argv: list[str] | None = None) -> int:
                         "candidate (two evaluator run directories)")
     conf.add_argument("left")
     conf.add_argument("right")
-    conf.add_argument("--namespace", default="worker_dev",
-                      help="the declared full-population namespace "
-                           "(default: the registered worker_dev universe)")
 
     args = ap.parse_args(argv)
 
@@ -646,7 +685,7 @@ def main(argv: list[str] | None = None) -> int:
         max_vram = (int(args.max_vram_gib * 2 ** 30)
                     if args.max_vram_gib is not None
                     else MAX_PEAK_VRAM_BYTES)
-        verdict = admit_singleton(runs, args.namespace,
+        verdict = admit_singleton(runs, WORKER_DEV_NAMESPACE,
                                   max_seconds=args.max_seconds,
                                   max_vram_bytes=max_vram)
         print(json.dumps(verdict, indent=1, sort_keys=True))
@@ -657,11 +696,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "confirm":
         from .worker_eval import confirm_repeat_run, load_run
-        # The CLI always enforces the full §7.4 population; only the
-        # function's tests may shrink per_cell.
+        # The CLI always enforces the full §7.4 population against the
+        # registered namespace; only the Python functions accept other
+        # namespaces, for tests and diagnostics.
         verdict = confirm_repeat_run(load_run(args.left),
                                      load_run(args.right),
-                                     args.namespace)
+                                     WORKER_DEV_NAMESPACE)
         print(json.dumps(verdict, indent=1, sort_keys=True))
         print("CONFIRMED: repeat run is generation-identical"
               if verdict["confirmed"]

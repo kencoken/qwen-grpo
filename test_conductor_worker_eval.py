@@ -1087,28 +1087,37 @@ def test_p0_cohort_pinning_and_endpoint_fail_closed():
                      "visibility": "private", "chunks": [[entry]]})
 
 
+@functools.lru_cache(maxsize=1)
+def worker_dev_sample():
+    """Cached registered-plan sample for Gate-D CLI tests."""
+    return build_probe_cases("worker_dev", 10, list(RENDERER_IDS),
+                             "private")
+
+
 def test_probe_cli_compare_and_admit_verdicts(tmp_path, capsys):
-    cases, labels = probe_sample()
-    records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
-                                 cases, labels, "canonical")
+    cases, labels = worker_dev_sample()
     paths = []
     for index, order in enumerate(("canonical", "canonical", "reversed")):
+        records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
+                                     cases, labels, order)
         path = tmp_path / f"run{index}.json"
-        path.write_text(json.dumps(fake_p1_output(records, order)))
+        path.write_text(json.dumps(fake_p1_output(
+            records, order, namespace="worker_dev")))
         paths.append(str(path))
     assert probe_main(["compare", paths[0], paths[1]]) == 0
-    assert probe_main(["admit", *paths,
-                       "--namespace", "construction"]) == 0
+    assert probe_main(["admit", *paths]) == 0
     assert "ADMIT singleton-v1" in capsys.readouterr().out
 
+    records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
+                                 cases, labels, "reversed")
     tampered = fake_p1_output(
-        [dict(records[0], completion="x")] + records[1:], "reversed")
+        [dict(records[0], completion="x")] + records[1:], "reversed",
+        namespace="worker_dev")
     (tmp_path / "bad.json").write_text(json.dumps(tampered))
     assert probe_main(["compare", paths[0],
                        str(tmp_path / "bad.json")]) == 1
     assert probe_main(["admit", paths[0], paths[1],
-                       str(tmp_path / "bad.json"),
-                       "--namespace", "construction"]) == 1
+                       str(tmp_path / "bad.json")]) == 1
     assert "FAIL" in capsys.readouterr().out
 
 
@@ -1228,9 +1237,9 @@ def test_confirm_repeat_run_and_cli(tmp_path, capsys):
     small = confirm_repeat_run(left, right, "construction")
     assert not small["confirmed"]
     assert any("full §7.4 population" in r for r in small["reasons"])
-    assert probe_main(["confirm", str(left_dir), str(right_dir),
-                       "--namespace", "construction"]) == 1
-    assert "FAIL" in capsys.readouterr().out
+    assert probe_main(["confirm", str(left_dir), str(right_dir)]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL" in out and "worker_dev" in out
 
     # Wrong namespace and split commits each refuse.
     assert not _confirm_repeat_run(left, right, "worker_dev", 1)["confirmed"]
@@ -1480,18 +1489,19 @@ def test_worker_dev_namespace_is_capped_disjoint_and_deterministic():
     again = program.generate_latent("math_code", "worker_dev", 19,
                                     DEFAULT_PROFILE).latent
     assert again == latent
-    # The cap is the stopping rule: index 30 refuses.
-    assert program.namespace_cap("worker_dev", "fork_join") == 30
-    with pytest.raises(Exception, match="range"):
-        program.generate_latent("math_code", "worker_dev", 30,
-                                DEFAULT_PROFILE)
+    # The cap is the stopping rule in every cell: index 30 refuses.
+    for cell in CELL_IDS:
+        assert program.namespace_cap("worker_dev", cell) == 30
+        with pytest.raises(program.GenerationError, match="range"):
+            program.generate_latent(cell, "worker_dev", 30,
+                                    DEFAULT_PROFILE)
 
 
 def test_worker_dev_p1_prefix_clears_coverage():
     assert_probe_coverage(probe_latents("worker_dev", 10))
 
 
-def test_probe_cli_namespace_defaults_to_worker_dev(tmp_path, capsys):
+def test_gate_d_cli_is_hard_bound_to_worker_dev(tmp_path, capsys):
     cases, labels = probe_sample()
     records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
                                  cases, labels, "canonical")
@@ -1500,8 +1510,51 @@ def test_probe_cli_namespace_defaults_to_worker_dev(tmp_path, capsys):
         path = tmp_path / f"{order}-{len(paths)}.json"
         path.write_text(json.dumps(fake_p1_output(records, order)))
         paths.append(str(path))
-    # Without --namespace the verdict holds runs to worker_dev; these
+    # The public verdict holds runs to worker_dev; these
     # construction-based diagnostics therefore fail admission.
     assert probe_main(["admit", *paths]) == 1
     out = capsys.readouterr().out
     assert "worker_dev" in out
+    # 89_s: there is no namespace override on the Gate-D commands.
+    with pytest.raises(SystemExit):
+        probe_main(["admit", *paths, "--namespace", "construction"])
+
+
+# =============================================================================
+# 89_s review response: admission proves the plan, not the label.
+# =============================================================================
+
+def test_admit_rejects_relabelled_construction_runs():
+    """The 89_s reproduction as a regression: three genuine construction
+    P1 runs whose top-level namespace field is relabelled worker_dev must
+    not admit — the regenerated worker_dev plan disagrees case by case."""
+    cases, labels = probe_sample()
+    relabelled = []
+    for order in ("canonical", "canonical", "reversed"):
+        records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
+                                     cases, labels, order)
+        relabelled.append(fake_p1_output(records, order,
+                                         namespace="worker_dev"))
+    verdict = admit_singleton(relabelled, "worker_dev")
+    assert not verdict["admitted"]
+    assert any("plan" in reason for reason in verdict["reasons"])
+
+
+def test_admit_verifies_endpoint_and_request_identity_against_plan():
+    cases, labels = probe_sample()
+    runs = []
+    for order in ("canonical", "canonical", "reversed"):
+        records, _, _ = run_p1_cases(eval_runtime(pool=FakePool()),
+                                     cases, labels, order)
+        runs.append(fake_p1_output(records, order))
+    assert admit_singleton(runs, "construction")["admitted"]
+    # Same support and order, one case posing a different request.
+    tampered = copy_mod.deepcopy(runs)
+    victim = tampered[1]["cases"][4]
+    victim["user_message_sha256"] = "0" * 64
+    for run in tampered:  # keep cross-run request equality intact
+        run["cases"][4]["user_message_sha256"] = "0" * 64
+    verdict = admit_singleton(tampered, "construction")
+    assert not verdict["admitted"]
+    assert any("identity differs" in reason
+               for reason in verdict["reasons"])
