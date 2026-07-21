@@ -25,7 +25,7 @@ from typing import Any, Callable, Mapping, Protocol
 from . import contract, render
 from .parser import WorkflowAction
 from .resources import InstanceRegistry
-from .tools import Binding
+from .tools import Binding, binding_sha256
 from .types import InfrastructureError, WorkerResult
 
 WorkerCall = Callable[[int, str], str]
@@ -48,6 +48,9 @@ class StepRecord:
     request: str | None
     completion: str | None
     override_applied: bool
+    # Canonical hash of the call's authorized inputs (81_f §5.3); None
+    # when no call was built (world failure, dependency block).
+    binding_sha256: str | None = None
 
 
 @dataclass
@@ -71,6 +74,30 @@ class WorkflowItem:
 
 def _step_failed(record: StepRecord) -> bool:
     return record.result is None or record.result.status != "success"
+
+
+def build_worker_call(public_prompt: str, subtask: str,
+                      resource: str | None, registry: InstanceRegistry,
+                      previous: Mapping[int, int] | None
+                      ) -> tuple[str, Binding]:
+    """Reference-free (request, binding) construction for one step — the
+    single path shared by composed execution and isolated worker
+    evaluation (81_f §6.4), so the two cannot drift. Callers handle
+    resource-resolution failure first; an unknown handle here aborts."""
+    resource_text = None
+    binding_resources: dict[str, Any] = {}
+    if resource is not None:
+        payload = registry.resolve(resource)
+        if payload is None:
+            raise InfrastructureError(
+                f"unresolved resource handle {resource!r}")
+        resource_text = registry.payload_text(resource)
+        binding_resources = {resource: payload}
+    request = render.build_worker_request(
+        public_prompt, subtask, resource_text=resource_text,
+        previous_results=dict(previous) if previous is not None else None)
+    return request, Binding(resources=binding_resources,
+                            steps=dict(previous) if previous else {})
 
 
 @dataclass
@@ -118,26 +145,20 @@ def execute_workflow_batch(items: list[WorkflowItem],
                 _trace_step(trace, item, rec, None)
                 continue
 
-            resource_text = None
-            binding_resources = {}
-            if step.resource is not None:
-                resource = item.registry.resolve(step.resource)
-                if resource is None:  # foreign/unknown handle: world failure
-                    rec = StepRecord(position, step.worker_id, None,
-                                     "unknown_handle", None, None, False)
-                    records[index].append(rec)
-                    _trace_step(trace, item, rec, None)
-                    continue
-                resource_text = item.registry.payload_text(step.resource)
-                binding_resources = {step.resource: resource}
+            if step.resource is not None and \
+                    item.registry.resolve(step.resource) is None:
+                # Foreign/unknown handle: world failure, no call.
+                rec = StepRecord(position, step.worker_id, None,
+                                 "unknown_handle", None, None, False)
+                records[index].append(rec)
+                _trace_step(trace, item, rec, None)
+                continue
 
             previous = (dict(wire_values[index]) if step.access == "all"
                         else None)
-            request = render.build_worker_request(
-                item.public_prompt, step.subtask,
-                resource_text=resource_text, previous_results=previous)
-            binding = Binding(resources=binding_resources,
-                              steps=previous or {})
+            request, binding = build_worker_call(
+                item.public_prompt, step.subtask, step.resource,
+                item.registry, previous)
 
             if position in item.pseudo_workers:
                 result = item.pseudo_workers[position](request)
@@ -145,7 +166,8 @@ def execute_workflow_batch(items: list[WorkflowItem],
                     raise InfrastructureError("pseudo-worker result must "
                                               "carry synthetic=true")
                 rec = _finish_step(item, position, step, result, request,
-                                   None, wire_values[index])
+                                   None, wire_values[index],
+                                   binding_sha256(binding))
                 records[index].append(rec)
                 _trace_step(trace, item, rec, None)
             else:
@@ -172,7 +194,8 @@ def execute_workflow_batch(items: list[WorkflowItem],
                     step.worker_id, call_record.completion, call.binding)
                 rec = _finish_step(item, call.position, step, result,
                                    call.request, call_record.completion,
-                                   wire_values[call.item_index])
+                                   wire_values[call.item_index],
+                                   binding_sha256(call.binding))
                 records[call.item_index].append(rec)
                 _trace_step(trace, item, rec, call_record)
 
@@ -189,8 +212,8 @@ def execute_workflow_batch(items: list[WorkflowItem],
 
 def _finish_step(item: WorkflowItem, position: int, step: Any,
                  result: WorkerResult, request: str | None,
-                 completion: str | None,
-                 wire_values: dict[int, int]) -> StepRecord:
+                 completion: str | None, wire_values: dict[int, int],
+                 binding_sha: str | None = None) -> StepRecord:
     """Post-call bookkeeping shared by real and pseudo calls: §1.9 wire
     replacement in both channels for every downstream consumer."""
     override_applied = False
@@ -202,7 +225,7 @@ def _finish_step(item: WorkflowItem, position: int, step: Any,
             override_applied = True
         wire_values[position] = value
     return StepRecord(position, step.worker_id, result, None, request,
-                      completion, override_applied)
+                      completion, override_applied, binding_sha)
 
 
 def execute_workflow(action: WorkflowAction, public_prompt: str,
