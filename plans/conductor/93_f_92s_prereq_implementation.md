@@ -1,5 +1,11 @@
 # 92_s §6 prerequisite implementation + `code_local_v1` draft
 
+**Amended in place (2026-07-21, per 94_s):** the `code_local_v1`
+whitelist sentence is corrected to the reviewer's grammar-accurate
+wording (hash-changing; new sha below); §2's claims about rev9's
+contrast count, the evidential status of positive-only prompting, and
+the rev4 layout are corrected as 94_s specifies.
+
 **Status:** implemented; full suite 560 tests, `-W error` clean. The
 `code_local_v1` prompt text (§2 below) is submitted for Ken's and the
 reviewer's review — it must be approved and its hash frozen into `92_s`
@@ -84,23 +90,30 @@ the D1 ratification record (92_s §6.1) remains Ken's entry.
 ## 2. `code_local_v1` — draft for review (92_s §2.3)
 
 Registered as `PROMPT_REVISIONS["code_local_v1"]` (Lookup/Math texts
-byte-identical to rev9; code sha256 `7aa430845b7ca12c…`). Derivation,
-each choice traceable to retained evidence only:
+byte-identical to rev9; code sha256
+`17a05a190b3c011b81794c82b741134f40945772cb71ba1ebe7587d29d4f7fba`
+after the 94_s grammar amendment — top-level call restricted to
+`count_gt`/`at`, nesting to `stable_unique`/`rotate_left`, per-call
+argument arity stated correctly). Derivation, each choice traceable to
+retained evidence only:
 
 1. **Task-locality is the first sentence** ("Complete only the assigned
    Task — the Problem is background context…"): the dominant
    alternative-renderer failure composed the global Problem (78_s
    finding 3); rev3 carried this rule mid-prompt, rev4 cut it, rev9
    never restored it explicitly.
-2. **No wrong exemplars anywhere.** rev7 showed a copyable wrong string
-   that flatters the model's defensive prior becomes a template; rev8
-   showed removing the copy still leaves re-invented guards. rev9 kept
-   three "Wrong:" contrasts; v1 states positive rules only ("written
-   exactly as given", "any step_k you are given is already a valid
-   zero-based index, even when it is large").
-3. **The rev4 winning layout** (critical rules first, three worked
-   examples, rules + envelope restated last) and **the rev9
-   matched-regime `step_1 = 10` demonstration** are kept; demonstration
+2. **No wrong exemplars anywhere — as the hypothesis under test.**
+   The retained evidence demonstrates only that the *anti-guard* wrong
+   exemplar backfired (rev7: copied verbatim; rev8: removed, guards
+   re-invented); it does not prove every negative exemplar is harmful.
+   rev9 keeps two Code "Wrong:" contrasts; v1 states positive rules
+   only ("written exactly as given", "any step_k you are given is
+   already a valid zero-based index"), and the prompt factor tests
+   that choice rather than assuming it.
+3. **rev4's rules/examples/final-restatement structure** and **the
+   rev9 matched-regime `step_1 = 10` demonstration** are kept
+   (v1 reorders which rule comes first, so it retains the structure,
+   not rev4's exact layout); demonstration
    payloads are the same machine-verified objects, interpolated at
    import so the text cannot drift from what the runtime accepts.
 4. **Model-neutral:** no wording targets a specific checkpoint's

@@ -326,11 +326,12 @@ it are not part of your answer. The sequence argument in your \
 expression is always the word resource — never a name like R-8C3 — and \
 it refers to the sequence shown under Resource: in this request. \
 Respond with exactly one <artifact>...</artifact> containing a single \
-expression built only from the whitelist calls count_gt(seq, n), \
-at(seq, n), stable_unique(seq), rotate_left(seq, n) — no arithmetic \
-operators — where seq is resource or a nested whitelist call and n is \
-a nonnegative integer or step_k, written exactly as given. In every \
-call the FIRST argument is the sequence and the SECOND is the number. \
+expression with no arithmetic operators. The top-level call must be \
+count_gt(seq, n) or at(seq, n), where seq is resource or a nesting \
+formed only with stable_unique(seq) and rotate_left(seq, n), and n is \
+a nonnegative integer or step_k, written exactly as given. In \
+count_gt, at, and rotate_left, the FIRST argument is the sequence and \
+the SECOND is the number; stable_unique takes only the sequence. \
 stable_unique keeps the first occurrence of each value; rotate_left \
 rotates left; at is zero-based, and any step_k you are given is \
 already a valid zero-based index, even when it is large.
