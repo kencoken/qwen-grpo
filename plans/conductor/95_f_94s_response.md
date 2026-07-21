@@ -126,9 +126,45 @@ The reviewer's grammar-accurate replacement landed verbatim; the final
 `93_f`'s three factual claims are corrected as specified. Awaiting
 Ken's sign-off at this hash.
 
-## P0 replays
+## P0 replays — executed, evidence retained
 
-Executed on `picome` under the frozen cohort
-(`p0_rev9_code_cohort.json`, 90 calls, chunks [16, 16, 13, 16, 16, 13]),
-four fresh-process conditions plus comparisons — results appended below
-after execution.
+Run on `picome` under the frozen cohort (`p0_rev9_code_cohort.json`,
+90 calls, chunks [16, 16, 13, 16, 16, 13]), four fresh-process
+conditions at commit `20dc20c`, every command with a valid artifact and
+exit 0. A first attempt on the then-dirty worktree was refused by the
+comparator (`NOT COMPARABLE: git.dirty`) and discarded — the 94_s
+discipline catching its own author, as intended.
+
+| comparison | differing cases |
+|---|---|
+| original vs original (fresh processes) | **0 / 90** |
+| original vs reversed-within-chunk | **0 / 90** |
+| original vs singleton | **2 / 90** |
+| reversed vs singleton | 2 / 90 |
+
+The singleton differences reproduce the historical microbatch-1 result
+exactly (78_s finding 6: +2 legal, +1 node-correct):
+
+- `fork_join:00006:n2` — batched: the handle-substitution failure
+  (`count_gt(stable_unique(R-1W9), 6)`, typed failure); singleton: the
+  **correct** artifact (`resource`, success, node-correct). Batch
+  composition was suppressing a correct answer.
+- `math_code:00025:n2` — batched: the invented index guard
+  (`at(resource, step_1 % length(resource))`, typed failure);
+  singleton: a legal but semantically wrong artifact (value 68).
+  Node-incorrect either way; the *failure mode* is batch-dependent.
+
+One refinement over the historical record: 78_s's "reversed" condition
+reversed within the 45-request *wave*, changing chunk membership, and
+saw 1/90 change. This replay's reversed-within-*chunk* condition (the
+92_s §6.2 specification — membership preserved, order changed) produces
+**zero** differences. The sensitivity therefore localizes to physical
+batch *composition* — which requests share the `model.generate` call —
+not to position within a fixed batch. Retained in
+`runs/p0-rev9-replay/` (gitignored raw artifacts + logs); the frozen
+cohort and this record are the committed evidence.
+
+P0 admits nothing, but the result retro-confirms the experiment's
+generation policy: the batched regime changed one case's correctness
+and another's failure mode on exactly the population the candidates
+will be judged on.
