@@ -481,13 +481,40 @@ odd; paired construction instances throughout; qualification untouched;
   `chat_template_bytes.json` regenerated per revision; 488 tests
   `-W error` throughout.
 
+### D16 cycle continuation: revs 6–9 and close (2026-07-21)
+
+Ken provisionally signed off the Math endpoint swap to base
+Qwen2.5-1.5B-Instruct (recorded in `70_f`, spec §1.6 erratum deferred to
+the D16/third-party review; critiques thereafter address prompts only).
+Continuation trail `70_f`–`77_f`; iteration ran until ideas were
+exhausted or a model limit dominated, per instruction. Final state
+(rev9 texts, per-cell-30 confirmation incl. 15 unseen instances/cell —
+first out-of-tuning-set evaluation, no overfit cliff):
+
+- **Lookup 90/90, Math 116/116** — both closed at 100%; Math correct in
+  value everywhere, zero truncation anywhere after the swap.
+- **Code 78/90 (86.7%)** — code_atomic 29/30, fork_join 26/30,
+  math_code 23/30. **Model-limit verdict** (pre-registered rule, 75_f)
+  on the dominant residual: a value-triggered index-safety guard
+  (`step_1 % length(resource)`) fired for step_1 ≳ 9–11, surviving
+  four treatments; a matched-regime demo cleared only its literal value
+  (step_1 = 10) — anchoring without abstraction. Mitigation flagged for
+  the construction screen: the phase-2 (S) band choice can keep
+  math_code indexes ≤ 8 and sidestep the trigger (`76_f`).
+- New transferable findings: concrete wrong exemplars backfire when
+  they flatter the model's prior (rev7→rev8 controlled pair);
+  demonstrations anchor to literals at 1.5B (rev9).
+- Terminal correct 167/180 (92.8%), from 17% at rev1. Descriptive gate
+  outlook: math_code E_PARSE 23% would fail the 1A <2% parse gate
+  absent the index-band mitigation or cell failure — both priced in.
+
 ### Still blocking the construction screen (unchanged from 0A close-out)
 
-D16 review + freeze against the real workers (now executable end to end,
-with the `60_f`–`69_f` evidence package and one blocking endpoint-model
-question); B1 controls frozen before construction outcomes are
-inspected; the canonical population + execution manifest (Stage-1A
-`calibrate.py`).
+D16 review + freeze against the real workers (evidence package
+`60_f`–`77_f` complete; blocking decisions now: ratify the §1.6 Math
+endpoint erratum, freeze rev9 texts, rule on the math_code index band);
+B1 controls frozen before construction outcomes are inspected; the
+canonical population + execution manifest (Stage-1A `calibrate.py`).
 
 ## Backlog (Stage-2+ entry gates)
 

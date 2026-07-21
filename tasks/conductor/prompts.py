@@ -81,6 +81,16 @@ Revision cycle (evidence per revision in `plans/conductor/60_f_…`):
   non-copyable phrasing ("the number argument is step_1 or an integer,
   written exactly as given — never wrap it in arithmetic"). Nothing
   else changes.
+  Eval (74_f): math_code still 11/15, SAME four instances — with the
+  template gone they re-invent at(resource, step_1 % length(resource))
+  spontaneously. Trigger isolated: failures are exactly step_1 >= 10;
+  passes all step_1 <= 5. Value-dependent defensive prior.
+- rev9 (75_f): the matched-regime lever — the second Code demonstration
+  binds step_1 = 10 (large-index regime, the trigger zone) instead of
+  step_1 = 2, plus the assurance "step_1 is always a valid zero-based
+  index, even when it is large." Pre-registered decision rule: clears
+  math_code -> content iteration done; guard persists -> model-limit
+  verdict for this mode, residue referred to the 1A gates.
 
 The §1.5 request skeleton — chat template over exactly (system, user) —
 is frozen; demonstrations enter as worked examples INSIDE the system
@@ -96,7 +106,7 @@ from __future__ import annotations
 from .types import IntegerList, IntegerRecord, Resource
 
 D16_STATUS = "DRAFT"  # flips to "FROZEN <date>" only via its own review
-D16_REVISION = "rev8"  # bumps with any change to the strings below
+D16_REVISION = "rev9"  # bumps with any change to the strings below
 # (rev5 was the no-change confirmation run; the counter tracks the
 # revision-log numbering in plans/conductor/.)
 
@@ -150,11 +160,14 @@ DEMONSTRATIONS: dict[str, list[dict[str, object]]] = {
     }, {
         # step_k form: the math_code n2 request shape (resource + one
         # previous result as the index).
+        # step_1 = 10 deliberately sits in the large-index regime that
+        # triggers the model's defensive %-guard (74_f): the demo must
+        # cover the regime it needs to teach.
         "subtask": "Return the value at zero-based index step_1 in the "
                    "integer sequence from the requested resource.",
-        "handle": "R-8C3", "resource": _DEMO_CODE_LIST, "steps": {1: 2},
+        "handle": "R-8C3", "resource": _DEMO_CODE_LIST, "steps": {1: 10},
         "completion": "<artifact>at(resource, step_1)</artifact>",
-        "value": 6,
+        "value": 7,
     }, {
         # select shape (code_atomic): the canonical nesting the rev2
         # traces showed the model garbling when undemonstrated.
@@ -266,7 +279,7 @@ resource. This also holds when the Problem mentions several resources \
 payload shown under Resource: in this request, so the correct response \
 is still count_gt(stable_unique(resource), 5).
 
-Second example — with the previous result step_1 = 2, the task \
+Second example — with the previous result step_1 = 10, the task \
 "{DEMONSTRATIONS["code"][1]["subtask"]}" has exactly this correct \
 response:
 
@@ -275,7 +288,8 @@ response:
 Wrong: at(step_1, resource) — the sequence is always the first \
 argument; the index comes second. The number argument is step_1 or an \
 integer, written exactly as given — never wrap it in arithmetic; the \
-whitelist has no operators.
+whitelist has no operators. step_1 is always a valid zero-based index, \
+even when it is large.
 
 Third example — the task "{DEMONSTRATIONS["code"][2]["subtask"]}" has \
 exactly this correct response:
