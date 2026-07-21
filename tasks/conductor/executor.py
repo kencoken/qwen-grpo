@@ -73,6 +73,30 @@ def _step_failed(record: StepRecord) -> bool:
     return record.result is None or record.result.status != "success"
 
 
+def build_worker_call(public_prompt: str, subtask: str,
+                      resource: str | None, registry: InstanceRegistry,
+                      previous: Mapping[int, int] | None
+                      ) -> tuple[str, Binding]:
+    """Reference-free (request, binding) construction for one step — the
+    single path shared by composed execution and isolated worker
+    evaluation (81_f §6.4), so the two cannot drift. Callers handle
+    resource-resolution failure first; an unknown handle here aborts."""
+    resource_text = None
+    binding_resources: dict[str, Any] = {}
+    if resource is not None:
+        payload = registry.resolve(resource)
+        if payload is None:
+            raise InfrastructureError(
+                f"unresolved resource handle {resource!r}")
+        resource_text = registry.payload_text(resource)
+        binding_resources = {resource: payload}
+    request = render.build_worker_request(
+        public_prompt, subtask, resource_text=resource_text,
+        previous_results=dict(previous) if previous is not None else None)
+    return request, Binding(resources=binding_resources,
+                            steps=dict(previous) if previous else {})
+
+
 @dataclass
 class _PendingCall:
     item_index: int
@@ -118,26 +142,20 @@ def execute_workflow_batch(items: list[WorkflowItem],
                 _trace_step(trace, item, rec, None)
                 continue
 
-            resource_text = None
-            binding_resources = {}
-            if step.resource is not None:
-                resource = item.registry.resolve(step.resource)
-                if resource is None:  # foreign/unknown handle: world failure
-                    rec = StepRecord(position, step.worker_id, None,
-                                     "unknown_handle", None, None, False)
-                    records[index].append(rec)
-                    _trace_step(trace, item, rec, None)
-                    continue
-                resource_text = item.registry.payload_text(step.resource)
-                binding_resources = {step.resource: resource}
+            if step.resource is not None and \
+                    item.registry.resolve(step.resource) is None:
+                # Foreign/unknown handle: world failure, no call.
+                rec = StepRecord(position, step.worker_id, None,
+                                 "unknown_handle", None, None, False)
+                records[index].append(rec)
+                _trace_step(trace, item, rec, None)
+                continue
 
             previous = (dict(wire_values[index]) if step.access == "all"
                         else None)
-            request = render.build_worker_request(
-                item.public_prompt, step.subtask,
-                resource_text=resource_text, previous_results=previous)
-            binding = Binding(resources=binding_resources,
-                              steps=previous or {})
+            request, binding = build_worker_call(
+                item.public_prompt, step.subtask, step.resource,
+                item.registry, previous)
 
             if position in item.pseudo_workers:
                 result = item.pseudo_workers[position](request)

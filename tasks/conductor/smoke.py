@@ -21,7 +21,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import executor, parser, program
-from .agreement import _ENDPOINT_FOR_OP
+from .agreement import ENDPOINT_FOR_OP
 from .cache import CompletionCache
 from .executor import TraceWriter, WorkflowItem
 from .profiles import DEFAULT_PROFILE
@@ -45,7 +45,7 @@ def build_items(per_cell: int) -> tuple[list[WorkflowItem], dict[str, int]]:
                       "access": s["access"]}
                      for s in program.workflow_steps(latent)]
             nodes = {n["id"]: n for n in latent["reference_program"]["nodes"]}
-            routing = [_ENDPOINT_FOR_OP[nodes[node_id]["op"]]
+            routing = [ENDPOINT_FOR_OP[nodes[node_id]["op"]]
                        for node_id in latent["reference_program"]["positions"]]
             action = parser.routing_to_workflow(routing, steps)
             item_id = inst["render_instance_id"]
