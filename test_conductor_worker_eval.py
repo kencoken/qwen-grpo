@@ -253,6 +253,7 @@ def write_run(tmp_path, rows, expected=None, name="run-1"):
     writer = RunWriter(tmp_path / name, manifest)
     for row in rows:
         writer.write_call(row)
+    writer.write_summary({"note": "tranche-a-test"})
     return writer
 
 
@@ -279,7 +280,7 @@ def test_writer_complete_records_counts_and_payload_hashes(tmp_path):
     writer.close()
     manifest = read_manifest(tmp_path / "run-1")
     assert manifest["status"] == "complete"
-    assert manifest["written_rows"] == {"calls": 2}
+    assert manifest["written_rows"] == {"calls": 2, "scores": 0}
     calls_bytes = (tmp_path / "run-1" / "calls.jsonl").read_bytes()
     assert manifest["payload_sha256"]["calls.jsonl"] \
         == hashlib.sha256(calls_bytes).hexdigest()
@@ -301,7 +302,7 @@ def test_writer_exception_marks_run_aborted(tmp_path):
             raise RuntimeError("boom")
     manifest = read_manifest(tmp_path / "run-1")
     assert manifest["status"] == "aborted"
-    assert manifest["written_rows"] == {"calls": 1}
+    assert manifest["written_rows"] == {"calls": 1, "scores": 0}
 
 
 def test_writer_row_shortfall_cannot_complete(tmp_path):
@@ -573,3 +574,313 @@ def test_population_plan_validation_fails_closed():
                          endpoint_schedule_version="payoff-surface-v1")
     with pytest.raises(ProfileError, match="unknown request contract"):
         build_node_cases(POPULATION, request_contract_key="task_last")
+
+
+# =============================================================================
+# Tranche C (plan 81_f §8 Gate C): renderer crossing, composed workflow
+# diagnostic, derived summaries, strict loader, narrow run comparison.
+# =============================================================================
+
+import shutil
+
+from tasks.conductor.prompts import PromptBundle
+from tasks.conductor.worker_eval import (
+    build_workflow_plan, check_renderer_support, compare_worker_eval_runs,
+    load_run, run_composed_workflows, score_workflow_calls,
+    summarize_worker_eval,
+)
+
+ONE_RENDERER_POP = {**POPULATION, "renderers": ["resource_first"]}
+
+
+# --- renderer crossing (81_f §4.5; Gate C) -----------------------------------
+
+def test_renderer_support_missing_duplicate_and_extra_fail():
+    _, labels = node_cases_for_latent(fixture_latent(),
+                                      list(RENDERER_IDS), "private")
+    check_renderer_support(labels, list(RENDERER_IDS))
+    missing = [lab for lab in labels if lab.renderer_id != "goal_first"]
+    with pytest.raises(InfrastructureError, match="renderer support"):
+        check_renderer_support(missing, list(RENDERER_IDS))
+    duplicated = labels + [labels[0]]
+    with pytest.raises(InfrastructureError, match="renderer support"):
+        check_renderer_support(duplicated, list(RENDERER_IDS))
+    with pytest.raises(InfrastructureError, match="renderer support"):
+        check_renderer_support(labels, ["resource_first"])  # extra support
+
+
+# --- composed workflows (81_f §4.3; Gate C denominators) ---------------------
+
+def composed_script():
+    """Reference completions keyed by user message: identical to the
+    isolated script because produced values equal gold when every step
+    answers correctly."""
+    cases, labels = build_node_cases(ONE_RENDERER_POP)
+    latents = generate_latents(ONE_RENDERER_POP)
+    return reference_script(cases, labels, latents)
+
+
+def test_composed_reference_run_reconciles_and_scores_terminal():
+    rt = eval_runtime(pool=FakePool(script=composed_script(),
+                                    default="garbage"))
+    rows, wlabels = run_composed_workflows(rt, ONE_RENDERER_POP, None)
+    scores = score_workflow_calls(rows, wlabels)
+    assert len(scores) == 6 and all(s["terminal_correct"] for s in scores)
+    summary = summarize_worker_eval({"run_id": "unwritten"}, rows, scores)
+    steps = summary["composed"]["steps"]
+    assert steps == {"scheduled": 10, "called": 10,
+                     "dependency_blocked": 0,
+                     "pre_call_world_failure": 0, "synthetic": 0}
+    assert summary["composed"]["terminal_correct"] == 6
+
+
+def test_composed_upstream_failure_blocks_downstream_and_reconciles():
+    script = composed_script()
+    cases, labels = build_node_cases(ONE_RENDERER_POP)
+    case_by_id = {c.case_id: c for c in cases}
+    # Remove the math step of math_code: it falls to the garbage default.
+    (math_case,) = [case_by_id[lab.case_id] for lab in labels
+                    if lab.cell_id == "math_code"
+                    and lab.node_family == "math"]
+    del script[(math_case.endpoint_name, math_case.user_message)]
+    rt = eval_runtime(pool=FakePool(script=script, default="garbage"))
+    rows, wlabels = run_composed_workflows(rt, ONE_RENDERER_POP, None)
+    scores = score_workflow_calls(rows, wlabels)
+    summary = summarize_worker_eval({"run_id": "unwritten"}, rows, scores)
+    steps = summary["composed"]["steps"]
+    # The blocked downstream step is a distinct category, and the four
+    # categories partition the scheduled denominator exactly (§4.3).
+    assert steps == {"scheduled": 10, "called": 9,
+                     "dependency_blocked": 1,
+                     "pre_call_world_failure": 0, "synthetic": 0}
+    assert summary["composed"]["terminal_correct"] == 5
+    (blocked,) = [r for r in rows
+                  if r["call_status"] == "dependency_blocked"]
+    assert blocked["cell_id"] == "math_code"
+    assert blocked["completion"] is None and blocked["request_text"] is None
+    # Survivor-selection contrast: the isolated run calls all ten.
+    iso_rt = eval_runtime(pool=FakePool(script=composed_script(),
+                                        default="garbage"))
+    iso_rows = run_node_cases(iso_rt, cases, None, case_identities(labels))
+    assert len(iso_rows) == 10
+    assert all(r["call_status"] == "called" for r in iso_rows)
+
+
+# --- hand-calculated paired-renderer fixture (Gate C) ------------------------
+
+def test_hand_calculated_paired_renderer_summary():
+    def score(latent, renderer, correct):
+        return {"row_type": "node", "run_id": "run-h", "case_id":
+                f"{latent}:{renderer}", "call_role": "on_contract_reference",
+                "latent_program_id": latent, "cell_id": "code_atomic",
+                "renderer_id": renderer, "node_id": "n1",
+                "node_family": "code", "position": 1,
+                "endpoint_name": "code", "predecessor_source": "none",
+                "observed_value": 1, "expected_value": 1 if correct else 2,
+                "node_correct": correct, "scorer_version": "v"}
+
+    def call(latent, renderer):
+        return {"run_id": "run-h", "evaluation_mode": "isolated",
+                "call_status": "called", "generation_hit_token_cap": False,
+                "envelope_outcome": "ok", "grammar_outcome": "ok",
+                "tool_executed": True, "status": "success"}
+
+    outcomes = {("L1", "resource_first"): True, ("L1", "goal_first"): True,
+                ("L1", "bound_var"): False, ("L2", "resource_first"): True,
+                ("L2", "goal_first"): True, ("L2", "bound_var"): True}
+    scores = [score(lat, rend, ok) for (lat, rend), ok in outcomes.items()]
+    calls = [call(lat, rend) for (lat, rend) in outcomes]
+    summary = summarize_worker_eval({"run_id": "run-h"}, calls, scores)
+    isolated = summary["isolated"]
+    # Hand calculation: 6 scores, 5 correct; bound_var is the worst
+    # renderer at 1/2; L1 flips across renderers, L2 does not.
+    assert isolated["node_correct"] == {"n": 6, "correct": 5}
+    assert isolated["by_renderer"] == {
+        "resource_first": {"n": 2, "correct": 2},
+        "goal_first": {"n": 2, "correct": 2},
+        "bound_var": {"n": 2, "correct": 1}}
+    assert isolated["worst_renderer"] == {"renderer_id": "bound_var",
+                                          "n": 2, "correct": 1}
+    assert isolated["paired"] == {"groups": 2, "flipped": 1}
+    assert isolated["by_stratum"]["code|code_atomic|code|bound_var"] \
+        == {"n": 2, "correct": 1}
+
+
+# --- full run round trip through the strict loader (tests 6/15/16/19) --------
+
+def bundle_pool(**kwargs):
+    """FakePool rendering the real resolved bundle prompts, so
+    manifests bind (declared == actual)."""
+    return FakePool(system_prompts={name: BUNDLE.text(name)
+                                    for name, _ in BUNDLE.prompts},
+                    **kwargs)
+
+
+def write_isolated_run(tmp_path, name="run-iso"):
+    cases, labels = build_node_cases(POPULATION)
+    latents = generate_latents(POPULATION)
+    script = reference_script(cases, labels, latents)
+    rt = eval_runtime(pool=bundle_pool(script=script, default="garbage"))
+    manifest = make_manifest(rt, population=POPULATION,
+                             expected_calls=len(cases),
+                             expected_scores=len(labels))
+    with RunWriter(tmp_path / name, manifest) as writer:
+        rows = run_node_cases(rt, cases, writer, case_identities(labels))
+        scores = score_node_calls(rows, labels)
+        for row in scores:
+            writer.write_score(row)
+        writer.write_summary(summarize_worker_eval(manifest, rows, scores))
+    return tmp_path / name
+
+
+def tampered(src, dst, mutate_calls=None, mutate_scores=None,
+             status=None):
+    """Copy a run and re-establish internal consistency after mutation:
+    payload hashes and counts are recomputed, so only the loader's
+    regeneration checks can catch the change."""
+    shutil.copytree(src, dst)
+    manifest = json.loads((dst / "manifest.json").read_text())
+    for name, mutate in (("calls.jsonl", mutate_calls),
+                         ("scores.jsonl", mutate_scores)):
+        if mutate is None:
+            continue
+        rows = [json.loads(line) for line in
+                (dst / name).read_text().splitlines()]
+        rows = mutate(rows)
+        (dst / name).write_text("".join(
+            json.dumps(row, sort_keys=True) + "\n" for row in rows))
+    manifest["payload_sha256"] = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(dst.iterdir()) if path.name != "manifest.json"}
+    calls = (dst / "calls.jsonl").read_text().splitlines()
+    scores = (dst / "scores.jsonl").read_text().splitlines()
+    manifest["written_rows"] = {"calls": len(calls), "scores": len(scores)}
+    manifest["expected_rows"] = dict(manifest["written_rows"])
+    if status is not None:
+        manifest["status"] = status
+    (dst / "manifest.json").write_text(
+        json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+    return dst
+
+
+def test_loader_round_trip_and_tampering(tmp_path):
+    run_dir = write_isolated_run(tmp_path)
+    loaded = load_run(run_dir)
+    assert loaded["summary"]["isolated"]["node_correct"] \
+        == {"n": 30, "correct": 30}
+
+    # (a) raw byte tamper: payload hash mismatch.
+    plain = tmp_path / "tamper-bytes"
+    shutil.copytree(run_dir, plain)
+    calls_path = plain / "calls.jsonl"
+    calls_path.write_text(calls_path.read_text().replace(
+        "resource_first", "resource_flrst", 1))
+    with pytest.raises(InfrastructureError, match="hash mismatch"):
+        load_run(plain)
+
+    # (b) an aborted run is unusable regardless of its contents.
+    with pytest.raises(InfrastructureError, match="not loadable"):
+        load_run(tampered(run_dir, tmp_path / "tamper-status",
+                          status="aborted"))
+
+    # (c) test 19: a self-consistent score file with an altered expected
+    # value is rejected by regeneration, not by any hash.
+    def bump_expected(rows):
+        rows[0] = dict(rows[0], expected_value=rows[0]["expected_value"] + 1,
+                       node_correct=False)
+        return rows
+    with pytest.raises(InfrastructureError, match="rederive"):
+        load_run(tampered(run_dir, tmp_path / "tamper-expected",
+                          mutate_scores=bump_expected))
+
+    # (d) a dropped call row is a planned-population mismatch even with
+    # consistent counts and hashes.
+    with pytest.raises(InfrastructureError, match="population mismatch"):
+        load_run(tampered(run_dir, tmp_path / "tamper-missing",
+                          mutate_calls=lambda rows: rows[1:]))
+
+    # (e) mixed run ids are rejected.
+    def foreign_run(rows):
+        rows[0] = dict(rows[0], run_id="run-other")
+        return rows
+    with pytest.raises(InfrastructureError, match="mixed run ids"):
+        load_run(tampered(run_dir, tmp_path / "tamper-runid",
+                          mutate_calls=foreign_run))
+
+    # (f) test 16: the scientific evaluator cannot use the Stage-0B cache.
+    def cache_served(rows):
+        rows[0] = dict(rows[0], cache_source="stage0b-cache")
+        return rows
+    with pytest.raises(InfrastructureError, match="cache-disabled"):
+        load_run(tampered(run_dir, tmp_path / "tamper-cache",
+                          mutate_calls=cache_served))
+
+
+def test_composed_run_round_trips_through_loader(tmp_path):
+    script = composed_script()
+    cases, labels = build_node_cases(ONE_RENDERER_POP)
+    case_by_id = {c.case_id: c for c in cases}
+    (math_case,) = [case_by_id[lab.case_id] for lab in labels
+                    if lab.cell_id == "math_code"
+                    and lab.node_family == "math"]
+    del script[(math_case.endpoint_name, math_case.user_message)]
+    rt = eval_runtime(pool=bundle_pool(script=script, default="garbage"))
+    manifest = make_manifest(rt, population=ONE_RENDERER_POP,
+                             evaluation_mode="composed",
+                             expected_calls=10, expected_scores=6)
+    with RunWriter(tmp_path / "run-comp", manifest) as writer:
+        rows, wlabels = run_composed_workflows(rt, ONE_RENDERER_POP, writer)
+        scores = score_workflow_calls(rows, wlabels)
+        for row in scores:
+            writer.write_score(row)
+        writer.write_summary(summarize_worker_eval(manifest, rows, scores))
+    loaded = load_run(tmp_path / "run-comp")
+    assert loaded["summary"]["composed"]["steps"]["dependency_blocked"] == 1
+    assert loaded["summary"]["composed"]["terminal_correct"] == 5
+
+
+# --- narrow two-run comparison (test 14; Gate C) -----------------------------
+
+def write_prompt_variant_run(tmp_path, name="run-var"):
+    """Same population and completions, different worker prompts: the pool
+    renders a changed math prompt and the manifest declares the matching
+    bundle, so only prompt-scoped manifest fields differ."""
+    variant_prompts = dict(BUNDLE.prompts)
+    variant_prompts["math"] = variant_prompts["math"] + " Be brief."
+    bundle = PromptBundle(revision="rev0-var", status="DRAFT",
+                          prompts=tuple(sorted(variant_prompts.items())))
+    cases, labels = build_node_cases(POPULATION)
+    latents = generate_latents(POPULATION)
+    script = reference_script(cases, labels, latents)
+    rt = eval_runtime(pool=FakePool(script=script, default="garbage",
+                                    system_prompts=variant_prompts))
+    manifest = build_manifest(
+        rt, bundle, run_id="run-1", purpose="tranche-a-test",
+        population=POPULATION,
+        endpoint_schedule_version="d16-operator-aligned-v1",
+        candidate_label="rev0-var", request_contract_key="worker-blocks-v0",
+        expected_calls=len(cases), expected_scores=len(labels),
+        git_info={"commit": "0" * 40, "dirty": False, "diff_sha256": None})
+    with RunWriter(tmp_path / name, manifest) as writer:
+        rows = run_node_cases(rt, cases, writer, case_identities(labels))
+        scores = score_node_calls(rows, labels)
+        for row in scores:
+            writer.write_score(row)
+        writer.write_summary(summarize_worker_eval(manifest, rows, scores))
+    return tmp_path / name
+
+
+def test_comparison_accepts_declared_and_refuses_undeclared_differences(
+        tmp_path):
+    base = load_run(write_isolated_run(tmp_path, "run-base"))
+    variant = load_run(write_prompt_variant_run(tmp_path, "run-var"))
+    comparison = compare_worker_eval_runs(base, variant, "prompt")
+    assert comparison["case_support"] == 30
+    assert any(field.startswith("system_prompts")
+               for field in comparison["differing_fields"])
+    # Test 9.1.14: the same runs cannot be compared as if only the model
+    # changed — the prompt difference is undeclared and blocks comparison.
+    with pytest.raises(InfrastructureError, match="beyond declared"):
+        compare_worker_eval_runs(base, variant, "model")
+    with pytest.raises(ProfileError, match="allowed_difference"):
+        compare_worker_eval_runs(base, variant, "vibes")
