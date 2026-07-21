@@ -73,6 +73,14 @@ Revision cycle (evidence per revision in `plans/conductor/60_f_…`):
   first-sentence rule extended with the positional form ("in every call
   the FIRST argument is the sequence and the SECOND is a number").
   Math and Lookup untouched.
+  Eval (72_f): Code 41/45 — fork_join 15/15, math_code 11/15; ALL four
+  residuals copy the anti-guard wrong exemplar verbatim
+  (at(resource, step_1 % 8)) — a concrete wrong string that flatters
+  the model's defensive prior becomes a template, not a warning.
+- rev8 (73_f): the copyable anti-guard exemplar replaced with a
+  non-copyable phrasing ("the number argument is step_1 or an integer,
+  written exactly as given — never wrap it in arithmetic"). Nothing
+  else changes.
 
 The §1.5 request skeleton — chat template over exactly (system, user) —
 is frozen; demonstrations enter as worked examples INSIDE the system
@@ -88,7 +96,7 @@ from __future__ import annotations
 from .types import IntegerList, IntegerRecord, Resource
 
 D16_STATUS = "DRAFT"  # flips to "FROZEN <date>" only via its own review
-D16_REVISION = "rev7"  # bumps with any change to the strings below
+D16_REVISION = "rev8"  # bumps with any change to the strings below
 # (rev5 was the no-change confirmation run; the counter tracks the
 # revision-log numbering in plans/conductor/.)
 
@@ -265,8 +273,9 @@ response:
 {DEMONSTRATIONS["code"][1]["completion"]}
 
 Wrong: at(step_1, resource) — the sequence is always the first \
-argument; the index comes second. Wrong: at(resource, step_1 % 8) — use \
-step_1 exactly as given; the whitelist has no arithmetic.
+argument; the index comes second. The number argument is step_1 or an \
+integer, written exactly as given — never wrap it in arithmetic; the \
+whitelist has no operators.
 
 Third example — the task "{DEMONSTRATIONS["code"][2]["subtask"]}" has \
 exactly this correct response:
