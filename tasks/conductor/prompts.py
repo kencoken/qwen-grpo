@@ -54,6 +54,16 @@ Revision cycle (evidence per revision in `plans/conductor/60_f_…`):
   repetitions and the "ignore other arithmetic" sentence cut. Math
   frozen at the rev3 text as the documented best-effort candidate
   (probe 2 proves a compliant model follows it).
+  Eval (66_f/68_f): Code 9/10, confirmed 26/30 at 3x scale — all four
+  residual failures are fork_join two-handle contexts; Lookup 45/45
+  (CLOSED as of rev6); Math 0/56 → endpoint-model decision.
+- rev6 (70_f; rev5 was confirmation-only): the Math ENDPOINT MODEL
+  switches to base Qwen2.5-1.5B-Instruct in the runtime profile
+  (provisionally signed off 2026-07-21; spec §1.6 erratum deferred to
+  the D16/third-party review) — Math prompt TEXT unchanged from rev3 so
+  the eval isolates the swap. Code: the wrong/right contrast extended to
+  the two-handle case ("this also holds when the Problem mentions
+  several resources"), targeting the only remaining failure mode.
 
 The §1.5 request skeleton — chat template over exactly (system, user) —
 is frozen; demonstrations enter as worked examples INSIDE the system
@@ -69,7 +79,9 @@ from __future__ import annotations
 from .types import IntegerList, IntegerRecord, Resource
 
 D16_STATUS = "DRAFT"  # flips to "FROZEN <date>" only via its own review
-D16_REVISION = "rev4"  # bumps with any change to the strings below
+D16_REVISION = "rev6"  # bumps with any change to the strings below
+# (rev5 was the no-change confirmation run; the counter tracks the
+# revision-log numbering in plans/conductor/.)
 
 
 # --- demonstrations (endpoint -> [(subtask, resource, completion)]) ---------
@@ -231,7 +243,10 @@ correct response:
 
 Wrong: count_gt(stable_unique(R-8C3), 5) — R-8C3 is the resource's name, \
 and the interpreter does not understand names; always write the word \
-resource.
+resource. This also holds when the Problem mentions several resources \
+(for example R-2M4 and R-8C3): the word resource always means the \
+payload shown under Resource: in this request, so the correct response \
+is still count_gt(stable_unique(resource), 5).
 
 Second example — with the previous result step_1 = 2, the task \
 "{DEMONSTRATIONS["code"][1]["subtask"]}" has exactly this correct \

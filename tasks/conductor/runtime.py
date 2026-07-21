@@ -76,9 +76,15 @@ DEFAULT_RUNTIME_PROFILE: dict[str, Any] = {
             "max_new_tokens": 256,
             "microbatch": 16,
         },
+        # Math endpoint runs the base Instruct model, NOT
+        # Qwen2.5-Math-1.5B-Instruct as spec §1.6 names: the Math-Instruct
+        # model's solve-and-box alignment never emits the artifact under
+        # any prompt (evidence: plans/conductor/64_f probes 1-2; decision
+        # provisionally signed off 2026-07-21, recorded in 70_f; spec
+        # erratum deferred to the D16/third-party review).
         "math": {
-            "model_id": "Qwen/Qwen2.5-Math-1.5B-Instruct",
-            "revision": "aafeb0fc6f22cbf0eaeed126eff8be45b0360a35",
+            "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+            "revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
             "max_new_tokens": 256,
             "microbatch": 16,
         },
