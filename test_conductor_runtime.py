@@ -471,30 +471,29 @@ def test_duplicate_item_ids_raise():
 
 
 # --- traces -----------------------------------------------------------------
+# The v1 TraceWriter is a historical artifact format: the four-worker
+# executor refuses it outright (110_f), so its file-format invariants
+# are exercised by driving write_step directly.
 
-def run_traced_batch(tmp_path, run_name="run-a"):
-    pool = FakePool(script={})
-    latent, inst, registry, steps = make_env("lookup_atomic")
-    _, worker_call = perfect_worker(latent)
-    action = parser.routing_to_workflow([0], steps)
+def write_v1_trace(tmp_path, run_name="run-a"):
+    from types import SimpleNamespace
     profile = profile_with(cache_path=str(tmp_path / "cache.sqlite"))
-    rt = build_runtime(profile, pool=pool,
+    rt = build_runtime(profile, pool=FakePool(script={}),
                        cache=CompletionCache(profile["cache_path"]))
-
-    # route through the runtime so telemetry lands in the trace
-    def call(worker_id, requests):
-        return rt.worker_call_batch(ENDPOINT_NAMES[worker_id], requests)
-
-    items = [WorkflowItem("lookup_atomic:construction:00000:x:rf:private",
-                          action, inst["public_prompt"], registry)]
+    record = executor.StepRecord(1, 0, None, None, "req",
+                                 "<artifact>1</artifact>", False, "ab")
+    telemetry = SimpleNamespace(finish_reason="eos", generated_tokens=3,
+                                generation_hit_token_cap=False,
+                                cache_hit=False, request_sha256="cd")
     with TraceWriter(run_name, rt, base_dir=tmp_path / "runs") as trace:
-        results = executor.execute_workflow_batch(items, call, trace=trace)
+        trace.write_step("lookup_atomic:construction:00000:x:rf:private",
+                         record, telemetry)
     rt.close()
-    return tmp_path / "runs" / run_name / "traces", results, rt
+    return tmp_path / "runs" / run_name / "traces"
 
 
 def test_trace_files_manifest_and_steps(tmp_path):
-    trace_dir, results, rt = run_traced_batch(tmp_path)
+    trace_dir = write_v1_trace(tmp_path)
     manifest = json.loads((trace_dir / "manifest.json").read_text())
     assert manifest["runtime_profile"]["profile_name"] == "stage0b-default"
     assert manifest["runtime_profile_fingerprint"].startswith("rtp-")
@@ -511,12 +510,34 @@ def test_trace_files_manifest_and_steps(tmp_path):
     assert line["finish_reason"] == "eos"
     assert line["cache_hit"] is False
     assert line["generation_hit_token_cap"] is False
-    assert line["request_sha256"] is not None
+    assert line["request_sha256"] == "cd"
     assert line["completion"] == "<artifact>1</artifact>"
 
 
+def test_executor_refuses_v1_trace_with_real_writer(tmp_path):
+    """110_f preflight at the runtime level: a real TraceWriter cannot
+    be threaded through the four-worker executor, and nothing executes
+    or is written before the refusal."""
+    latent, inst, registry, steps = make_env("lookup_atomic")
+    action = parser.routing_to_workflow([0], steps)
+    profile = profile_with(cache_path=str(tmp_path / "cache.sqlite"))
+    rt = build_runtime(profile, pool=FakePool(script={}),
+                       cache=CompletionCache(profile["cache_path"]))
+    items = [WorkflowItem("i", action, inst["public_prompt"], registry)]
+
+    def call(worker_id, requests):
+        raise AssertionError("no worker call may precede the refusal")
+
+    with TraceWriter("run-a", rt, base_dir=tmp_path / "runs") as trace:
+        with pytest.raises(InfrastructureError, match="pool-free"):
+            executor.execute_workflow_batch(items, call, trace=trace)
+    steps_file = tmp_path / "runs" / "run-a" / "traces" / "steps.jsonl"
+    assert steps_file.read_text() == ""  # nothing was written
+    rt.close()
+
+
 def test_trace_refuses_to_overwrite(tmp_path):
-    trace_dir, _, rt = run_traced_batch(tmp_path)
+    write_v1_trace(tmp_path)
     profile = profile_with(cache_path=str(tmp_path / "cache2.sqlite"))
     rt2 = build_runtime(profile, pool=FakePool(),
                         cache=CompletionCache(profile["cache_path"]))
@@ -551,3 +572,12 @@ def test_pool_rendered_request_fixture_stable():
         if ":code_1p5b" in key and not key.startswith(("chat_template",
                                                        "tokenizer")):
             assert stored[key.replace("code_1p5b", "code_3b")] == value, key
+    # The same equality on the numeric two-call rows (110_f
+    # carry-forward, taken now): swapping worker 2 for worker 3 at a
+    # call position leaves that call's rendered hash unchanged.
+    for orientation in ("lookup_first", "code_first"):
+        for other in (0, 1, 2, 3):
+            assert stored[f"two_call:{orientation}:2{other}:call1"] == \
+                stored[f"two_call:{orientation}:3{other}:call1"]
+            assert stored[f"two_call:{orientation}:{other}2:call2"] == \
+                stored[f"two_call:{orientation}:{other}3:call2"]

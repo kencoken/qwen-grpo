@@ -957,23 +957,30 @@ def test_unregistered_worker_id_is_an_infrastructure_error():
                                   registry, worker_call)
 
 
-def test_worker_3_refuses_the_v1_trace_schema():
-    """108_f finding 4: the v1 trace schema is pool-free; recording
-    worker 3 under it fails closed until the unit-2 trace schema."""
+def test_four_worker_executor_refuses_v1_traces_before_any_call():
+    """110_f: every worker id is a new four-worker identity (worker 2
+    now means generic-1.5B/rev10/task-last), so the executor refuses
+    the pool-free v1 TraceWriter entirely, as a preflight — a worker-2
+    action can neither be written to v1 nor executed first. (The
+    worker-eval composed adapter is a different, retained trace format
+    and stays accepted.)"""
     latent, inst, registry, steps = make_env("code_atomic")
-    _, worker_call = perfect_worker(latent)
-    record = executor.StepRecord(1, 3, None, "unknown_handle", None, None,
-                                 False)
+    calls = []
+
+    def spy_call(worker_id, requests):
+        calls.append(worker_id)
+        raise AssertionError("no worker call may precede the trace refusal")
+
     item = executor.WorkflowItem(
-        item_id="t", action=parser.routing_to_workflow([3], steps),
+        item_id="t", action=parser.routing_to_workflow([2], steps),
         public_prompt=inst["public_prompt"], registry=registry)
-
-    class _Sentinel:
-        def write_step(self, *args):
-            raise AssertionError("worker 3 must not reach a v1 trace")
-
-    with pytest.raises(executor.InfrastructureError, match="trace schema"):
-        executor._trace_step(_Sentinel(), item, record, None)
+    # The isinstance gate fires before any writer attribute is touched,
+    # so an uninitialized instance exercises it without a runtime.
+    legacy = executor.TraceWriter.__new__(executor.TraceWriter)
+    with pytest.raises(executor.InfrastructureError,
+                       match="pool-free"):
+        executor.execute_workflow_batch([item], spy_call, trace=legacy)
+    assert calls == []  # the worker callback was never invoked
 
 
 def test_workflow_action_worker_domain():
