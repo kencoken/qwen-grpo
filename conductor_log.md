@@ -560,6 +560,21 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   the commit carrying THIS addendum is the executable commit for
   Tranche A. Nothing else lands before launch; the screening/reveal
   checkout guard verifies against the P1 artifacts' recorded commit.
+- **2026-07-22 106_s UNIT 2 — FOUR-WORKER RUNTIME + RECORDED SMOKE
+  (112_f):** v2 profile embeds the ordered WorkerSpecs (re-derived and
+  compared against the frozen registry; microbatch frozen at 1;
+  task_last required); FourWorkerPool shares physical objects by
+  derived weights key, verifies registered prompt SHAs at construction
+  and NF4-unpacked parameter counts at load; FourWorkerRuntime cache
+  key = wv + slw (selected-logical-worker execution fingerprint) +
+  request in the new worker_completions table (§8.5: no v1 field
+  carries the new identity); PoolTraceWriter = trace schema v2 binding
+  pool fingerprint + logical-to-physical mapping. Smoke re-enabled on
+  the four-worker pool and recorded: 19 workflows (reference + :w3 +
+  :wf), pass 1 33 calls wall 10.5s, worker 3 6/6 success on the real
+  3B checkpoint, wrong-family item typed 0.5 no abort, pass 2 33/33
+  cache-served byte-identical, peak reserved VRAM 3.18 GiB. 615 tests;
+  agreement 16,665/16,665 unchanged.
 - **2026-07-22 106_s FROZEN — STAGE 0 FOUR-WORKER ORCHESTRATION
   PIVOT (Ken sign-off, all five §0 decisions):** the universal-Code-
   worker search stops; Stage 0 finishes around a flat four-worker /

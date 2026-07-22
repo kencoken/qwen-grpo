@@ -35,6 +35,36 @@ class Generation:
     generation_hit_token_cap: bool
 
 
+FROZEN_NF4_CONFIG = {"load_in_4bit": "true", "quant_type": "nf4",
+                     "double_quant": "true", "compute_dtype": "bfloat16"}
+
+
+def load_nf4_checkpoint(model_id: str, revision: str,
+                        nf4: Mapping[str, Any], device: str) -> Any:
+    """Load one pinned checkpoint under the frozen NF4 config — shared
+    by the v1 endpoint pool and the four-worker pool so quantization can
+    never drift between them."""
+    import torch
+    from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+    if nf4 != FROZEN_NF4_CONFIG:
+        raise InfrastructureError(f"unsupported nf4 config {nf4!r}")
+    return AutoModelForCausalLM.from_pretrained(
+        model_id, revision=revision, dtype=torch.bfloat16,
+        quantization_config=BitsAndBytesConfig(
+            load_in_4bit=True, bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=torch.bfloat16),
+        device_map=device).eval()
+
+
+def measured_parameters(model: Any) -> int:
+    """NF4 packs 4-bit weights two per byte, so Params4bit reports half
+    its logical size; unpack to count actual model parameters (verified
+    against the cached checkpoints, 2026-07-21)."""
+    return sum((p.numel() * 2 if p.__class__.__name__ == "Params4bit"
+                else p.numel()) for p in model.parameters())
+
+
 class WorkerPool:
     """Real HF/bitsandbytes backend. Tests substitute fakes implementing
     `chat_template_sha`, `render_request`, `generate`, `close`."""
@@ -136,23 +166,10 @@ class WorkerPool:
     def _load_model(self, endpoint_name: str) -> Any:
         key = self._checkpoint_key(endpoint_name)
         if key not in self._models:
-            import torch
-            from transformers import (AutoModelForCausalLM,
-                                      BitsAndBytesConfig)
             worker = self._profile["workers"][endpoint_name]
-            nf4 = self._profile["nf4"]
-            if nf4 != {"load_in_4bit": "true", "quant_type": "nf4",
-                       "double_quant": "true", "compute_dtype": "bfloat16"}:
-                raise InfrastructureError(
-                    f"unsupported nf4 config {nf4!r}")
-            self._models[key] = AutoModelForCausalLM.from_pretrained(
-                worker["model_id"], revision=worker["revision"],
-                dtype=torch.bfloat16,
-                quantization_config=BitsAndBytesConfig(
-                    load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                    bnb_4bit_use_double_quant=True,
-                    bnb_4bit_compute_dtype=torch.bfloat16),
-                device_map=self._device).eval()
+            self._models[key] = load_nf4_checkpoint(
+                worker["model_id"], worker["revision"],
+                self._profile["nf4"], self._device)
         return self._models[key]
 
     def checkpoint_report(self) -> list[dict[str, Any]]:
@@ -171,15 +188,8 @@ class WorkerPool:
                 "revision": key[1],
                 "endpoints": endpoints,
                 "loaded": model is not None,
-                # NF4 packs 4-bit weights two per byte, so Params4bit
-                # reports half its logical size; unpack to count actual
-                # model parameters (verified against all three cached
-                # checkpoints, 2026-07-21).
-                "measured_parameters": (
-                    sum((p.numel() * 2
-                         if p.__class__.__name__ == "Params4bit"
-                         else p.numel()) for p in model.parameters())
-                    if model is not None else None),
+                "measured_parameters": (measured_parameters(model)
+                                        if model is not None else None),
             })
         return report
 

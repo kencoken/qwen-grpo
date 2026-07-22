@@ -1,13 +1,28 @@
-"""Stage-0B offline executor smoke — DISABLED pending the four-worker
-runtime (108_f finding 2).
+"""Stage-0B recorded acceptance command: offline executor smoke on the
+real four-worker NF4 pool (106_s §9.5; re-enabled by unit 2 after the
+108_f finding-2 disablement).
 
-The historical smoke built its runtime from `DEFAULT_RUNTIME_PROFILE`,
-which still carries the retired Coder-1.5B Code checkpoint, rev9
-prompts and the v0 request contract. Executing it now would record the
-new logical worker identities against the historical model and request
-configuration — a silent identity conflation, so the command fails
-closed until unit 2 binds it to the exact frozen four-worker pool
-(106_s §4). The historical recorded result stands in conductor_log.md.
+Run:  uv run python -m tasks.conductor.smoke --per-cell 2 --run-name <name>
+
+Builds the four-worker runtime from `FOUR_WORKER_RUNTIME_PROFILE`
+(generic-1.5B shared by workers 0-2, generic-3B for worker 3, rev10
+prompts, `task_last` contract, singleton-v1 generation, worker-keyed
+SQLite cache), then executes through `execute_workflow_batch` with
+pool-bound v2 traces:
+
+- the reference routing for a few construction instances per cell
+  (canonical family workers 0-2), covering atomic, chain and fork
+  topologies;
+- a worker-3 variant of every workflow with a Code node (`:w3` items),
+  so both Code workers execute the same nodes;
+- one deliberate wrong-family workflow (`:wf`), which must yield a
+  typed 0.5 outcome, never an abort;
+
+then re-executes the same batch and **fails unless every second-pass
+call is a cache hit** and replays are byte-identical. Reports
+per-worker telemetry, descriptive accuracy, wall time and peak
+reserved VRAM (a smoke diagnostic, not a Stage-1 gate: no registered
+population, no calibration manifest).
 """
 
 from __future__ import annotations
@@ -15,22 +30,31 @@ from __future__ import annotations
 import argparse
 import copy
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
 from . import executor, parser, program
 from .agreement import ENDPOINT_FOR_OP
-from .cache import CompletionCache
-from .executor import TraceWriter, WorkflowItem
+from .cache import WorkerCompletionCache
+from .executor import WorkflowItem
+from .pool_runtime import (
+    FOUR_WORKER_RUNTIME_PROFILE, FourWorkerPool, FourWorkerRuntime,
+    PoolTraceWriter,
+)
 from .profiles import DEFAULT_PROFILE
 from .resources import InstanceRegistry
-from .runtime import DEFAULT_RUNTIME_PROFILE, build_runtime
-from .types import CELL_IDS, ENDPOINT_NAMES, InfrastructureError
-from .workerpool import WORKER_TO_ENDPOINT
-from .workers import WorkerPool
+from .types import CELL_IDS
+from .workerpool import WORKER_NAMES
+
+WRONG_FAMILY_WORKER = 1  # deliberate math-family routing of a lookup node
 
 
-def build_items(per_cell: int) -> tuple[list[WorkflowItem], dict[str, int]]:
+def build_items(per_cell: int, request_contract: str
+                ) -> tuple[list[WorkflowItem], dict[str, int]]:
+    """Reference-routed items plus the §9.5 four-worker additions:
+    a worker-3 variant for every workflow with a Code node, and one
+    wrong-family workflow."""
     items, golds = [], {}
     for cell in CELL_IDS:
         for index in range(per_cell):
@@ -46,37 +70,36 @@ def build_items(per_cell: int) -> tuple[list[WorkflowItem], dict[str, int]]:
             nodes = {n["id"]: n for n in latent["reference_program"]["nodes"]}
             routing = [ENDPOINT_FOR_OP[nodes[node_id]["op"]]
                        for node_id in latent["reference_program"]["positions"]]
-            action = parser.routing_to_workflow(routing, steps)
             item_id = inst["render_instance_id"]
-            items.append(WorkflowItem(item_id=item_id, action=action,
-                                      public_prompt=inst["public_prompt"],
-                                      registry=registry))
-            golds[item_id] = inst["gold_answer"]
+
+            def add(suffix: str, worker_ids: list[int]) -> None:
+                action = parser.routing_to_workflow(worker_ids, steps)
+                items.append(WorkflowItem(
+                    item_id=item_id + suffix, action=action,
+                    public_prompt=inst["public_prompt"], registry=registry,
+                    request_contract=request_contract))
+                golds[item_id + suffix] = inst["gold_answer"]
+
+            add("", routing)
+            if 2 in routing:
+                add(":w3", [3 if w == 2 else w for w in routing])
+            if cell == "lookup_atomic" and index == 0:
+                add(":wf", [WRONG_FAMILY_WORKER] * len(routing))
     return items, golds
 
 
-_DISABLED = (
-    "the Stage-0B smoke is disabled until the four-worker runtime "
-    "lands (108_f finding 2): DEFAULT_RUNTIME_PROFILE still carries "
-    "the retired Coder-1.5B Code checkpoint, rev9 prompts and the v0 "
-    "request contract, so running it would record the new worker "
-    "identities against the historical execution configuration")
-
-
-def run_pass(rt, items, trace=None):
-    raise InfrastructureError(_DISABLED)
-
+def run_pass(rt: FourWorkerRuntime, items, trace=None):
     stats = {"calls": Counter(), "cache_hits": 0, "truncated": 0,
-             "truncated_by_endpoint": Counter(), "records": []}
+             "truncated_by_worker": Counter(), "records": []}
 
     def call(worker_id, requests):
-        name = WORKER_TO_ENDPOINT[worker_id]
-        records = rt.worker_call_batch(name, requests)
+        records = rt.worker_call_batch(worker_id, requests)
+        name = WORKER_NAMES[worker_id]
         stats["calls"][name] += len(records)
         stats["cache_hits"] += sum(r.cache_hit for r in records)
         truncated = sum(r.generation_hit_token_cap for r in records)
         stats["truncated"] += truncated
-        stats["truncated_by_endpoint"][name] += truncated
+        stats["truncated_by_worker"][name] += truncated
         stats["records"].extend(records)
         return records
 
@@ -85,65 +108,76 @@ def run_pass(rt, items, trace=None):
 
 
 def main() -> int:
-    raise InfrastructureError(_DISABLED)
-
     argp = argparse.ArgumentParser()
     argp.add_argument("--per-cell", type=int, default=2)
-    argp.add_argument("--run-name", default="stage0b-smoke")
+    argp.add_argument("--run-name", default="stage0-4w-smoke")
     argp.add_argument("--device", default="cuda")
     args = argp.parse_args()
 
-    profile = copy.deepcopy(DEFAULT_RUNTIME_PROFILE)
+    profile = copy.deepcopy(FOUR_WORKER_RUNTIME_PROFILE)
     profile["cache_path"] = str(Path("runs") / args.run_name
                                 / "cache.sqlite")
-    pool = WorkerPool(profile, device=args.device)
-    rt = build_runtime(profile, pool=pool,
-                       cache=CompletionCache(profile["cache_path"]))
-    items, golds = build_items(args.per_cell)
-    print(f"{len(items)} workflows "
-          f"({args.per_cell}/cell x {len(CELL_IDS)} cells), "
+    pool = FourWorkerPool(profile, device=args.device)
+    rt = FourWorkerRuntime(profile, pool,
+                           WorkerCompletionCache(profile["cache_path"]))
+    items, golds = build_items(args.per_cell, profile["request_contract"])
+    print(f"{len(items)} workflows ({args.per_cell}/cell x "
+          f"{len(CELL_IDS)} cells + :w3/:wf variants), "
           f"profile {rt.runtime_profile_fingerprint}, "
+          f"pool {rt.pool_fingerprint}, "
           f"worker-visible {rt.worker_visible_fingerprint}")
+    for entry in rt.logical_to_physical:
+        print(f"physical: {entry['model_id']}@{entry['revision'][:12]} "
+              f"<- {entry['workers']}")
 
-    with TraceWriter(args.run_name, rt) as trace:
+    started = time.monotonic()
+    with PoolTraceWriter(args.run_name, rt) as trace:
         results, stats = run_pass(rt, items, trace=trace)
+    wall = time.monotonic() - started
     statuses = Counter()
     correct = 0
-    per_endpoint: dict[str, Counter] = {name: Counter()
-                                        for name in ENDPOINT_NAMES.values()}
+    per_worker: dict[str, Counter] = {name: Counter()
+                                      for name in WORKER_NAMES.values()}
+    wrong_family_ok = None
     for item, result in zip(items, results):
         for step in result.steps:
             statuses[step.result.status if step.result else
                      f"world:{step.world_failure}"] += 1
             if step.completion is None:
                 continue  # pseudo-worker, world failure, or blocked
-            ep = per_endpoint[WORKER_TO_ENDPOINT[step.worker_id]]
-            ep["calls"] += 1
+            wk = per_worker[WORKER_NAMES[step.worker_id]]
+            wk["calls"] += 1
             assert step.result is not None
-            ep["artifact_valid"] += step.result.artifact_valid
-            ep["success"] += step.result.status == "success"
+            wk["artifact_valid"] += step.result.artifact_valid
+            wk["success"] += step.result.status == "success"
             if step.result.rejection_code:
-                ep[step.result.rejection_code] += 1
-        correct += executor.score_terminal(result.terminal,
-                                           golds[item.item_id]) == 1.0
+                wk[step.result.rejection_code] += 1
+        score = executor.score_terminal(result.terminal,
+                                        golds[item.item_id])
+        correct += score == 1.0
+        if item.item_id.endswith(":wf"):
+            # §9.5: typed wrong-family outcome, scored 0.5, no abort.
+            wrong_family_ok = (score == 0.5 and all(
+                s.result is not None and s.result.status == "typed_failure"
+                for s in result.steps))
     print(f"pass 1: calls {dict(stats['calls'])}, "
           f"cache hits {stats['cache_hits']}, "
-          f"truncated {stats['truncated']}")
+          f"truncated {stats['truncated']}, wall {wall:.1f}s")
     print(f"pass 1: step statuses {dict(statuses)}; "
           f"terminal correct (descriptive) {correct}/{len(items)}")
-    # Per-endpoint D16 diagnostics (descriptive; construction namespace):
-    # artifact_valid = envelope + grammar both accepted (§1.7 flag table);
-    # rejection-code histogram separates envelope, grammar and semantic
-    # failures; truncation is counted from call telemetry above.
-    for name, ep in per_endpoint.items():
-        if ep["calls"]:
-            detail = {code: n for code, n in ep.items()
+    for name, wk in per_worker.items():
+        if wk["calls"]:
+            detail = {code: n for code, n in wk.items()
                       if code not in ("calls", "artifact_valid", "success")}
-            print(f"pass 1 [{name}]: calls {ep['calls']}, "
-                  f"artifact_valid {ep['artifact_valid']}, "
-                  f"success {ep['success']}, "
-                  f"truncated {stats['truncated_by_endpoint'][name]}, "
+            print(f"pass 1 [{name}]: calls {wk['calls']}, "
+                  f"artifact_valid {wk['artifact_valid']}, "
+                  f"success {wk['success']}, "
+                  f"truncated {stats['truncated_by_worker'][name]}, "
                   f"rejections {detail}")
+    if args.device.startswith("cuda"):
+        import torch
+        peak = torch.cuda.max_memory_reserved()
+        print(f"peak reserved VRAM: {peak / 2**30:.2f} GiB")
 
     results2, stats2 = run_pass(rt, items)
     total2 = sum(stats2["calls"].values())
@@ -157,11 +191,19 @@ def main() -> int:
 
     trace_dir = Path("runs") / args.run_name / "traces"
     print(f"traces: {trace_dir / 'steps.jsonl'}")
+    failures = []
     if stats2["cache_hits"] != total2:
-        print("FAIL: second pass was not fully served by the cache")
-        return 1
+        failures.append("second pass was not fully served by the cache")
     if mismatched:
-        print(f"FAIL: {mismatched} workflows replayed differently from cache")
+        failures.append(f"{mismatched} workflows replayed differently")
+    if wrong_family_ok is not True:
+        failures.append("wrong-family workflow did not yield the typed "
+                        "0.5 outcome")
+    if not per_worker["code_3b"]["calls"]:
+        failures.append("worker 3 made no calls")
+    for failure in failures:
+        print(f"FAIL: {failure}")
+    if failures:
         return 1
     print("smoke OK")
     return 0
