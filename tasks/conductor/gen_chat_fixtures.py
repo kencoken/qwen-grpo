@@ -28,6 +28,7 @@ from .profiles import DEFAULT_PROFILE
 from .resources import InstanceRegistry
 from .runtime import DEFAULT_RUNTIME_PROFILE
 from .types import CELL_IDS, ENDPOINT_NAMES
+from .workerpool import WORKER_TO_ENDPOINT
 from .workers import WorkerPool
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "chat_template_bytes.json"
@@ -61,8 +62,10 @@ def build_fixture(pool: WorkerPool) -> dict[str, str]:
                 fixture[key] = hashlib.sha256(rendered).hexdigest()
             previous[position] = latent["node_values"][step["node"]]
 
-    # 18 shortcut workflows × 2 calls (fork_join, D12), now through the
-    # real chat templates of the pair endpoints.
+    # Registry-derived two-call workflows × 2 calls (fork_join, D12;
+    # 106_s §6.3), through the real chat templates of the workers'
+    # endpoint families — workers 2 and 3 pin byte-identical renderings
+    # under distinct worker keys.
     latent = program.generate_latent("fork_join", "construction", 0,
                                      DEFAULT_PROFILE).latent
     inst = program.render_instance(latent, "resource_first", "private")
@@ -83,9 +86,9 @@ def build_fixture(pool: WorkerPool) -> dict[str, str]:
             resource_text=registry.payload_text(second_handle),
             previous_results={1: latent["node_values"][
                 "n1" if orientation == "lookup_first" else "n2"]})
-        for call, (endpoint, user) in enumerate(
+        for call, (worker, user) in enumerate(
                 [(pair[0], user1), (pair[1], user2)], start=1):
-            rendered = pool.render_request(ENDPOINT_NAMES[endpoint], user)
+            rendered = pool.render_request(WORKER_TO_ENDPOINT[worker], user)
             key = f"two_call:{orientation}:{pair[0]}{pair[1]}:call{call}"
             fixture[key] = hashlib.sha256(rendered).hexdigest()
     return fixture

@@ -27,7 +27,8 @@ from .executor import TraceWriter, WorkflowItem
 from .profiles import DEFAULT_PROFILE
 from .resources import InstanceRegistry
 from .runtime import DEFAULT_RUNTIME_PROFILE, build_runtime
-from .types import CELL_IDS, ENDPOINT_NAMES
+from .types import CELL_IDS, ENDPOINT_NAMES, InfrastructureError
+from .workerpool import WORKER_TO_ENDPOINT
 from .workers import WorkerPool
 
 
@@ -61,7 +62,16 @@ def run_pass(rt, items, trace=None):
              "truncated_by_endpoint": Counter(), "records": []}
 
     def call(worker_id, requests):
-        name = ENDPOINT_NAMES[worker_id]
+        # Worker ids resolve through the four-worker registry; this
+        # smoke still drives the three-endpoint v1 runtime, so only the
+        # canonical family workers 0-2 are executable here until the
+        # worker-aware runtime lands (106_s §9.1). Fail closed rather
+        # than silently aliasing worker 3 onto the 1.5B code endpoint.
+        if worker_id not in (0, 1, 2):
+            raise InfrastructureError(
+                f"worker {worker_id} needs the four-worker runtime; "
+                "this smoke executes the canonical family workers only")
+        name = WORKER_TO_ENDPOINT[worker_id]
         records = rt.worker_call_batch(name, requests)
         stats["calls"][name] += len(records)
         stats["cache_hits"] += sum(r.cache_hit for r in records)
@@ -106,7 +116,7 @@ def main() -> int:
                      f"world:{step.world_failure}"] += 1
             if step.completion is None:
                 continue  # pseudo-worker, world failure, or blocked
-            ep = per_endpoint[ENDPOINT_NAMES[step.worker_id]]
+            ep = per_endpoint[WORKER_TO_ENDPOINT[step.worker_id]]
             ep["calls"] += 1
             assert step.result is not None
             ep["artifact_valid"] += step.result.artifact_valid

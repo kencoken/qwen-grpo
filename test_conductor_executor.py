@@ -166,14 +166,15 @@ def test_unknown_handle_is_world_failure():
 
 # --- §1.5 routing schema bijection + rejections (§4) ------------------------
 
+# 106_s §8: routing bijection for the 4/16/64 four-worker assignments.
 @pytest.mark.parametrize("num_steps", [1, 2, 3])
 def test_routing_bijection(num_steps):
     seen = set()
-    for ids in itertools.product((0, 1, 2), repeat=num_steps):
+    for ids in itertools.product((0, 1, 2, 3), repeat=num_steps):
         parsed = parse_routing_action(json.dumps({"worker_ids": list(ids)}),
                                       num_steps)
         seen.add(tuple(parsed))
-    assert len(seen) == 3 ** num_steps
+    assert len(seen) == 4 ** num_steps
 
 
 @pytest.mark.parametrize("completion", [
@@ -182,7 +183,7 @@ def test_routing_bijection(num_steps):
     '{"workers": [0, 1]}',
     '{"worker_ids": [0]}',              # wrong length
     '{"worker_ids": [0, 1, 2]}',        # wrong length
-    '{"worker_ids": [0, 3]}',           # out of range -> malformed, not world
+    '{"worker_ids": [0, 4]}',           # out of range -> malformed, not world
     '{"worker_ids": [0, -1]}',
     '{"worker_ids": [0, 1.0]}',
     '{"worker_ids": [0, true]}',
@@ -339,6 +340,11 @@ TOY_RAW = _toy({
     (2, 0): (1, 1, 0),
     (2, 1): (1, 0, 1),
     (2, 2): (1, 1, 0),
+    # 106_s: the seven worker-3 assignments completing the 4^2 surface;
+    # all-zero rows leave every pinned tie above unchanged.
+    **{pair: (0, 0, 0)
+       for pair in [(0, 3), (1, 3), (2, 3), (3, 0), (3, 1), (3, 2),
+                    (3, 3)]},
 })
 
 
@@ -347,7 +353,7 @@ def test_oracle_toy_surface():
     assert surface.accuracy((1, 1)) == 0.75
     assert oracle.select_deployable(surface) == (0, 1)  # tie -> lexicographic
     assert oracle.best_fixed(surface) == (1, 1)
-    assert oracle.uniform_random_accuracy(surface) == pytest.approx(5.25 / 9)
+    assert oracle.uniform_random_accuracy(surface) == pytest.approx(5.25 / 16)
     # Runner-up at node 0 with node 1 fixed: (1,1) vs (2,1) tie -> lowest.
     assert oracle.node_runner_up(surface, (0, 1), 0) == (1, 1)
     assert oracle.node_runner_up(surface, (0, 1), 1) == (0, 0)
@@ -496,14 +502,16 @@ def _candidate_surface(candidates, value_for):
 
 
 def test_two_call_family_and_tie_order():
+    # 106_s §6.3: 2 orientations x 4 x 4 workers, derived from the
+    # registry (32 is an acceptance expectation, not a source of truth).
     workflows = oracle.enumerate_two_call_workflows()
-    assert len(workflows) == 18
+    assert len(workflows) == 32
     assert workflows[0] == ("lookup_first", (0, 0))
     tied = oracle.validate_two_call_surface(
         _candidate_surface(workflows, lambda c: 1), "fork_join")
     assert oracle.select_best_two_call(tied) == ("lookup_first", (0, 0))
     one_call = oracle.validate_one_call_surface(
-        _candidate_surface(oracle.ENDPOINT_IDS,
+        _candidate_surface(oracle.WORKER_IDS,
                            lambda e: 1 if e in (0, 1) else 0), "fork_join")
     assert oracle.select_best_one_call(one_call) == 0  # tie -> lowest index
 
@@ -525,7 +533,7 @@ def test_control_candidate_types_are_exact():
     """`False` and `0.0` hash equal to `0`, so key equality alone would
     admit an endpoint id of the wrong type."""
     for bad_key in (False, 0.0):
-        raw = _candidate_surface(oracle.ENDPOINT_IDS, lambda e: 1)
+        raw = _candidate_surface(oracle.WORKER_IDS, lambda e: 1)
         raw[bad_key] = raw.pop(0)
         with pytest.raises(oracle.PayoffSurfaceError, match="must be an int"):
             oracle.validate_one_call_surface(raw, "fork_join")
@@ -549,7 +557,7 @@ def test_calibration_bundle_requires_one_shared_population():
              FJ_C2: {observation_id(FJ_C2): 0}}
          for a in oracle.enumerate_assignments(3)}, "fork_join")
     one_call = oracle.validate_one_call_surface(
-        _candidate_surface(oracle.ENDPOINT_IDS, lambda e: 0), "fork_join")
+        _candidate_surface(oracle.WORKER_IDS, lambda e: 0), "fork_join")
     bundle = oracle.CalibrationBundle(assignment=assignment,
                                       one_call=one_call)
     assert bundle.cell_id == "fork_join"
@@ -565,7 +573,7 @@ def test_calibration_bundle_requires_one_shared_population():
     disjoint = oracle.validate_one_call_surface(
         {e: {other1: {observation_id(other1): 1},
              other2: {observation_id(other2): 1}}
-         for e in oracle.ENDPOINT_IDS}, "fork_join")
+         for e in oracle.WORKER_IDS}, "fork_join")
     with pytest.raises(oracle.PayoffSurfaceError, match="different clusters"):
         oracle.CalibrationBundle(assignment=assignment, one_call=disjoint)
 
@@ -618,7 +626,7 @@ def test_frozen_selections_round_trip_and_validate():
     construction = _surface_for("fork_join", "construction", (0, 1, 2), 3)
     one_call = oracle.validate_one_call_surface(
         {e: {c: {observation_id(c): 1} for c in construction.clusters}
-         for e in oracle.ENDPOINT_IDS}, "fork_join")
+         for e in oracle.WORKER_IDS}, "fork_join")
     frozen = oracle.CalibrationBundle(assignment=construction,
                                       one_call=one_call).freeze_selections()
     assert frozen.deployable == (0, 1, 2)
@@ -717,11 +725,11 @@ def test_random_control_belongs_to_the_surface_being_evaluated():
     construction = _surface_for("lookup_math", "construction", (0, 0), 2)
     frozen = oracle.CalibrationBundle(assignment=construction) \
         .freeze_selections()
-    assert frozen.construction_random_accuracy == pytest.approx(1 / 9)
+    assert frozen.construction_random_accuracy == pytest.approx(1 / 16)
     assert not hasattr(frozen, "random_accuracy")
     qualification = _surface_for("lookup_math", "qualification", (2, 2), 2)
     qual_bundle = oracle.CalibrationBundle(assignment=qualification)
-    assert qual_bundle.random_accuracy() == pytest.approx(1 / 9)
+    assert qual_bundle.random_accuracy() == pytest.approx(1 / 16)
 
 
 # --- population and execution provenance ------------------------------------
@@ -784,7 +792,7 @@ def test_evaluation_verifies_against_the_construction_bundle_in_one_call():
 def test_calibration_bundle_rejects_cross_cell_controls():
     assignment = oracle.validate_payoff_surface(TOY_RAW, "lookup_math")
     fork_control = oracle.validate_one_call_surface(
-        _candidate_surface(oracle.ENDPOINT_IDS, lambda e: 1), "fork_join")
+        _candidate_surface(oracle.WORKER_IDS, lambda e: 1), "fork_join")
     with pytest.raises(oracle.PayoffSurfaceError, match="for cell"):
         oracle.CalibrationBundle(assignment=assignment,
                                  one_call=fork_control)
@@ -834,7 +842,8 @@ def test_agreement_reports_failure_on_incomplete_coverage():
 def test_byte_stability_fixture():
     stored = json.loads(Path(FIXTURE_PATH).read_text())
     assert build_fixture() == stored
-    assert sum(1 for k in stored if k.startswith("two_call")) == 36
+    # 32 registry-derived two-call workflows x 2 calls (106_s §6.3).
+    assert sum(1 for k in stored if k.startswith("two_call")) == 64
 
 
 # --- D16 demos execute through the runtime ----------------------------------
