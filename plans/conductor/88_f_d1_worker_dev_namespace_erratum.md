@@ -1,8 +1,12 @@
 # D1 erratum — dedicated worker-development namespace `worker_dev`
 
-**Status:** proposed for review as a single unit — at Ken's direction
-the erratum and its §4 implementation land in one commit (§6 records
-the diff); no run uses the namespace before this document's sign-off.
+**Status: RATIFIED 2026-07-22 (Ken).** The 89_s-required fixes were
+confirmed in `90_f`; the review closed with the 92_s approval chain
+(94_s/96_s); Ken recorded ratification approval in-session on
+2026-07-22. The `worker_dev` namespace and its §3 usage contract are
+normative from this record forward; `worker_dev` commands are
+authorized. Originally proposed as a single unit — erratum and §4
+implementation in one commit (§6 records the diff).
 This is the narrow erratum called for by plan `81_f` §4.6/D1 and
 required as a Tranche-D precondition (§8); it discharges the binding
 obligation recorded in `86_s`/`87_f`.

@@ -534,3 +534,29 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
 ## Entries
 
 *(CE0, CE1 to be pre-registered here before any GPU spend.)*
+
+### 2026-07-22 — D1 ratified; 92_s frozen; Tranche A authorized
+
+- **D1 ratification (Ken):** the `worker_dev` namespace erratum `88_f`
+  (as amended per 89_s) is ratified; `worker_dev` commands are
+  authorized from this commit forward. Usage contract: adaptive
+  inspection permitted; permanently barred from construction,
+  qualification, train, dev and test; cap 30/cell is the stopping rule.
+- **92_s frozen (Ken):** the scope × model × prompt preregistration is
+  FROZEN with its Freeze Record (prompt shas incl. `code_local_v1`
+  `17a05a19…`, both contract digests, cohort `c0f53203…`, support
+  registry `84b4baa3…`, retained P0 artifact hashes, frozen cost gate,
+  `EXPERIMENT_DEVICE`). The executable commit for Tranche A is the
+  commit carrying this entry; screen/reveal verify it. Review chain:
+  92_s → 94_s/95_f → 96_s/97_f; reviewer committed to changed-lines
+  re-checks only.
+- **P0 record:** replays at `20dc20c` — original ×2 bit-identical
+  (0/90), reversed-within-chunk 0/90 (sensitivity = batch composition,
+  not position), singleton 2/90 reproducing 78_s microbatch-1 exactly;
+  raw artifacts retained in `runs/p0-rev9-replay/` (hashes in the
+  Freeze Record).
+- **Next:** Tranche A in the frozen `arm_order` — eight candidate P1
+  triplets (three fresh processes each), `screen`, launched full runs
+  under append-only `selection-r1` receipts, `reveal`. The worktree
+  stays clean; all outputs land under `runs/` until the experiment
+  closes.
