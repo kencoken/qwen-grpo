@@ -560,6 +560,25 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   the commit carrying THIS addendum is the executable commit for
   Tranche A. Nothing else lands before launch; the screening/reveal
   checkout guard verifies against the P1 artifacts' recorded commit.
+- **2026-07-22 3B SCREEN OUTCOME — ALL FOUR ARMS MISS (105_f):**
+  generic_3b 878 (rev10) / 869 (rev11); coder_3b 741 / 752. Guard held
+  everywhere (4×630 Lookup/Math records byte-identical to 99_f). Scale
+  is non-monotonic: generic_3b fixed ALL 13 characterized 1.5B
+  residual cases under both prompts but introduced global composition
+  (solves the whole Problem in one node, fork_join goal_first 15/30)
+  and the first legal-but-wrong-value Code outputs in the D16 record.
+  Instruction-capacity hypothesis refuted (rev11@3B < rev10@3B; handle
+  substitution reappears at scale). Coder prior = anti-protocol prior:
+  ~150 handle-substitution failures per coder_3b arm; every coder
+  variant loses to its generic sibling at both scales. Admission
+  incident disclosed: coder_3b-rev10 attempt 1 refused by the frozen
+  cost gate (P1 #1 wall included the one-time checkpoint download);
+  clean re-attempt under the unchanged gate admitted at ~300s
+  projected (P0-precedent, flagged for ratification). Best known
+  remains generic_1p5b/task_last/rev10 at 887/900. All dominant modes
+  are Problem-visibility failures → local_only is the evidenced next
+  probe; orchestration pivot case now "considerably stronger" (103_s
+  criterion). Next decision is Ken + reviewer's.
 - **2026-07-22 103_s REVIEW + 104_f 3B SCREEN PREREG:** reviewer
   verified all rev10/rev11 figures and added the union analysis — no
   Code case is missed by all three 1.5B policies (A∪B∪C = 270/270
