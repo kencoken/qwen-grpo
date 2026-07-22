@@ -560,6 +560,15 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   the commit carrying THIS addendum is the executable commit for
   Tranche A. Nothing else lands before launch; the screening/reveal
   checkout guard verifies against the P1 artifacts' recorded commit.
+- **2026-07-22 rev10 FOLLOW-UP OUTCOME (99_f/100_f):** ADMITTED;
+  the Math parenthesis fix landed completely — math_code × bound_var
+  0/30 → 30/30, Math perfect 360/360, zero regressions, and all 540
+  Lookup/Code records byte-identical to the Tranche A sentinel (the
+  amendment provably touched Math only). Target not reached (Code
+  residual 13/270 unchanged, all protocol-class, three characterized
+  modes) → one-revision stop rule applied. task_last is now viable
+  (Lookup+Math perfect under it); next decision: a Code-targeted
+  preregistration on the anchor generic_1p5b/task_last/rev10.
 - **2026-07-22 TRANCHE A OUTCOME — TERMINAL STOP (98_f):** all eight
   arms ADMITTED (singleton-v1 bit-stable everywhere, within the cost
   gate); no clean prefix anywhere; both contract sentinels executed;
