@@ -305,6 +305,10 @@ class FourWorkerPool:
         # tokenizer/model object per key (106_s §9.1).
         self._tokenizers: dict[tuple[str, str], Any] = {}
         self._models: dict[tuple[str, str], Any] = {}
+        # Actual physical generation count (106_s §9.4: the runner
+        # records planned step executions AND actual unique singleton
+        # calls — in-flight dedup and caching make them differ).
+        self.singleton_generations = 0
         for spec in self._specs:
             key = spec.weights_key()
             if key not in self._tokenizers:
@@ -376,6 +380,7 @@ class FourWorkerPool:
         is deliberately no batched entry point on this pool."""
         import torch
         from .workers import WorkerPool
+        self.singleton_generations += 1
         spec = self._spec(worker_id)
         tokenizer = self._tokenizers[spec.weights_key()]
         model = self._load_model(spec)

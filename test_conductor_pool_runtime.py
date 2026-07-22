@@ -76,6 +76,7 @@ class FakeFourPool:
         self.profile = copy.deepcopy(profile)
         self._completions = completions  # worker_id -> completion text
         self.singleton_calls = []
+        self.singleton_generations = 0
 
     def chat_template_sha(self, worker_id):
         return "ct" + "0" * 62
@@ -88,6 +89,7 @@ class FakeFourPool:
 
     def generate_singleton(self, worker_id, request):
         self.singleton_calls.append(worker_id)
+        self.singleton_generations += 1
         text = self._completions[worker_id]
         if callable(text):
             text = text(request)

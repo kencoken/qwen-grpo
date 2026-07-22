@@ -87,7 +87,8 @@ def test_materialize_and_verify_roundtrip(tmp_path, fake_declaration):
     manifest = materialize_support(rt, tmp_path / "surface")
     assert manifest["payoff_rows"] == 9 * 4 + 6 * 16 + 3 * 64  # 324
     assert manifest["planned_step_executions"] == 804
-    assert 0 < manifest["unique_singleton_generations"] <= 804
+    assert 0 < manifest["unique_singleton_generations"] \
+        <= manifest["uncached_step_records"] <= 804
     surface = load_support_surface(tmp_path / "surface")
     assert len(surface) == 324
     assert set(surface.values()) <= {0.5, 1.0}

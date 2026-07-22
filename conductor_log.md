@@ -560,6 +560,20 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   the commit carrying THIS addendum is the executable commit for
   Tranche A. Nothing else lands before launch; the screening/reveal
   checkout guard verifies against the P1 artifacts' recorded commit.
+- **2026-07-22 106_s UNIT 3 — DIAGNOSTIC PAYOFF SUPPORT + CANARY +
+  SENTINELS (117_f):** declaration/canary/sentinel fixtures committed
+  pre-GPU @530a151 (18 identity-selected observations, 804 planned
+  steps, wv/wp-bound). Materialized runs/stage0-support: 324 payoff
+  rows complete + verified fail-closed; 560 executed step records
+  (dependency blocking −244), 124 actual singleton generations
+  (in-flight dedup; accounting corrected at the pool after a
+  first-run mislabel, disclosed in 117_f), wall 47.5s. Canary: w2 0.5
+  vs w3 1.0 — model-scale selection reaches the reward path.
+  Sentinels: 6 retained 99_f/104_f requests reproduced bit-for-bit by
+  both workers, both orders. Surface: 24/324 winners; families exact;
+  BIDIRECTIONAL scale stakes inside the support (math_code×goal_first
+  requires worker 3; fork_join×bound_var/goal_first require worker 2;
+  reference routing 17/18). 641 tests; agreement unchanged.
 - **2026-07-22 106_s UNIT 2 — FOUR-WORKER RUNTIME + RECORDED SMOKE
   (112_f):** v2 profile embeds the ordered WorkerSpecs (re-derived and
   compared against the frozen registry; microbatch frozen at 1;

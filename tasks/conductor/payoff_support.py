@@ -218,8 +218,9 @@ def materialize_support(rt: Any, out_dir: str | Path) -> dict[str, Any]:
             "committed declaration; the generator or declaration moved")
 
     started = time.monotonic()
+    generations_before = getattr(rt.pool, "singleton_generations", 0)
     executed_steps = 0
-    unique_generations = 0
+    uncached_records = 0
     cache_hits = 0
     rows = []
     with PoolTraceWriter("traces", rt, base_dir=out_dir) as trace:
@@ -245,7 +246,7 @@ def materialize_support(rt: Any, out_dir: str | Path) -> dict[str, Any]:
                         else f"world:{step.world_failure}"
                         for step in result.steps],
                 })
-            unique_generations += sum(
+            uncached_records += sum(
                 1 for _, record in telemetry if not record.cache_hit)
             cache_hits += sum(
                 1 for _, record in telemetry if record.cache_hit)
@@ -263,7 +264,13 @@ def materialize_support(rt: Any, out_dir: str | Path) -> dict[str, Any]:
         "planned_step_executions":
             declaration["planned_step_executions"],
         "executed_step_records": executed_steps,
-        "unique_singleton_generations": unique_generations,
+        # Records not served by the persistent cache (in-flight dedup
+        # can fill several of these from one physical generation).
+        "uncached_step_records": uncached_records,
+        # Actual physical generations, counted at the pool.
+        "unique_singleton_generations":
+            getattr(rt.pool, "singleton_generations", 0)
+            - generations_before,
         "cache_hits": cache_hits,
         "payoff_rows": len(rows),
         "wall_seconds": round(wall, 1),
