@@ -560,6 +560,17 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   the commit carrying THIS addendum is the executable commit for
   Tranche A. Nothing else lands before launch; the screening/reveal
   checkout guard verifies against the P1 artifacts' recorded commit.
+- **2026-07-22 rev11 FOLLOW-UP OUTCOME (101_f/102_f):** both arms
+  admitted; both MISS; stop rule applied. rev11 fixed 10/13 targeted
+  cases but induced 19 regressions (handle substitution returned —
+  rule-dilution reproducing the rev3/rev4 layout sensitivity): net
+  878/900 vs rev10's 887/900. Conditional coder arm 844/900 (fork_join
+  goal_first 1/30 — composition mode) closes the 1.5B model switch on
+  full evidence. Conservation-of-failures at 1.5B demonstrated = the
+  properly-measured model-limit signature. Best known remains
+  generic/task_last/rev10 at 887/900; fails both the 30/30 target and
+  the §4.2 floor → next step is a new decision (102_f: 3B escalation
+  under task_last+rev10 is the evidenced option).
 - **2026-07-22 rev10 FOLLOW-UP OUTCOME (99_f/100_f):** ADMITTED;
   the Math parenthesis fix landed completely — math_code × bound_var
   0/30 → 30/30, Math perfect 360/360, zero regressions, and all 540
