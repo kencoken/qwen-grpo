@@ -239,7 +239,13 @@ class CallRecord:
     """One worker call's completion + §1.6 backend telemetry. Raw text and
     generation metadata only — never an executed WorkerResult (§1.10).
     `request_text` is the exact rendered chat request as lossless UTF-8
-    text (81_f §5.3 provenance; the bytes are its UTF-8 encoding)."""
+    text (81_f §5.3 provenance; the bytes are its UTF-8 encoding).
+
+    The two producer-identity fields are set only by the four-worker
+    runtime (113_f F1/F4): the v2 trace writer verifies each row against
+    the record that actually produced the completion, so a record from a
+    different runtime or worker cannot be recorded under this trace's
+    fingerprints. The v1 runtime leaves them None."""
     completion: str
     finish_reason: str
     generated_tokens: int
@@ -247,6 +253,8 @@ class CallRecord:
     cache_hit: bool
     request_text: str
     request_sha256: str
+    selected_worker_fp: str | None = None
+    runtime_fingerprint: str | None = None
 
 
 class Runtime:

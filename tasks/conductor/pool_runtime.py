@@ -71,6 +71,10 @@ FOUR_WORKER_RUNTIME_PROFILE: dict[str, Any] = {
         "compute_dtype": "bfloat16",
     },
     "decoding": {"do_sample": "false", "stopping": "eos"},
+    # 113_f F3: the effective device is execution identity — it is part
+    # of the frozen physical key and completions are device-dependent,
+    # so it belongs in rtp, wv and slw (and hence the cache key).
+    "device": "cuda",
     "tools": dict(TOOL_VERSIONS),
     "prompts": {"d16_revision": "rev10"},
     "request_contract": CONTRACT_TASK_LAST,
@@ -132,21 +136,32 @@ def validate_pool_profile(profile: Mapping[str, Any]) -> None:
             "worker_pool does not match the frozen Stage-0 registry "
             f"({STAGE0_POOL_FINGERPRINT}); a different pool needs a new "
             "reviewed registry, not a profile edit")
-    runtime = profile["worker_runtime"]
-    if set(runtime) != {"max_new_tokens", "microbatch"}:
-        raise ProfileError("worker_runtime must hold exactly "
-                           "max_new_tokens and microbatch")
-    if not isinstance(runtime["max_new_tokens"], int) \
-            or isinstance(runtime["max_new_tokens"], bool) \
-            or runtime["max_new_tokens"] < 1:
-        raise ProfileError("worker_runtime.max_new_tokens must be a "
-                           "positive integer")
-    if runtime["microbatch"] != 1:
+    # 113_f F2: the frozen treatment settings admit no variation — a
+    # profile is not a tuning surface. Exact equality, each with its
+    # own message so the refusal names the drifted setting.
+    if profile["worker_runtime"] != {"max_new_tokens": 256,
+                                     "microbatch": 1}:
         raise ProfileError(
-            "worker_runtime.microbatch must be exactly 1: singleton-v1 "
-            "is the frozen scientific worker policy (106_s §9.1); a "
-            "larger physical batch is a different policy requiring a "
-            "new preregistration")
+            f"worker_runtime {profile['worker_runtime']!r} is not the "
+            "frozen 256-token singleton-v1 policy (106_s §4/§9.1); a "
+            "different cap or physical batch is a different worker "
+            "policy requiring a new preregistration")
+    from .workers import FROZEN_NF4_CONFIG
+    if profile["nf4"] != FROZEN_NF4_CONFIG:
+        raise ProfileError(
+            f"nf4 {profile['nf4']!r} is not the frozen NF4 config; "
+            "quantization is treatment identity (106_s §4)")
+    if profile["tools"] != TOOL_VERSIONS:
+        raise ProfileError(
+            f"tools {profile['tools']!r} do not match the executable "
+            f"TOOL_VERSIONS; a declared version that the executor does "
+            "not run is fabricated provenance")
+    if profile["resource_policy"] != RESOURCE_POLICY:
+        raise ProfileError(
+            f"resource_policy {profile['resource_policy']!r} is not the "
+            f"implemented {RESOURCE_POLICY!r}")
+    if not isinstance(profile["device"], str) or not profile["device"]:
+        raise ProfileError("device must be a non-empty string")
     revisions = {spec.prompt_bundle_revision for spec in specs}
     if profile["prompts"] != {"d16_revision": next(iter(revisions))} \
             or len(revisions) != 1:
@@ -225,9 +240,24 @@ def selected_worker_fingerprint(profile: Mapping[str, Any],
         "artifact_grammar": profile["tools"]["artifact_grammar"],
         "nf4": dict(profile["nf4"]),
         "decoding": dict(profile["decoding"]),
+        "device": profile["device"],
         **profile["worker_runtime"],
     }
     return "slw-" + _sha16(canonical_json(record))
+
+
+def endpoint_family_fingerprint(profile: Mapping[str, Any],
+                                family: str) -> str:
+    """The §9.2 endpoint-family fingerprint (`epf-…`): the grammar/tool
+    identity workers of one family share — workers 2 and 3 share this
+    while never sharing a selected-worker fingerprint."""
+    validate_pool_profile(profile)
+    if family not in {"lookup", "math", "code"}:
+        raise ProfileError(f"unknown endpoint family {family!r}")
+    record = {"endpoint_family": family,
+              "tool_version": profile["tools"][family],
+              "artifact_grammar": profile["tools"]["artifact_grammar"]}
+    return "epf-" + _sha16(canonical_json(record))
 
 
 def physical_mapping(specs: tuple[WorkerSpec, ...],
@@ -245,15 +275,19 @@ def physical_mapping(specs: tuple[WorkerSpec, ...],
 
 class FourWorkerPool:
     """Real HF/bitsandbytes backend over the frozen four-worker pool.
-    Tests substitute fakes implementing `chat_template_sha`,
-    `system_prompt`, `render_request`, `generate_singleton`, `close`."""
+    Tests substitute fakes implementing the same interface, including
+    the owned `profile` (113_f F1: the runtime verifies its profile is
+    the pool's, so independently configured objects fail closed).
 
-    def __init__(self, profile: Mapping[str, Any], device: str = "cuda",
+    The effective device comes from the profile — it is execution
+    identity (113_f F3), not a construction convenience."""
+
+    def __init__(self, profile: Mapping[str, Any],
                  prompts: PromptBundle | None = None) -> None:
         validate_pool_profile(profile)
         self._profile = copy.deepcopy(dict(profile))
         self._specs = profile_worker_pool(self._profile)
-        self._device = device
+        self._device = self._profile["device"]
         self._prompts = (prompts if prompts is not None else resolve_prompts(
             self._profile["prompts"]["d16_revision"]))
         # Registered prompt SHAs are behavior claims: verify the bundle
@@ -376,6 +410,10 @@ class FourWorkerPool:
             })
         return report
 
+    @property
+    def profile(self) -> dict[str, Any]:
+        return copy.deepcopy(self._profile)
+
     def close(self) -> None:
         self._models.clear()
         self._tokenizers.clear()
@@ -396,6 +434,17 @@ class FourWorkerRuntime:
                 "the four-worker runtime requires a WorkerCompletionCache "
                 "(106_s §8.5: the v1 endpoint-keyed cache is a different "
                 "identity)")
+        # 113_f F1: the pool must be configured by THIS profile — an
+        # independently configured pool would generate under settings
+        # the fingerprints do not describe. Prefer `build_pool_runtime`,
+        # which constructs pool and cache from one owned profile.
+        pool_profile = getattr(pool, "profile", None)
+        if pool_profile is None or canonical_json(dict(pool_profile)) \
+                != canonical_json(dict(profile)):
+            raise InfrastructureError(
+                "pool profile does not match the runtime profile; the "
+                "fingerprints would describe settings the pool does not "
+                "execute (113_f finding 1)")
         self.profile = copy.deepcopy(dict(profile))
         self.specs = profile_worker_pool(self.profile)
         self.pool = pool
@@ -418,9 +467,11 @@ class FourWorkerRuntime:
             for spec in self.specs}
         self.chat_template_shas = chat_shas
         self.system_prompt_shas = system_shas
+        self.endpoint_family_fingerprints = {
+            family: endpoint_family_fingerprint(self.profile, family)
+            for family in ("lookup", "math", "code")}
         self.logical_to_physical = physical_mapping(
-            self.specs, self.profile["nf4"],
-            getattr(pool, "_device", "unknown"))
+            self.specs, self.profile["nf4"], self.profile["device"])
         self._closed = False
 
     def worker_call_batch(self, worker_id: int,
@@ -443,7 +494,9 @@ class FourWorkerRuntime:
                 generation_hit_token_cap=row.generation_hit_token_cap,
                 cache_hit=True,
                 request_text=request.decode("utf-8"),
-                request_sha256=_request_sha(request)))
+                request_sha256=_request_sha(request),
+                selected_worker_fp=slw,
+                runtime_fingerprint=self.runtime_profile_fingerprint))
         # Byte-identical in-flight requests are one singleton generation
         # and one stored row (greedy-decoding guard discipline as v1).
         unique_misses: dict[bytes, list[int]] = {}
@@ -462,10 +515,46 @@ class FourWorkerRuntime:
                     generation_hit_token_cap=gen.generation_hit_token_cap,
                     cache_hit=False,
                     request_text=request.decode("utf-8"),
-                    request_sha256=_request_sha(request))
+                    request_sha256=_request_sha(request),
+                    selected_worker_fp=slw,
+                    runtime_fingerprint=self.runtime_profile_fingerprint)
         if any(record is None for record in cached):
             raise InfrastructureError("unfilled cache slot after generation")
         return cached  # type: ignore[return-value]
+
+    def execute_batch(self, items: list[Any], trace: Any = None):
+        """Runtime-bound execution (113_f F1): every item's request
+        contract is preflighted against this profile, generation goes
+        through this runtime's own worker_call_batch, and a trace must
+        be a PoolTraceWriter bound to THIS runtime. Returns
+        (results, telemetry) where telemetry is the flat list of
+        (worker_id, CallRecord) in generation order."""
+        from . import executor as executor_mod
+        for item in items:
+            if item.request_contract != self.profile["request_contract"]:
+                raise InfrastructureError(
+                    f"item {item.item_id!r} uses request contract "
+                    f"{item.request_contract!r}; this runtime executes "
+                    f"{self.profile['request_contract']!r} — a mixed-"
+                    "contract batch is misattributed provenance "
+                    "(113_f finding 1)")
+        if trace is not None:
+            if not isinstance(trace, PoolTraceWriter) \
+                    or trace.runtime is not self:
+                raise InfrastructureError(
+                    "trace writer is not bound to this runtime; a trace "
+                    "must record the fingerprints of the runtime that "
+                    "produced its completions (113_f finding 1)")
+        telemetry: list[tuple[int, CallRecord]] = []
+
+        def call(worker_id: int, requests: list[str]):
+            records = self.worker_call_batch(worker_id, requests)
+            telemetry.extend((worker_id, record) for record in records)
+            return records
+
+        results = executor_mod.execute_workflow_batch(items, call,
+                                                      trace=trace)
+        return results, telemetry
 
     def close(self) -> None:
         if not self._closed:
@@ -474,8 +563,13 @@ class FourWorkerRuntime:
             self._closed = True
 
 
-def build_pool_runtime(profile: Mapping[str, Any], pool: Any,
-                       cache: Any) -> FourWorkerRuntime:
+def build_pool_runtime(profile: Mapping[str, Any]) -> FourWorkerRuntime:
+    """Production builder (113_f F1): pool and cache are constructed
+    from the one owned profile, so runtime, pool, cache and trace
+    fingerprints can only describe what actually executes."""
+    validate_pool_profile(profile)
+    pool = FourWorkerPool(profile)
+    cache = WorkerCompletionCache(profile["cache_path"])
     return FourWorkerRuntime(profile, pool, cache)
 
 
@@ -484,9 +578,12 @@ class PoolTraceWriter:
 
     Deliberately NOT a `TraceWriter` subclass: the executor refuses that
     class outright. The manifest binds the pool fingerprint, per-worker
-    execution fingerprints and the re-derived logical-to-physical
-    mapping; every step row carries worker id and stable name, endpoint
-    family, weights key and the selected-worker fingerprint."""
+    execution and endpoint-family fingerprints and the re-derived
+    logical-to-physical mapping. Every real-call row is verified against
+    the CallRecord that actually produced the completion (113_f F4):
+    producer worker and runtime fingerprints must match this trace's,
+    and the persisted rendered request must hash to the recorded SHA —
+    a record from another runtime or worker cannot be written here."""
 
     def __init__(self, run_name: str, runtime: FourWorkerRuntime,
                  base_dir: Any = "runs") -> None:
@@ -501,15 +598,28 @@ class PoolTraceWriter:
                 f"trace files already exist under {self._dir}; refusing "
                 "to overwrite a recorded run")
         self._dir.mkdir(parents=True, exist_ok=True)
+        self.runtime = runtime  # execute_batch verifies this binding
         self._names = {spec.worker_id: spec.name
                        for spec in runtime.specs}
         self._families = {spec.worker_id: spec.endpoint_family
                           for spec in runtime.specs}
-        self._weights = {spec.worker_id: list(spec.weights_key())
-                         for spec in runtime.specs}
+        # Complete physical key per worker (weights + quantization +
+        # device), not the bare weights pair (113_f F4).
+        self._physical = {
+            spec.worker_id: {
+                "model_id": spec.model_id,
+                "revision": spec.model_revision,
+                "quantization": dict(runtime.profile["nf4"]),
+                "device": runtime.profile["device"],
+            } for spec in runtime.specs}
+        self._family_fps = {
+            spec.worker_id: runtime.endpoint_family_fingerprints[
+                spec.endpoint_family]
+            for spec in runtime.specs}
         self._worker_fps = {
             spec.worker_id: runtime.worker_fingerprints[spec.worker_id]
             for spec in runtime.specs}
+        self._rtp = runtime.runtime_profile_fingerprint
         self._manifest = {
             "trace_schema_version": 2,
             "run_name": run_name,
@@ -523,8 +633,11 @@ class PoolTraceWriter:
             "worker_fingerprints": {
                 self._names[worker_id]: fp
                 for worker_id, fp in runtime.worker_fingerprints.items()},
+            "endpoint_family_fingerprints":
+                dict(runtime.endpoint_family_fingerprints),
             "logical_to_physical": runtime.logical_to_physical,
             "steps_written": 0,
+            "status": "running",
             "closed": False,
         }
         self._json = json
@@ -543,6 +656,33 @@ class PoolTraceWriter:
         if worker_id not in self._names:
             raise InfrastructureError(
                 f"worker id {worker_id!r} is not in this trace's pool")
+        request_text = None
+        request_sha = None
+        if call_record is not None:
+            # 113_f F4: the row records the call that actually produced
+            # this completion — verify producer identity and request
+            # bytes rather than copying the planned action.
+            if getattr(call_record, "selected_worker_fp", None) \
+                    != self._worker_fps[worker_id]:
+                raise InfrastructureError(
+                    f"step for worker {worker_id} carries producer "
+                    f"fingerprint "
+                    f"{getattr(call_record, 'selected_worker_fp', None)!r}"
+                    f"; this trace's worker is "
+                    f"{self._worker_fps[worker_id]!r}")
+            if getattr(call_record, "runtime_fingerprint", None) \
+                    != self._rtp:
+                raise InfrastructureError(
+                    "step was produced by a different runtime than this "
+                    "trace records (113_f finding 4)")
+            request_text = call_record.request_text
+            request_sha = call_record.request_sha256
+            actual = hashlib.sha256(
+                request_text.encode("utf-8")).hexdigest()
+            if actual != request_sha:
+                raise InfrastructureError(
+                    "rendered request text does not hash to the recorded "
+                    "request_sha256")
         result = record.result
         line = {
             "item_id": item_id,
@@ -550,17 +690,22 @@ class PoolTraceWriter:
             "worker_id": worker_id,
             "worker_name": self._names[worker_id],
             "endpoint_family": self._families[worker_id],
-            "weights_key": self._weights[worker_id],
+            "endpoint_family_fp": self._family_fps[worker_id],
+            "physical_key": self._physical[worker_id],
             "selected_worker_fp": self._worker_fps[worker_id],
+            "runtime_profile_fingerprint": self._rtp,
             "world_failure": record.world_failure,
             "override_applied": record.override_applied,
+            "binding_sha256": record.binding_sha256,
             "status": result.status if result else None,
             "value": result.value if result else None,
             "rejection_code": result.rejection_code if result else None,
             "artifact_valid": result.artifact_valid if result else None,
             "tool_executed": result.tool_executed if result else None,
             "synthetic": result.synthetic if result else None,
-            "request": record.request,
+            "user_message": record.request,
+            "request_text": request_text,
+            "request_sha256": request_sha,
             "completion": record.completion,
             "finish_reason": getattr(call_record, "finish_reason", None),
             "generated_tokens": getattr(call_record, "generated_tokens",
@@ -568,21 +713,23 @@ class PoolTraceWriter:
             "generation_hit_token_cap": getattr(
                 call_record, "generation_hit_token_cap", None),
             "cache_hit": getattr(call_record, "cache_hit", None),
-            "request_sha256": getattr(call_record, "request_sha256", None),
         }
         self._file.write(self._json.dumps(line, sort_keys=True) + "\n")
         self._file.flush()
         self._steps_written += 1
 
-    def close(self) -> None:
+    def close(self, status: str = "complete") -> None:
         if not self._manifest["closed"]:
             self._file.close()
             self._manifest["steps_written"] = self._steps_written
+            self._manifest["status"] = status
             self._manifest["closed"] = True
             self._write_manifest()
 
     def __enter__(self) -> "PoolTraceWriter":
         return self
 
-    def __exit__(self, *exc: Any) -> None:
-        self.close()
+    def __exit__(self, exc_type: Any, *exc: Any) -> None:
+        # 113_f cleanup: a trace interrupted by an exception must never
+        # resemble a successful run.
+        self.close("complete" if exc_type is None else "aborted")

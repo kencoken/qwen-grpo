@@ -19,10 +19,21 @@ pool-bound v2 traces:
   typed 0.5 outcome, never an abort;
 
 then re-executes the same batch and **fails unless every second-pass
-call is a cache hit** and replays are byte-identical. Reports
-per-worker telemetry, descriptive accuracy, wall time and peak
-reserved VRAM (a smoke diagnostic, not a Stage-1 gate: no registered
-population, no calibration manifest).
+call is a cache hit** and replays are byte-identical. The first pass
+must be genuinely cold (113_f F5): a pre-existing cache file is
+refused, zero first-pass hits are required, all four workers must
+execute cold, and `checkpoint_report` must show both physical models
+loaded before success. Reports per-worker telemetry, descriptive
+accuracy, wall time and peak reserved VRAM (a smoke diagnostic, not a
+Stage-1 gate: no registered population, no calibration manifest).
+
+Support note (113_f cleanup): the smoke reuses construction indices
+0..per_cell-1, which lie inside the already-consumed 0-29 D16 prefix,
+so no new construction identities are exposed; the smoke-specific
+support declaration is written to `runs/<name>/support.json` — the
+profile's `cell_mixture` is a Conductor training mixture and does not
+describe this diagnostic. Unit 3 uses the registered `worker_dev`
+support instead.
 """
 
 from __future__ import annotations
@@ -34,13 +45,13 @@ import time
 from collections import Counter
 from pathlib import Path
 
+import json
+
 from . import executor, parser, program
 from .agreement import ENDPOINT_FOR_OP
-from .cache import WorkerCompletionCache
 from .executor import WorkflowItem
 from .pool_runtime import (
-    FOUR_WORKER_RUNTIME_PROFILE, FourWorkerPool, FourWorkerRuntime,
-    PoolTraceWriter,
+    FOUR_WORKER_RUNTIME_PROFILE, PoolTraceWriter, build_pool_runtime,
 )
 from .profiles import DEFAULT_PROFILE
 from .resources import InstanceRegistry
@@ -88,22 +99,19 @@ def build_items(per_cell: int, request_contract: str
     return items, golds
 
 
-def run_pass(rt: FourWorkerRuntime, items, trace=None):
+def run_pass(rt, items, trace=None):
+    """Runtime-bound execution (113_f F1): contracts and trace binding
+    are preflighted inside execute_batch."""
+    results, telemetry = rt.execute_batch(items, trace=trace)
     stats = {"calls": Counter(), "cache_hits": 0, "truncated": 0,
              "truncated_by_worker": Counter(), "records": []}
-
-    def call(worker_id, requests):
-        records = rt.worker_call_batch(worker_id, requests)
+    for worker_id, record in telemetry:
         name = WORKER_NAMES[worker_id]
-        stats["calls"][name] += len(records)
-        stats["cache_hits"] += sum(r.cache_hit for r in records)
-        truncated = sum(r.generation_hit_token_cap for r in records)
-        stats["truncated"] += truncated
-        stats["truncated_by_worker"][name] += truncated
-        stats["records"].extend(records)
-        return records
-
-    results = executor.execute_workflow_batch(items, call, trace=trace)
+        stats["calls"][name] += 1
+        stats["cache_hits"] += record.cache_hit
+        stats["truncated"] += record.generation_hit_token_cap
+        stats["truncated_by_worker"][name] += record.generation_hit_token_cap
+        stats["records"].append(record)
     return results, stats
 
 
@@ -115,12 +123,34 @@ def main() -> int:
     args = argp.parse_args()
 
     profile = copy.deepcopy(FOUR_WORKER_RUNTIME_PROFILE)
+    profile["device"] = args.device
     profile["cache_path"] = str(Path("runs") / args.run_name
                                 / "cache.sqlite")
-    pool = FourWorkerPool(profile, device=args.device)
-    rt = FourWorkerRuntime(profile, pool,
-                           WorkerCompletionCache(profile["cache_path"]))
+    # 113_f F5: a genuinely cold first pass is part of the acceptance
+    # evidence — a pre-populated cache could pass the warm check
+    # without ever loading or parameter-checking a checkpoint.
+    if Path(profile["cache_path"]).exists():
+        print(f"FAIL: cache {profile['cache_path']} already exists; the "
+              "smoke requires a cold first pass")
+        return 1
+    rt = build_pool_runtime(profile)
     items, golds = build_items(args.per_cell, profile["request_contract"])
+    support = {
+        "declared_support": {
+            "cells": list(CELL_IDS),
+            "construction_indices": list(range(args.per_cell)),
+            "note": "indices lie inside the consumed 0-29 D16 prefix; "
+                    "no new construction identities exposed",
+            "variants": [":w3 on every Code-bearing workflow",
+                         ":wf wrong-family on lookup_atomic index 0"],
+        },
+        "not_described_by": "profile cell_mixture (a Conductor training "
+                            "mixture, not this diagnostic support)",
+    }
+    support_path = Path("runs") / args.run_name / "support.json"
+    support_path.parent.mkdir(parents=True, exist_ok=True)
+    support_path.write_text(json.dumps(support, indent=1) + "\n")
+    print(f"support declaration: {support_path}")
     print(f"{len(items)} workflows ({args.per_cell}/cell x "
           f"{len(CELL_IDS)} cells + :w3/:wf variants), "
           f"profile {rt.runtime_profile_fingerprint}, "
@@ -187,11 +217,24 @@ def main() -> int:
         1 for r1, r2 in zip(results, results2)
         if [s.completion for s in r1.steps] !=
            [s.completion for s in r2.steps])
+    report = rt.pool.checkpoint_report()
+    for entry in report:
+        print(f"checkpoint {entry['model_id']}@{entry['revision'][:12]}: "
+              f"loaded {entry['loaded']}, measured "
+              f"{entry['measured_parameters']}")
     rt.close()
 
     trace_dir = Path("runs") / args.run_name / "traces"
     print(f"traces: {trace_dir / 'steps.jsonl'}")
     failures = []
+    if stats["cache_hits"]:
+        failures.append(f"first pass had {stats['cache_hits']} cache "
+                        "hits; the smoke requires cold executions")
+    for name in WORKER_NAMES.values():
+        if not per_worker[name]["calls"]:
+            failures.append(f"worker {name} made no cold calls")
+    if not all(entry["loaded"] for entry in report):
+        failures.append("not every physical checkpoint was loaded")
     if stats2["cache_hits"] != total2:
         failures.append("second pass was not fully served by the cache")
     if mismatched:
@@ -199,8 +242,6 @@ def main() -> int:
     if wrong_family_ok is not True:
         failures.append("wrong-family workflow did not yield the typed "
                         "0.5 outcome")
-    if not per_worker["code_3b"]["calls"]:
-        failures.append("worker 3 made no calls")
     for failure in failures:
         print(f"FAIL: {failure}")
     if failures:
