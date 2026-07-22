@@ -1614,7 +1614,7 @@ def test_task_last_contract_renders_declared_block_order():
 def test_candidate_registry_and_physical_layout():
     # The frozen 92_s matrix is 16; the 99_f follow-up adds exactly one
     # registered candidate outside the frozen tranches.
-    assert len(CANDIDATES) == 17
+    assert len(CANDIDATES) == 19
     assert sum(1 for c in CANDIDATES.values()
                if c["tranche"] in ("A", "B")) == 16
     order = arm_order("A")
@@ -1979,3 +1979,27 @@ def test_rev10_candidate_is_registered_and_planned():
     for b, r in zip(base, rev10):
         assert b[0] == r[0] and b[2] == r[2]
         assert (b[3] != r[3]) == (b[1] == "math")
+
+
+# =============================================================================
+# 101_f follow-up: the rev11 Code amendment (100_f residual modes).
+# =============================================================================
+
+def test_rev11_amends_code_only_over_rev10():
+    r9 = resolve_prompts("rev9")
+    r10 = resolve_prompts("rev10")
+    r11 = resolve_prompts("rev11")
+    assert r11.text("lookup") == r9.text("lookup")
+    assert r11.text("math") == r10.text("math")
+    assert r11.text("code").startswith(r9.text("code")[:-200])
+    assert "Three exactness rules" in r11.text("code")
+    # rev9's load-bearing Wrong: contrasts are retained.
+    assert r11.text("code").count("Wrong:") == r9.text("code").count("Wrong:")
+    config = candidate_config("generic_1p5b-task_last-rev11")
+    assert config["tranche"] == "F2"
+    # Only Code rendered requests differ from the rev10 anchor.
+    base = candidate_plan_identity("generic_1p5b-task_last-rev10")
+    rev11 = candidate_plan_identity("generic_1p5b-task_last-rev11")
+    for b, r in zip(base, rev11):
+        assert b[0] == r[0] and b[2] == r[2]
+        assert (b[3] != r[3]) == (b[1] == "code")

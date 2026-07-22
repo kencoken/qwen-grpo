@@ -117,6 +117,19 @@ CANDIDATES["generic_1p5b-task_last-rev10"] = {
     "tranche": "F1",
 }
 
+# 101_f follow-up candidates: the rev11 Code amendment on the anchor,
+# plus the conditional coder escalation arm (run only if the anchor
+# misses the target; the paired prefix evidence in 100_f argues it
+# will not be needed).
+for _model in ("generic_1p5b", "coder_1p5b"):
+    CANDIDATES[f"{_model}-task_last-rev11"] = {
+        "code_model": _model,
+        "contract_label": "task_last",
+        "request_contract_key": REQUEST_CONTRACT_KEYS["task_last"],
+        "code_prompt": "rev11",
+        "tranche": "F2",
+    }
+
 
 def sentinel_order(contract_label: str, tranche: str) -> list[str]:
     """§7 frozen sentinel designation order for one request contract."""

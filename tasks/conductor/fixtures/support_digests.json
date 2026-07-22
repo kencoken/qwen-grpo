@@ -23,6 +23,14 @@
    "reversed": "36823490e8a1fa10f2aed1a2ede37f5f21ac917c3369c0192171284febc3f34e"
   }
  },
+ "coder_1p5b-task_last-rev11": {
+  "full_identity_sha256": "504e06c1a6ad93a27f440e376a300b41c08cd6c2fed36cc96865d83eb4de18e7",
+  "p1_identity_sha256": "06a02360328b33e05b4771cabd2b23351ed6df9ef3452f2dae492f790fc90f22",
+  "p1_sequence": {
+   "canonical": "df972f39569e39a5e87399b64f0609f368481d7bce610d227aa93fc16faf7b46",
+   "reversed": "36823490e8a1fa10f2aed1a2ede37f5f21ac917c3369c0192171284febc3f34e"
+  }
+ },
  "coder_1p5b-task_last-rev9": {
   "full_identity_sha256": "6ca287c1921c317b05f3a3be7eba8edfeea1c919c2b53bf31e3e59ebf478f368",
   "p1_identity_sha256": "ada7d78886b6749a2096dc99c9f1dc8c089181cac2900830983fb58db7c92d76",
@@ -90,6 +98,14 @@
  "generic_1p5b-task_last-rev10": {
   "full_identity_sha256": "5b4288851fbac71ce3fb650b76f7b13f5a0e4d25979f74e6c81333f1f4b81829",
   "p1_identity_sha256": "44bee4b4770c59220fa13332d2e2343fd52279dc159141ddf9e6e9c1be97926c",
+  "p1_sequence": {
+   "canonical": "df972f39569e39a5e87399b64f0609f368481d7bce610d227aa93fc16faf7b46",
+   "reversed": "36823490e8a1fa10f2aed1a2ede37f5f21ac917c3369c0192171284febc3f34e"
+  }
+ },
+ "generic_1p5b-task_last-rev11": {
+  "full_identity_sha256": "504e06c1a6ad93a27f440e376a300b41c08cd6c2fed36cc96865d83eb4de18e7",
+  "p1_identity_sha256": "06a02360328b33e05b4771cabd2b23351ed6df9ef3452f2dae492f790fc90f22",
   "p1_sequence": {
    "canonical": "df972f39569e39a5e87399b64f0609f368481d7bce610d227aa93fc16faf7b46",
    "reversed": "36823490e8a1fa10f2aed1a2ede37f5f21ac917c3369c0192171284febc3f34e"

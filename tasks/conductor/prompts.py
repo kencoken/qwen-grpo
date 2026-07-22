@@ -348,6 +348,31 @@ The sequence argument is always the word resource, never its name. Your \
 reply must contain <artifact> and </artifact> exactly once, with the \
 expression between them."""
 
+# rev11 (101_f follow-up preregistration): ONE bounded Code amendment
+# targeting the three residual modes characterized in 100_f (13/270,
+# all protocol-class): (1) invented at()-inside-stable_unique nesting —
+# shared by both models, a DSL type-clarity gap; (2) recomputing the
+# upstream Math step inline under goal_first instead of using step_k;
+# (3) envelope tag confusion. Rules are positive-only in the rev7/8
+# sense — no copyable wrong exemplar, since two of the modes are the
+# models' own inventions. rev9's existing text (including its
+# load-bearing Wrong: contrasts, per the code_local_v1 result) is the
+# byte-identical prefix; Lookup is rev9 and Math is the rev10 text.
+_CODE_FINAL = ("The sequence argument is always the word resource, "
+               "never its name. Your reply must contain <artifact> and "
+               "</artifact> exactly once, with the expression between "
+               "them.")
+assert SYSTEM_CODE.endswith(_CODE_FINAL)
+SYSTEM_CODE_REV11 = SYSTEM_CODE[:-len(_CODE_FINAL)] + """\
+Three exactness rules: at(seq, n) produces a single number and never \
+appears inside stable_unique or rotate_left — the sequence is always \
+resource, or stable_unique and rotate_left nested around resource. \
+When the task's number comes from an earlier step it is given as \
+step_k — use step_k exactly as written; never recompute it from the \
+Problem's formulas, and never add other steps' results to your \
+expression. The tags are always literally <artifact> and </artifact>, \
+never a function name. """ + _CODE_FINAL
+
 # 92_s §2.3 second Code prompt condition — model-neutral, derived only
 # from the retained rev1-9 evidence (no new GPU output was inspected):
 # - task-locality is the FIRST rule: the dominant alternative-renderer
@@ -447,6 +472,14 @@ PROMPT_REVISIONS: dict[str, dict[str, str]] = {
         "lookup": SYSTEM_LOOKUP,
         "math": SYSTEM_MATH_REV10,
         "code": SYSTEM_CODE,
+    },
+    # 101_f follow-up: rev10 with ONE bounded Code amendment (the three
+    # positive exactness rules) targeting the 100_f residual modes.
+    # Lookup byte-identical to rev9; Math byte-identical to rev10.
+    "rev11": {
+        "lookup": SYSTEM_LOOKUP,
+        "math": SYSTEM_MATH_REV10,
+        "code": SYSTEM_CODE_REV11,
     },
 }
 
