@@ -104,6 +104,20 @@ for _tranche, _models in _TRANCHE_MODELS.items():
                 }
 
 
+# 99_f follow-up candidate (post-Tranche-A terminal stop, 98_f): ONE
+# bounded Math amendment on the anchor configuration, registered under
+# its own preregistration outside the frozen 92_s tranches. The
+# "code_prompt" field names the full bundle revision; rev10's Lookup
+# and Code texts are byte-identical to rev9.
+CANDIDATES["generic_1p5b-task_last-rev10"] = {
+    "code_model": "generic_1p5b",
+    "contract_label": "task_last",
+    "request_contract_key": REQUEST_CONTRACT_KEYS["task_last"],
+    "code_prompt": "rev10",
+    "tranche": "F1",
+}
+
+
 def sentinel_order(contract_label: str, tranche: str) -> list[str]:
     """§7 frozen sentinel designation order for one request contract."""
     if contract_label not in REQUEST_CONTRACT_KEYS:

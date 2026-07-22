@@ -1612,7 +1612,11 @@ def test_task_last_contract_renders_declared_block_order():
 
 
 def test_candidate_registry_and_physical_layout():
-    assert len(CANDIDATES) == 16
+    # The frozen 92_s matrix is 16; the 99_f follow-up adds exactly one
+    # registered candidate outside the frozen tranches.
+    assert len(CANDIDATES) == 17
+    assert sum(1 for c in CANDIDATES.values()
+               if c["tranche"] in ("A", "B")) == 16
     order = arm_order("A")
     assert len(order) == 8 and len(set(order)) == 8
     # Alternating models per §7.
@@ -1935,3 +1939,43 @@ def test_frozen_p0_cohort_fixture_loads_and_matches_rev9_chunks():
     endpoint, chunks = load_cohort(cohort)
     assert endpoint == "code"
     assert sum(len(chunk) for chunk in chunks) == 90
+
+
+# =============================================================================
+# 99_f follow-up: the rev10 Math amendment (98_f diagnosis).
+# =============================================================================
+
+def test_rev10_amends_math_only_and_demo_executes():
+    rev9 = resolve_prompts("rev9")
+    rev10 = resolve_prompts("rev10")
+    assert rev10.text("lookup") == rev9.text("lookup")
+    assert rev10.text("code") == rev9.text("code")
+    # The amendment extends rev9's exact Math text (no other edits).
+    assert rev10.text("math").startswith(
+        rev9.text("math")[:-len("Your entire reply must be exactly the "
+                                "artifact — no text before it, no text "
+                                "after it.")])
+    assert "(a * b + c) % m" in rev10.text("math")
+    # Positive-only: the paren-less wrong form appears nowhere (rev7
+    # lesson — it is the model's prior and would become a template).
+    assert "a * b + c % m" not in rev10.text("math").replace(
+        "(a * b + c) % m", "")
+    demo = prompts_mod.DEMONSTRATIONS["math"][2]
+    result = contract.run_worker_output(1, demo["completion"],
+                                        prompts_mod.demo_binding(demo))
+    assert result.status == "success" and result.value == demo["value"]
+
+
+def test_rev10_candidate_is_registered_and_planned():
+    config = candidate_config("generic_1p5b-task_last-rev10")
+    assert config["tranche"] == "F1"
+    assert config["request_contract_key"] == "worker-blocks-task-last-v1"
+    from tasks.conductor.worker_eval_probe import support_digests
+    assert "generic_1p5b-task_last-rev10" in support_digests()
+    # Only the Math endpoint's rendered requests differ from the rev9
+    # task_last sibling; user messages are identical.
+    base = candidate_plan_identity("generic_1p5b-task_last-rev9")
+    rev10 = candidate_plan_identity("generic_1p5b-task_last-rev10")
+    for b, r in zip(base, rev10):
+        assert b[0] == r[0] and b[2] == r[2]
+        assert (b[3] != r[3]) == (b[1] == "math")
