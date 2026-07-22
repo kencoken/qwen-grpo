@@ -560,7 +560,19 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   the commit carrying THIS addendum is the executable commit for
   Tranche A. Nothing else lands before launch; the screening/reveal
   checkout guard verifies against the P1 artifacts' recorded commit.
-- **Next:** Tranche A in the frozen `arm_order` — eight candidate P1
+- **2026-07-22 TRANCHE A OUTCOME — TERMINAL STOP (98_f):** all eight
+  arms ADMITTED (singleton-v1 bit-stable everywhere, within the cost
+  gate); no clean prefix anywhere; both contract sentinels executed;
+  both contracts `proven_non_target` on full validated Lookup/Math
+  evidence (current: Lookup/Math imperfect on fresh instances;
+  task_last: Lookup perfect but Math 0/30 on math_code × bound_var);
+  `selected: None`; Tranche B never opened per §5/§11. Key findings:
+  task_last dominates current in every paired contrast; rev9 dominates
+  code_local_v1 in every paired contrast (retire it); best arm
+  generic_1p5b-task_last-rev9 at 285/300 blocked by exactly one
+  localized Math interaction. Continuation requires a new
+  preregistration (98_f records the decision inputs).
+- **Next (superseded by the terminal stop):** Tranche A in the frozen `arm_order` — eight candidate P1
   triplets (three fresh processes each), `screen`, launched full runs
   under append-only `selection-r1` receipts, `reveal`. The worktree
   stays clean; all outputs land under `runs/` until the experiment
