@@ -555,6 +555,11 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   not position), singleton 2/90 reproducing 78_s microbatch-1 exactly;
   raw artifacts retained in `runs/p0-rev9-replay/` (hashes in the
   Freeze Record).
+- **Executable-commit addendum (2026-07-22):** the post-freeze rename
+  of the 91–97 cycle docs (`81b7ec6`, zero content change) moved HEAD;
+  the commit carrying THIS addendum is the executable commit for
+  Tranche A. Nothing else lands before launch; the screening/reveal
+  checkout guard verifies against the P1 artifacts' recorded commit.
 - **Next:** Tranche A in the frozen `arm_order` — eight candidate P1
   triplets (three fresh processes each), `screen`, launched full runs
   under append-only `selection-r1` receipts, `reveal`. The worktree
