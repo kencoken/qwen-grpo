@@ -29,9 +29,9 @@ from tasks.conductor.types import CELL_IDS, RENDERER_IDS, \
 from tasks.conductor.worker_eval import (
     CACHE_SOURCE_DISABLED, NullCache, REQUEST_CONTRACTS, RunWriter,
     build_manifest, build_node_cases, case_identities, endpoint_schedule,
-    git_provenance, make_called_row, node_cases_for_latent, parse_stages,
-    resolve_request_contract, run_node_cases, score_node_calls,
-    singleton_call,
+    environment_versions, git_provenance, make_called_row,
+    node_cases_for_latent, parse_stages, resolve_request_contract,
+    run_node_cases, score_node_calls, singleton_call,
 )
 
 from test_conductor_runtime import FakePool, profile_with
@@ -955,7 +955,8 @@ def fake_p1_output(records, order, wall=60.0, vram=3 * 2 ** 30,
            "runtime_profile_fingerprint": "rtp-x",
            "system_prompt_sha256": {"lookup": "a"},
            "chat_template_sha256": {"lookup": "b"},
-           "environment": {"torch": "t"},
+           "environment": fake_p1_output.environment,
+           "device": "cuda",
            "git": {"commit": commit, "dirty": dirty, "diff_sha256": None},
            "process": {"pid": pid if pid is not None
                        else fake_p1_output.next_pid()},
@@ -966,6 +967,7 @@ def fake_p1_output(records, order, wall=60.0, vram=3 * 2 ** 30,
 
 
 fake_p1_output.next_pid = iter(range(10_000, 20_000)).__next__
+fake_p1_output.environment = environment_versions()
 
 
 def test_p1_sample_is_300_cases_and_runs_singleton():
@@ -992,7 +994,7 @@ def test_admit_requires_exact_equality_and_cost_gate():
     assert verdict["cases"] == 300
     assert verdict["max_seconds"] > 0  # applied thresholds are recorded
 
-    # One byte-different completion in the reversed run fails admission.
+    # Genuine generation instability is scientific non-admission.
     tampered = [json.loads(json.dumps(run)) for run in runs]
     victim = tampered[2]["cases"][7]
     victim["completion"] = victim["completion"] + " "
@@ -1000,20 +1002,21 @@ def test_admit_requires_exact_equality_and_cost_gate():
     assert not verdict["admitted"]
     assert any(victim["case_id"] in reason
                for reason in verdict["reasons"])
-
-    # Wrong order schedule, missing VRAM, or a blown cost gate each fail.
-    bad_orders = [fake_p1_output(runs[0]["cases"], o)
-                  for o in ("canonical", "reversed", "reversed")]
-    assert not admit_singleton(bad_orders, "construction")["admitted"]
-    no_vram = [dict(run, peak_vram_bytes=None) for run in runs]
-    assert any("measurement" in r for r in
-               admit_singleton(no_vram, "construction")["reasons"])
+    # So is a blown frozen cost gate.
     slow = [dict(run, wall_seconds=3000.0) for run in runs]
     assert any("frozen" in r for r in
                admit_singleton(slow, "construction")["reasons"])
     hungry = [dict(run, peak_vram_bytes=23 * 2 ** 30) for run in runs]
     assert any("VRAM" in r for r in
                admit_singleton(hungry, "construction")["reasons"])
+    # 96_s finding 2: malformed evidence STOPS the tranche instead.
+    bad_orders = [fake_p1_output(runs[0]["cases"], o)
+                  for o in ("canonical", "reversed", "reversed")]
+    with pytest.raises(InfrastructureError, match="tranche stop"):
+        admit_singleton(bad_orders, "construction")
+    no_vram = [dict(run, peak_vram_bytes=None) for run in runs]
+    with pytest.raises(InfrastructureError, match="measurement"):
+        admit_singleton(no_vram, "construction")
 
 
 def test_compare_records_field_diffs_and_alignment():
@@ -1300,31 +1303,29 @@ def test_admit_preconditions_reject_unregistered_designs():
         runs.append(fake_p1_output(records, order))
     assert admit_singleton(runs, "construction")["admitted"]
 
-    def reasons(bad_runs, namespace="construction"):
-        return admit_singleton(bad_runs, namespace)["reasons"]
+    def stops(bad_runs, match, namespace="construction"):
+        with pytest.raises(InfrastructureError, match=match):
+            admit_singleton(bad_runs, namespace)
 
-    # 82_s finding 1: the declared design, not mutual consistency.
-    assert any("declared" in r for r in reasons(runs, "worker_dev"))
-    subset = [dict(run, renderers=["resource_first"]) for run in runs]
-    assert any("full crossing" in r for r in reasons(subset))
+    # 82_s finding 1 + 96_s finding 2: an unregistered design or any
+    # malformed evidence is a tranche stop, never quiet elimination.
+    stops(runs, "declared", namespace="worker_dev")
+    stops([dict(run, renderers=["resource_first"]) for run in runs],
+          "full crossing")
     keep = {record["case_id"] for record in runs[0]["cases"][:5]}
-    short = [dict(run, cases=[record for record in run["cases"]
-                              if record["case_id"] in keep])
-             for run in runs]
-    assert any("300-case" in r for r in reasons(short))
+    stops([dict(run, cases=[record for record in run["cases"]
+                            if record["case_id"] in keep])
+           for run in runs], "300-case")
     resha = copy_mod.deepcopy(runs)
     resha[2]["cases"][0]["request_sha256"] = "0" * 64
-    assert any("request bytes" in r for r in reasons(resha))
-    shared_pid = [dict(run, process={"pid": 1}) for run in runs]
-    assert any("distinct" in r for r in reasons(shared_pid))
-    dirty = [runs[0], runs[1],
-             dict(runs[2], git={"commit": "c" * 40, "dirty": True,
-                                "diff_sha256": "d"})]
-    assert any("dirty" in r for r in reasons(dirty))
-    split = [runs[0], runs[1],
-             dict(runs[2], git={"commit": "e" * 40, "dirty": False,
-                                "diff_sha256": None})]
-    assert any("one clean commit" in r for r in reasons(split))
+    stops(resha, "request bytes")
+    stops([dict(run, process={"pid": 1}) for run in runs], "distinct")
+    stops([runs[0], runs[1],
+           dict(runs[2], git={"commit": "c" * 40, "dirty": True,
+                              "diff_sha256": "d"})], "dirty")
+    stops([runs[0], runs[1],
+           dict(runs[2], git={"commit": "e" * 40, "dirty": False,
+                              "diff_sha256": None})], "one clean commit")
 
 
 # =============================================================================
@@ -1522,11 +1523,11 @@ def test_gate_d_cli_is_hard_bound_to_worker_dev(tmp_path, capsys):
         path = tmp_path / f"{order}-{len(paths)}.json"
         path.write_text(json.dumps(fake_p1_output(records, order)))
         paths.append(str(path))
-    # The public verdict holds runs to worker_dev; these
-    # construction-based diagnostics therefore fail admission.
-    assert probe_main(["admit", *paths]) == 1
+    # The public verdict holds runs to worker_dev; construction-based
+    # diagnostics are a tranche stop at the CLI (96_s finding 2).
+    assert probe_main(["admit", *paths]) == 2
     out = capsys.readouterr().out
-    assert "worker_dev" in out
+    assert "TRANCHE STOP" in out and "worker_dev" in out
     # 89_s: there is no namespace override on the Gate-D commands.
     with pytest.raises(SystemExit):
         probe_main(["admit", *paths, "--namespace", "construction"])
@@ -1547,9 +1548,8 @@ def test_admit_rejects_relabelled_construction_runs():
                                      cases, labels, order)
         relabelled.append(fake_p1_output(records, order,
                                          namespace="worker_dev"))
-    verdict = admit_singleton(relabelled, "worker_dev")
-    assert not verdict["admitted"]
-    assert any("plan" in reason for reason in verdict["reasons"])
+    with pytest.raises(InfrastructureError, match="plan"):
+        admit_singleton(relabelled, "worker_dev")
 
 
 def test_admit_verifies_endpoint_and_request_identity_against_plan():
@@ -1562,14 +1562,10 @@ def test_admit_verifies_endpoint_and_request_identity_against_plan():
     assert admit_singleton(runs, "construction")["admitted"]
     # Same support and order, one case posing a different request.
     tampered = copy_mod.deepcopy(runs)
-    victim = tampered[1]["cases"][4]
-    victim["user_message_sha256"] = "0" * 64
     for run in tampered:  # keep cross-run request equality intact
         run["cases"][4]["user_message_sha256"] = "0" * 64
-    verdict = admit_singleton(tampered, "construction")
-    assert not verdict["admitted"]
-    assert any("identity differs" in reason
-               for reason in verdict["reasons"])
+    with pytest.raises(InfrastructureError, match="identity differs"):
+        admit_singleton(tampered, "construction")
 
 
 # =============================================================================
@@ -1696,15 +1692,14 @@ def test_candidate_admission_binds_the_registered_treatment():
     # task-last candidate disagree with that candidate's rendered plan.
     other = "coder_1p5b-task_last-rev9"
     relabelled = [dict(run, candidate=other) for run in runs]
-    verdict = admit_singleton(relabelled, WORKER_DEV_NAMESPACE)
-    assert not verdict["admitted"]
-    assert any("registered" in r or "plan" in r
-               for r in verdict["reasons"])
+    with pytest.raises(InfrastructureError,
+                       match="registered|plan|tranche stop"):
+        admit_singleton(relabelled, WORKER_DEV_NAMESPACE)
     # And the prompt-condition sibling likewise.
     sibling = [dict(run, candidate="coder_1p5b-current-code_local_v1")
                for run in runs]
-    assert not admit_singleton(sibling,
-                               WORKER_DEV_NAMESPACE)["admitted"]
+    with pytest.raises(InfrastructureError):
+        admit_singleton(sibling, WORKER_DEV_NAMESPACE)
 
 
 def candidate_pool(cid, script):
@@ -1734,10 +1729,16 @@ def test_run_candidate_round_trips_through_loader(tmp_path, monkeypatch):
     cases, labels = build_node_cases(small, request_contract_key=key)
     latents = generate_latents(small)
     script = reference_script(cases, labels, latents)
-    writer = run_candidate(cid, "isolated", str(tmp_path / "run"),
+    writer = run_candidate(cid, "selection", str(tmp_path / "run"),
                            pool=candidate_pool(cid, script),
                            git_info={"commit": "0" * 40, "dirty": False,
                                      "diff_sha256": None})
+    # 96_s finding 3: a second completed selection run is refused.
+    with pytest.raises(InfrastructureError, match="append-only"):
+        run_candidate(cid, "selection", str(tmp_path / "run-again"),
+                      pool=candidate_pool(cid, script),
+                      git_info={"commit": "0" * 40, "dirty": False,
+                                "diff_sha256": None})
     loaded = load_run(tmp_path / "run")
     assert loaded["manifest"]["candidate_label"] == cid
     assert loaded["manifest"]["request_contract"]["key"] == key
@@ -1831,18 +1832,16 @@ def test_screen_rejects_foreign_and_candidate_less_files(tmp_path):
         screen_candidates(tmp_path, "A")
 
 
-def test_tranche_b_screening_follows_the_state_machine(tmp_path):
-    with pytest.raises(InfrastructureError, match="requires the Tranche"):
+def test_tranche_b_screening_rederives_a(tmp_path):
+    # 96_s finding 1: no caller-provided A artifact is accepted at all.
+    with pytest.raises(InfrastructureError, match="rederive"):
         screen_candidates(tmp_path, "B")
-    with pytest.raises(InfrastructureError, match="never opened"):
+    with pytest.raises(TypeError):
         screen_candidates(tmp_path, "B",
-                          reveal_a={"selected": "generic_1p5b-current-rev9",
-                                    "contract_states": {}})
-    with pytest.raises(InfrastructureError, match="proven non-target"):
-        screen_candidates(tmp_path, "B", reveal_a={
-            "selected": None,
-            "contract_states": {"current": "proven_non_target",
-                                "task_last": "proven_non_target"}})
+                          reveal_a={"selected": None})
+    # An empty A directory cannot open B either: rederivation refuses.
+    with pytest.raises(InfrastructureError, match="complete triggered"):
+        screen_candidates(tmp_path / "b", "B", a_runs_dir=tmp_path)
 
 
 def fake_full_digest(cid, population):
@@ -1880,10 +1879,13 @@ def test_reveal_end_to_end_selects_mechanically(tmp_path, monkeypatch):
         key = candidate_config(cid)["request_contract_key"]
         cases, labels = build_node_cases(small, request_contract_key=key)
         script = reference_script(cases, labels, latents)
-        run_candidate(cid, "isolated", str(tmp_path / f"{cid}-full-r1"),
+        run_candidate(cid, "selection", str(tmp_path / f"{cid}-full-r1"),
                       pool=candidate_pool(cid, script),
                       git_info={"commit": "c" * 40, "dirty": False,
                                 "diff_sha256": None})
+    # 96_s finding 6: the launch preserves the frozen registry order.
+    assert screening["launch"] == [
+        cid for cid in arm_order("A") if cid in set(screening["launch"])]
     outcome = reveal_tranche(tmp_path, screening)
     # All three launched arms hit the (small-population) target; §8
     # selects the structurally smallest pool under the current contract.
@@ -1894,6 +1896,14 @@ def test_reveal_end_to_end_selects_mechanically(tmp_path, monkeypatch):
     assert outcome["contract_states"] == {"current": "viable",
                                           "task_last": "viable"}
     assert outcome["selected"] == "generic_1p5b-current-rev9"
+    # 96_s finding 1: with an A target selected, Tranche B never opens,
+    # rederived from these same artifacts.
+    with pytest.raises(InfrastructureError, match="never opened"):
+        screen_candidates(tmp_path / "b", "B", a_runs_dir=tmp_path)
+    # 96_s finding 7: rectangles carry the preregistered DiD.
+    if outcome["contrasts"]["rectangles"]:
+        rectangle = outcome["contrasts"]["rectangles"][0]
+        assert "did_overall" in rectangle and "did_by_group" in rectangle
     pair = outcome["contrasts"]["full_pairs"][
         "coder_1p5b-current-rev9 vs generic_1p5b-current-rev9"]
     assert pair["factor"] == "code_model"
@@ -1904,8 +1914,8 @@ def test_reveal_end_to_end_selects_mechanically(tmp_path, monkeypatch):
     # entry is refused, not selected.
     index_path = tmp_path / "completion_index.json"
     index = json.loads(index_path.read_text())
-    coder = index["coder_1p5b-current-rev9:isolated"]
-    index["generic_1p5b-current-rev9:isolated"] = coder
+    coder = index["coder_1p5b-current-rev9:selection-r1"]
+    index["generic_1p5b-current-rev9:selection-r1"] = coder
     index_path.write_text(json.dumps(index, indent=1, sort_keys=True))
     with pytest.raises(InfrastructureError, match="not the registered"):
         reveal_tranche(tmp_path, screening)

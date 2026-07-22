@@ -1250,6 +1250,10 @@ def _validate_measurements(run_dir: Path,
     if layout_quant != manifest["runtime_profile"]["nf4"]:
         raise InfrastructureError(
             "physical layout quantization does not match the profile")
+    if measurements.get("device") \
+            != manifest["physical_layout"].get("device"):
+        raise InfrastructureError(
+            "measured device does not match the planned layout device")
     planned = manifest["physical_layout"]["checkpoints"]
     actual = measurements.get("checkpoints")
     if not isinstance(actual, list):

@@ -571,7 +571,7 @@ def compare_records(left: list[Mapping[str, Any]],
 _P1_HELD_FIXED = ("namespace", "per_cell", "renderers", "visibility",
                   "generator_version", "endpoint_schedule_version",
                   "runtime_profile_fingerprint", "system_prompt_sha256",
-                  "chat_template_sha256", "environment")
+                  "chat_template_sha256", "environment", "device")
 
 # The registered §7.3 P1 design (D1 erratum, 88_f): 10 latents per cell
 # crossed with all renderers, private visibility — 300 node cases.
@@ -609,42 +609,49 @@ def admit_singleton(runs: list[Mapping[str, Any]],
     canonical, reversed). The runs must be the declared design against
     the declared namespace (82_s finding 1) — not merely mutually
     consistent — with exact generation-field equality for every case and
-    the frozen cost gate. FAIL has no partial credit."""
+    the frozen cost gate. FAIL has no partial credit.
+
+    96_s finding 2: evidence-integrity violations (wrong order or
+    support, provenance drift, malformed artifacts, non-fresh
+    processes) RAISE and stop the tranche; only genuine generation
+    instability and frozen cost-gate failure count as scientific
+    non-admission."""
     reasons: list[str] = []
+    violations: list[str] = []
     if len(runs) != 3:
         raise ProfileError("admission takes exactly three P1 runs")
     if any(run["probe"] != "p1" for run in runs):
         raise ProfileError("admission takes P1 outputs only")
     orders = [run["order"] for run in runs]
     if orders != ["canonical", "canonical", "reversed"]:
-        reasons.append(f"run orders {orders} != "
+        violations.append(f"run orders {orders} != "
                        "['canonical', 'canonical', 'reversed']")
     for field in _P1_HELD_FIXED:
         values = [run.get(field) for run in runs]
         if any(value != values[0] for value in values):
-            reasons.append(f"held-fixed field {field!r} differs "
+            violations.append(f"held-fixed field {field!r} differs "
                            f"across runs: {values}")
     design = {"namespace": expected_namespace, "per_cell": P1_PER_CELL,
               "visibility": "private"}
     for field, expected in design.items():
         if runs[0].get(field) != expected:
-            reasons.append(f"{field} {runs[0].get(field)!r} is not the "
+            violations.append(f"{field} {runs[0].get(field)!r} is not the "
                            f"declared {expected!r}")
     if sorted(runs[0].get("renderers", [])) != sorted(RENDERER_IDS):
-        reasons.append(f"renderers {runs[0].get('renderers')} are not "
+        violations.append(f"renderers {runs[0].get('renderers')} are not "
                        f"the full crossing {sorted(RENDERER_IDS)}")
     if len(runs[0]["cases"]) != P1_CASES:
-        reasons.append(f"{len(runs[0]['cases'])} cases is not the "
+        violations.append(f"{len(runs[0]['cases'])} cases is not the "
                        f"declared {P1_CASES}-case design")
     commits = [run["git"]["commit"] for run in runs]
     if any(run["git"]["dirty"] for run in runs):
-        reasons.append("a run came from a dirty worktree")
+        violations.append("a run came from a dirty worktree")
     if len(set(commits)) != 1:
-        reasons.append(f"runs span commits {sorted(set(commits))}; "
+        violations.append(f"runs span commits {sorted(set(commits))}; "
                        "admission requires one clean commit")
     pids = [run["process"]["pid"] for run in runs]
     if len(set(pids)) != 3:
-        reasons.append(f"process ids {pids} are not distinct; each run "
+        violations.append(f"process ids {pids} are not distinct; each run "
                        "must be a fresh process")
     # 89_s blocking finding: regenerate the declared plan and require
     # every run to match it — support, order, endpoint and request
@@ -654,29 +661,29 @@ def admit_singleton(runs: list[Mapping[str, Any]],
     # contract digest against the candidate registry.
     cids = {run.get("candidate") for run in runs}
     if len(cids) != 1:
-        reasons.append(f"runs span candidates {sorted(map(str, cids))}")
+        violations.append(f"runs span candidates {sorted(map(str, cids))}")
     cid = next(iter(cids)) if len(cids) == 1 else None
     if cid is not None:
         from .candidates import (candidate_bundle, candidate_config,
                                  candidate_runtime_profile)
         config = candidate_config(cid)
         if expected_namespace != WORKER_DEV_NAMESPACE:
-            reasons.append("candidate admission is defined only against "
+            violations.append("candidate admission is defined only against "
                            f"{WORKER_DEV_NAMESPACE!r}")
         expected_rtp = runtime_profile_fingerprint(
             candidate_runtime_profile(cid))
         if runs[0].get("runtime_profile_fingerprint") != expected_rtp:
-            reasons.append(f"runtime profile fingerprint is not "
+            violations.append(f"runtime profile fingerprint is not "
                            f"{cid!r}'s registered profile")
         if runs[0].get("system_prompt_sha256") \
                 != candidate_bundle(cid).sha256():
-            reasons.append(f"prompt hashes are not {cid!r}'s registered "
+            violations.append(f"prompt hashes are not {cid!r}'s registered "
                            "bundle")
         registered_contract = resolve_request_contract(
             config["request_contract_key"])
         if runs[0].get("request_contract", {}).get("digest") \
                 != registered_contract["digest"]:
-            reasons.append(f"request-contract digest is not {cid!r}'s "
+            violations.append(f"request-contract digest is not {cid!r}'s "
                            "registered contract")
         plan4 = candidate_plan_identity(cid)
         registered_digest = support_digests().get(cid)
@@ -705,14 +712,14 @@ def admit_singleton(runs: list[Mapping[str, Any]],
         expected_sequence = (canonical_ids if run["order"] == "canonical"
                              else list(reversed(canonical_ids)))
         if sequence != expected_sequence:
-            reasons.append(
+            violations.append(
                 f"run {index + 1}: case sequence is not the "
                 f"{expected_namespace} plan in {run['order']} order")
             continue
         drifted = [record["case_id"] for record in run["cases"]
                    if record_key(record) != identity[record["case_id"]]]
         if drifted:
-            reasons.append(
+            violations.append(
                 f"run {index + 1}: endpoint/request identity differs "
                 f"from the regenerated plan for {drifted[:3]}")
     for index in (1, 2):
@@ -730,9 +737,10 @@ def admit_singleton(runs: list[Mapping[str, Any]],
             drifted = sorted(case for case in requests[0]
                              if requests[0].get(case)
                              != requests[1].get(case))
-            reasons.append(f"run {index + 1} vs run 1: request bytes "
-                           f"differ for {drifted[:5]} — the runs did not "
-                           "pose identical requests")
+            violations.append(
+                f"run {index + 1} vs run 1: request bytes differ for "
+                f"{drifted[:5]} — the runs did not pose identical "
+                "requests")
     n_cases = len(runs[0]["cases"])
     projected = [run["wall_seconds"] * full_cases / n_cases
                  for run in runs]
@@ -743,12 +751,16 @@ def admit_singleton(runs: list[Mapping[str, Any]],
             f"{max_seconds}s gate")
     vram = [run["peak_vram_bytes"] for run in runs]
     if any(value is None for value in vram):
-        reasons.append("peak_vram_bytes missing; the gate requires a "
-                       "recorded measurement")
+        violations.append("peak_vram_bytes missing; the gate requires "
+                          "a recorded measurement")
     elif max(vram) >= max_vram_bytes:
         reasons.append(
             f"peak reserved VRAM {max(vram)} B exceeds the frozen "
             f"{max_vram_bytes} B gate")
+    if violations:
+        raise InfrastructureError(
+            "P1 evidence is invalid — a tranche stop, not a scientific "
+            "non-admission (96_s finding 2): " + "; ".join(violations))
     return {
         "admitted": not reasons,
         "policy": "singleton-v1",
@@ -804,8 +816,16 @@ FULL_POPULATION = {"namespace": "worker_dev", "per_cell": 30,
                    "visibility": "private"}
 
 
-def run_candidate(cid: str, mode: str, run_dir: str,
-                  device: str = "cuda", pool: Any = None,
+# 96_s finding 3: completion receipts are role-specific and
+# append-only — a second completed selection run can never replace the
+# preregistered first one.
+RUN_ROLES = {"selection": ("isolated", "selection-r1"),
+             "confirmation": ("isolated", "confirmation-r2"),
+             "composed": ("composed", "composed")}
+
+
+def run_candidate(cid: str, role: str, run_dir: str,
+                  device: str | None = None, pool: Any = None,
                   git_info: Mapping[str, Any] | None = None,
                   process_info: Mapping[str, Any] | None = None) -> Any:
     """One complete 92_s candidate evaluation artifact: the thin
@@ -817,6 +837,19 @@ def run_candidate(cid: str, mode: str, run_dir: str,
                               case_identities, run_composed_workflows,
                               run_node_cases, score_node_calls,
                               score_workflow_calls, summarize_worker_eval)
+    from .candidates import EXPERIMENT_DEVICE
+    if role not in RUN_ROLES:
+        raise ProfileError(f"unknown run role {role!r}; one of "
+                           f"{sorted(RUN_ROLES)}")
+    mode, receipt = RUN_ROLES[role]
+    device = EXPERIMENT_DEVICE if device is None else device
+    index_path = Path(run_dir).parent / "completion_index.json"
+    index = (json.loads(index_path.read_text(encoding="utf-8"))
+             if index_path.exists() else {})
+    if f"{cid}:{receipt}" in index:
+        raise InfrastructureError(
+            f"a completed {receipt!r} run for {cid!r} already exists; "
+            "receipts are append-only (96_s finding 3)")
     config = candidate_config(cid)
     profile = candidate_runtime_profile(cid)
     bundle = candidate_bundle(cid)
@@ -841,7 +874,8 @@ def run_candidate(cid: str, mode: str, run_dir: str,
         endpoint_schedule_version=ENDPOINT_SCHEDULE_VERSION,
         candidate_label=cid, request_contract_key=contract_key,
         expected_calls=expected_calls, expected_scores=expected_scores,
-        evaluation_mode=mode, physical_layout=physical_layout(profile),
+        evaluation_mode=mode,
+        physical_layout=physical_layout(profile, device=device),
         git_info=git_info, process_info=process_info)
     timed = _TimedRuntime(runtime)
     peak = _vram_tracker()
@@ -867,13 +901,17 @@ def run_candidate(cid: str, mode: str, run_dir: str,
             "per_endpoint": timed.stats,
             "checkpoints": pool.checkpoint_report(),
         })
-    # 94_s finding 3: the completion index maps each candidate to its
-    # actual fresh run directory and manifest hash, so restarts (fresh
-    # dirs, per RunWriter's refusal to reuse) stay reveal-addressable.
-    index_path = Path(run_dir).parent / "completion_index.json"
+    # 94_s finding 3 / 96_s finding 3: the append-only completion index
+    # maps each candidate ROLE to its actual fresh run directory and
+    # manifest hash; restarts of incomplete runs take fresh dirs, but a
+    # completed receipt is never replaced.
     index = (json.loads(index_path.read_text(encoding="utf-8"))
              if index_path.exists() else {})
-    index[f"{cid}:{mode}"] = {
+    if f"{cid}:{receipt}" in index:
+        raise InfrastructureError(
+            f"completion receipt {cid}:{receipt} appeared during the "
+            "run; refusing to overwrite")
+    index[f"{cid}:{receipt}"] = {
         "run_dir": Path(run_dir).name,
         "manifest_sha256": writer.manifest_sha256,
     }
@@ -950,6 +988,14 @@ def _screen(runs_dir: Path, tranche: str,
         raise InfrastructureError(
             "92_s §2.4: one clean executable commit across the whole "
             f"tranche; got commits {sorted(commits)}")
+    environments = {json.dumps(run.get("environment"), sort_keys=True)
+                    for runs in runs_by_cid.values() for run in runs}
+    devices = {run.get("device")
+               for runs in runs_by_cid.values() for run in runs}
+    if len(environments) != 1 or len(devices) != 1:
+        raise InfrastructureError(
+            "96_s finding 8: one environment fingerprint and one device "
+            "across every arm of the tranche")
     table: dict[str, dict[str, Any]] = {}
     for cid in arms:
         verdict = admit_singleton(runs_by_cid[cid], WORKER_DEV_NAMESPACE)
@@ -962,9 +1008,9 @@ def _screen(runs_dir: Path, tranche: str,
                 prefix_verdict(runs_by_cid[cid][0], cid)
                 if verdict["admitted"] else "NA"),
         }
-    launch = [cid for cid, entry in table.items()
-              if entry["admitted"]
-              and entry["target_prefix_clean"] is True]
+    launch_set = {cid for cid, entry in table.items()
+                  if entry["admitted"]
+                  and entry["target_prefix_clean"] is True}
     sentinels: dict[str, str | None] = {}
     for contract_label in REQUEST_CONTRACT_KEYS:
         if contract_label not in eligible:
@@ -973,44 +1019,73 @@ def _screen(runs_dir: Path, tranche: str,
         sentinels[contract_label] = next(
             (cid for cid in sentinel_order(contract_label, tranche)
              if table.get(cid, {}).get("admitted")), None)
-        chosen = sentinels[contract_label]
-        if chosen is not None and chosen not in launch:
-            launch.append(chosen)
+        if sentinels[contract_label] is not None:
+            launch_set.add(sentinels[contract_label])
+    # 96_s finding 6: execution follows the frozen registry order.
+    launch = [cid for cid in arms if cid in launch_set]
+    first_run = next(iter(runs_by_cid.values()))[0]
     return {"tranche": tranche, "commit": commits.pop(),
+            "environment": first_run.get("environment"),
+            "device": first_run.get("device"),
             "eligible_contracts": list(eligible), "candidates": table,
             "launch": launch, "sentinels": sentinels,
             "p1_sha256": p1_hashes}
 
 
+def _rederive_tranche_a(a_runs_dir: str | Path
+                        ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """96_s finding 1: Tranche A's outcome is never accepted as a
+    caller-provided artifact — it is rederived from A's own raw P1 and
+    run artifacts."""
+    from .candidates import REQUEST_CONTRACT_KEYS
+    screening_a = _screen(Path(a_runs_dir), "A",
+                          list(REQUEST_CONTRACT_KEYS))
+    return screening_a, reveal_tranche(a_runs_dir, screening_a)
+
+
+def _tranche_b_eligibility(a_runs_dir: str | Path
+                           ) -> tuple[list[str], dict[str, Any]]:
+    from .candidates import REQUEST_CONTRACT_KEYS
+    screening_a, reveal_a = _rederive_tranche_a(a_runs_dir)
+    if reveal_a["selected"]:
+        raise InfrastructureError(
+            "Tranche A selected a target configuration; Tranche B is "
+            "never opened (92_s §8)")
+    eligible = [label for label in REQUEST_CONTRACT_KEYS
+                if reveal_a["contract_states"].get(label)
+                != "proven_non_target"]
+    if not eligible:
+        raise InfrastructureError(
+            "both request contracts are proven non-target for "
+            "unchanged Lookup/Math; stop (92_s §5)")
+    return eligible, screening_a
+
+
 def screen_candidates(runs_dir: str | Path, tranche: str,
-                      reveal_a: Mapping[str, Any] | None = None
+                      a_runs_dir: str | Path | None = None
                       ) -> dict[str, Any]:
-    """§6.10 screening. Tranche B (94_s finding 5) consumes the
-    validated Tranche A reveal: it never opens after an A target, and
-    only contracts not proven non-target remain eligible."""
+    """§6.10 screening. Tranche B (94_s finding 5, hardened per 96_s
+    finding 1) rederives Tranche A from A's artifacts: it never opens
+    after an A target, only contracts not proven non-target remain
+    eligible, and A and B must share one clean executable commit."""
     from .candidates import REQUEST_CONTRACT_KEYS
     runs_dir = Path(runs_dir)
     if tranche == "B":
-        if reveal_a is None:
+        if a_runs_dir is None:
             raise InfrastructureError(
-                "Tranche B screening requires the Tranche A reveal "
-                "artifact (92_s §5)")
-        if reveal_a.get("selected"):
+                "Tranche B screening requires Tranche A's runs "
+                "directory to rederive its outcome (96_s finding 1)")
+        eligible, screening_a = _tranche_b_eligibility(a_runs_dir)
+        screening_b = _screen(runs_dir, "B", eligible)
+        if screening_b["commit"] != screening_a["commit"]:
             raise InfrastructureError(
-                "Tranche A selected a target configuration; Tranche B "
-                "is never opened (92_s §8)")
-        states = reveal_a.get("contract_states", {})
-        eligible = [label for label in REQUEST_CONTRACT_KEYS
-                    if states.get(label) != "proven_non_target"]
-        if not eligible:
-            raise InfrastructureError(
-                "both request contracts are proven non-target for "
-                "unchanged Lookup/Math; stop (92_s §5)")
-    else:
-        if reveal_a is not None:
-            raise InfrastructureError("reveal_a applies only to Tranche B")
-        eligible = list(REQUEST_CONTRACT_KEYS)
-    return _screen(runs_dir, tranche, eligible)
+                "Tranches A and B must share one clean executable "
+                f"commit; A={screening_a['commit'][:12]} "
+                f"B={screening_b['commit'][:12]}")
+        return screening_b
+    if a_runs_dir is not None:
+        raise InfrastructureError("a_runs_dir applies only to Tranche B")
+    return _screen(runs_dir, tranche, list(REQUEST_CONTRACT_KEYS))
 
 
 # §8 lexicographic selection orders (lower is better).
@@ -1060,7 +1135,7 @@ def prefix_verdict(run: Mapping[str, Any], cid: str) -> bool:
 
 
 def _verify_candidate_run(cid: str, run: Mapping[str, Any],
-                          commit: str) -> None:
+                          screening: Mapping[str, Any]) -> None:
     """94_s finding 2: reveal never trusts a filename or index label —
     the loaded manifest must BE the registered candidate, on the
     tranche's one clean commit, posing the pre-registered support."""
@@ -1071,8 +1146,14 @@ def _verify_candidate_run(cid: str, run: Mapping[str, Any],
     checks = {
         "candidate_label": (manifest["candidate_label"], cid),
         "evaluation_mode": (manifest["evaluation_mode"], "isolated"),
-        "commit": (manifest["git"]["commit"], commit),
+        "commit": (manifest["git"]["commit"], screening["commit"]),
         "dirty": (manifest["git"]["dirty"], False),
+        # 96_s finding 8: one environment fingerprint and device across
+        # P1 arms and full runs.
+        "environment": (manifest["environment"],
+                        screening["environment"]),
+        "layout_device": (manifest["physical_layout"].get("device"),
+                          screening["device"]),
         "runtime_profile_fingerprint": (
             manifest["runtime_profile_fingerprint"],
             runtime_profile_fingerprint(profile)),
@@ -1173,7 +1254,9 @@ def _paired_contrast(outcomes_left: Mapping[str, bool],
 
 
 def reveal_tranche(runs_dir: str | Path,
-                   screening: Mapping[str, Any]) -> dict[str, Any]:
+                   screening: Mapping[str, Any],
+                   a_runs_dir: str | Path | None = None
+                   ) -> dict[str, Any]:
     """§6.10 joint reveal. The stored screening must rederive exactly
     from the raw P1 artifacts (94_s finding 3); full runs are addressed
     through the completion index and verified as the registered
@@ -1185,8 +1268,32 @@ def reveal_tranche(runs_dir: str | Path,
                              physical_layout)
     from .worker_eval import load_run
     runs_dir = Path(runs_dir)
-    rederived = _screen(runs_dir, screening["tranche"],
-                        list(screening["eligible_contracts"]))
+    # 96_s finding 1: eligibility is derived here, never read from the
+    # (editable) screening artifact.
+    a_sentinel_runs: dict[str, Any] = {}
+    if screening["tranche"] == "B":
+        if a_runs_dir is None:
+            raise InfrastructureError(
+                "Tranche B reveal requires Tranche A's runs directory")
+        eligible, screening_a = _tranche_b_eligibility(a_runs_dir)
+        if screening_a["commit"] != screening["commit"]:
+            raise InfrastructureError(
+                "Tranches A and B must share one clean executable "
+                "commit")
+        index_a = json.loads(
+            (Path(a_runs_dir) / "completion_index.json").read_text(
+                encoding="utf-8"))
+        for contract_label, sentinel in screening_a["sentinels"].items():
+            if sentinel is None:
+                continue
+            entry = index_a.get(f"{sentinel}:selection-r1")
+            if entry is not None:
+                a_sentinel_runs[contract_label] = load_run(
+                    Path(a_runs_dir) / entry["run_dir"])
+    else:
+        from .candidates import REQUEST_CONTRACT_KEYS
+        eligible = list(REQUEST_CONTRACT_KEYS)
+    rederived = _screen(runs_dir, screening["tranche"], eligible)
     if rederived != dict(screening):
         raise InfrastructureError(
             "the stored screening manifest does not rederive from the "
@@ -1197,11 +1304,11 @@ def reveal_tranche(runs_dir: str | Path,
     index = json.loads(index_path.read_text(encoding="utf-8"))
     loaded: dict[str, Any] = {}
     for cid in screening["launch"]:
-        entry = index.get(f"{cid}:isolated")
+        entry = index.get(f"{cid}:selection-r1")
         if entry is None:
             raise InfrastructureError(
-                f"{cid}: no completed isolated run in the completion "
-                "index")
+                f"{cid}: no completed selection-r1 run in the "
+                "completion index")
         run_dir = runs_dir / entry["run_dir"]
         manifest_sha = hashlib.sha256(
             (run_dir / "manifest.json").read_bytes()).hexdigest()
@@ -1210,7 +1317,7 @@ def reveal_tranche(runs_dir: str | Path,
                 f"{cid}: manifest hash differs from the completion "
                 "index")
         run = load_run(run_dir)
-        _verify_candidate_run(cid, run, screening["commit"])
+        _verify_candidate_run(cid, run, screening)
         loaded[cid] = run
     # Unchanged-endpoint equality (§5) across arms sharing a contract.
     by_contract: dict[str, list[str]] = {}
@@ -1219,6 +1326,15 @@ def reveal_tranche(runs_dir: str | Path,
             candidate_config(cid)["contract_label"], []).append(cid)
     for contract_label, cids in by_contract.items():
         reference: dict[str, tuple] = {}
+        # 96_s finding 1: Tranche B's unchanged Lookup/Math must equal
+        # Tranche A's audited sentinel byte-for-byte.
+        if contract_label in a_sentinel_runs:
+            for row in a_sentinel_runs[contract_label]["calls"]:
+                if row["endpoint_name"] != "code":
+                    reference[row["case_id"]] = (
+                        row["request_sha256"], row["completion"],
+                        row["finish_reason"], row["generated_tokens"],
+                        row["generation_hit_token_cap"])
         for cid in sorted(cids):
             for row in loaded[cid]["calls"]:
                 if row["endpoint_name"] == "code":
@@ -1278,10 +1394,19 @@ def reveal_tranche(runs_dir: str | Path,
             for key, entry in results[sentinel]["groups"].items()
             if not key.startswith("code|")}
         per_cell = FULL_POPULATION["per_cell"]
+        # 96_s finding 5: viability is the full §4.1 target for the
+        # unchanged endpoints — correctness AND zero protocol failures.
+        protocol_clean = not any(
+            row["generation_hit_token_cap"]
+            or row["envelope_outcome"] != "ok"
+            or row["grammar_outcome"] not in (None, "ok")
+            for row in loaded[sentinel]["calls"]
+            if row["endpoint_name"] != "code")
         contract_states[contract_label] = (
-            "viable" if all(entry["n"] == per_cell
-                            and entry["correct"] == per_cell
-                            for entry in lookup_math.values())
+            "viable" if protocol_clean
+            and all(entry["n"] == per_cell
+                    and entry["correct"] == per_cell
+                    for entry in lookup_math.values())
             else "proven_non_target")
     # §9 descriptive contrasts: full-population pairs on executed arms,
     # prefix pairs on admitted candidates, complete rectangles only.
@@ -1322,25 +1447,63 @@ def reveal_tranche(runs_dir: str | Path,
             "factor": factor,
             **_paired_contrast(prefix_outcomes[left],
                                prefix_outcomes[right], group_of_prefix)}
+    # 96_s finding 7: emit the preregistered difference-in-differences
+    # with a frozen sign convention, overall and by group. Level order
+    # is the registry order; DiD = [Y(a1,b1) - Y(a0,b1)] -
+    # [Y(a1,b0) - Y(a0,b0)] over correct counts, where a/b are the
+    # varying factors in `factors` order and level 1 is the later
+    # registry level.
+    from .candidates import CODE_PROMPTS, _TRANCHE_MODELS
+    level_orders = {
+        "code_model": list(_TRANCHE_MODELS[screening["tranche"]]),
+        "contract_label": ["current", "task_last"],
+        "code_prompt": list(CODE_PROMPTS),
+    }
     executed = sorted(loaded)
     factors = ("code_model", "contract_label", "code_prompt")
+    groups_all = sorted(set(group_of_full.values()))
     for fixed_factor in factors:
         others = [factor for factor in factors if factor != fixed_factor]
         for fixed_value in {candidate_config(cid)[fixed_factor]
                             for cid in executed}:
-            rectangle = [cid for cid in executed
-                         if candidate_config(cid)[fixed_factor]
-                         == fixed_value]
-            if len(rectangle) == 4 and len(
-                    {(candidate_config(cid)[others[0]],
-                      candidate_config(cid)[others[1]])
-                     for cid in rectangle}) == 4:
-                contrasts["rectangles"].append({
-                    "fixed": {fixed_factor: fixed_value},
-                    "varying": others,
-                    "correct_counts": {
-                        cid: sum(full_outcomes[cid].values())
-                        for cid in rectangle}})
+            by_levels = {
+                (candidate_config(cid)[others[0]],
+                 candidate_config(cid)[others[1]]): cid
+                for cid in executed
+                if candidate_config(cid)[fixed_factor] == fixed_value}
+            levels_a = level_orders[others[0]]
+            levels_b = level_orders[others[1]]
+            wanted = [(a, b) for a in levels_a for b in levels_b]
+            if len(by_levels) != 4 or set(by_levels) != set(wanted):
+                continue
+
+            def correct(cid: str, group: str | None = None) -> int:
+                return sum(
+                    ok for case_id, ok in full_outcomes[cid].items()
+                    if group is None or group_of_full[case_id] == group)
+
+            def did(group: str | None = None) -> int:
+                y = {levels: correct(cid, group)
+                     for levels, cid in by_levels.items()}
+                return ((y[(levels_a[1], levels_b[1])]
+                         - y[(levels_a[0], levels_b[1])])
+                        - (y[(levels_a[1], levels_b[0])]
+                           - y[(levels_a[0], levels_b[0])]))
+
+            n_cases = len(next(iter(full_outcomes.values())))
+            contrasts["rectangles"].append({
+                "fixed": {fixed_factor: fixed_value},
+                "varying": others,
+                "levels": {others[0]: levels_a, others[1]: levels_b},
+                "convention": ("[Y(a1,b1)-Y(a0,b1)]-[Y(a1,b0)-Y(a0,b0)] "
+                               "on correct counts; level 1 = later "
+                               "registry level"),
+                "n_per_arm": n_cases,
+                "correct_counts": {cid: correct(cid)
+                                   for cid in by_levels.values()},
+                "did_overall": did(),
+                "did_by_group": {group: did(group)
+                                 for group in groups_all}})
     targets = sorted(
         (cid for cid in executed if results[cid]["target"]),
         key=lambda cid: (
@@ -1393,23 +1556,29 @@ def main(argv: list[str] | None = None) -> int:
 
     runp = sub.add_parser("run", help="92_s §6.7 candidate evaluation")
     runp.add_argument("--candidate", required=True)
-    runp.add_argument("--mode", choices=["isolated", "composed"],
-                      default="isolated")
+    runp.add_argument("--role", choices=sorted(RUN_ROLES),
+                      default="selection",
+                      help="append-only receipt: selection (isolated "
+                           "run 1), confirmation (isolated run 2) or "
+                           "composed")
     runp.add_argument("--run-dir", required=True)
-    runp.add_argument("--device", default="cuda")
+    runp.add_argument("--device", default=None)
 
     scr = sub.add_parser("screen", help="92_s §6.10 P1 screening table + "
                                         "launch manifest")
     scr.add_argument("--runs-dir", required=True)
     scr.add_argument("--tranche", choices=["A", "B"], required=True)
-    scr.add_argument("--reveal-a", default=None,
-                     help="Tranche A reveal artifact (required for B)")
+    scr.add_argument("--runs-dir-a", default=None,
+                     help="Tranche A runs directory (required for B; "
+                          "A's outcome is rederived, never read)")
     scr.add_argument("--out", required=True)
 
     rev = sub.add_parser("reveal", help="92_s §6.10 joint reveal after "
                                         "all launched full runs complete")
     rev.add_argument("--runs-dir", required=True)
     rev.add_argument("--screening", required=True)
+    rev.add_argument("--runs-dir-a", default=None,
+                     help="Tranche A runs directory (required for B)")
     rev.add_argument("--out", required=True)
 
     p0 = sub.add_parser("p0", help="replay a frozen physical cohort")
@@ -1464,6 +1633,7 @@ def main(argv: list[str] | None = None) -> int:
                 "per_cell": P1_PER_CELL,
                 "renderers": list(RENDERER_IDS),
                 "visibility": "private",
+                "device": args.device,
             }
         else:
             if not args.namespace:
@@ -1475,7 +1645,8 @@ def main(argv: list[str] | None = None) -> int:
             extra = {"namespace": args.namespace,
                      "per_cell": args.per_cell,
                      "renderers": list(args.renderers),
-                     "visibility": args.visibility}
+                     "visibility": args.visibility,
+                     "device": args.device}
         records, wall, vram = run_p1_cases(runtime, cases, labels,
                                            args.order)
         _write_output(args.out, _header(
@@ -1486,17 +1657,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "run":
-        writer = run_candidate(args.candidate, args.mode, args.run_dir,
+        writer = run_candidate(args.candidate, args.role, args.run_dir,
                                device=args.device)
-        print(f"candidate {args.candidate} {args.mode} run complete -> "
+        print(f"candidate {args.candidate} {args.role} run complete -> "
               f"{args.run_dir} (manifest sha {writer.manifest_sha256})")
         return 0
 
     if args.command == "screen":
-        reveal_a = (json.loads(Path(args.reveal_a).read_text(
-            encoding="utf-8")) if args.reveal_a else None)
         screening = screen_candidates(args.runs_dir, args.tranche,
-                                      reveal_a=reveal_a)
+                                      a_runs_dir=args.runs_dir_a)
+        # 96_s finding 1: the executing checkout must itself be clean
+        # and at the tranche's frozen commit.
+        provenance = git_provenance()
+        if provenance["dirty"] \
+                or provenance["commit"] != screening["commit"]:
+            print("REFUSED: the executing checkout must be clean and "
+                  f"at the tranche commit {screening['commit'][:12]}")
+            return 2
         _write_output(args.out, screening)
         digest = hashlib.sha256(
             Path(args.out).read_bytes()).hexdigest()
@@ -1511,10 +1688,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "reveal":
         screening = json.loads(
             Path(args.screening).read_text(encoding="utf-8"))
-        outcome = reveal_tranche(args.runs_dir, screening)
+        provenance = git_provenance()
+        if provenance["dirty"] \
+                or provenance["commit"] != screening["commit"]:
+            print("REFUSED: the executing checkout must be clean and "
+                  f"at the tranche commit {screening['commit'][:12]}")
+            return 2
+        outcome = reveal_tranche(args.runs_dir, screening,
+                                 a_runs_dir=args.runs_dir_a)
         _write_output(args.out, outcome)
         for cid, entry in outcome["results"].items():
-            print(f"{cid}: target={entry['target']}")
+            print(f"{cid}: " + (f"target={entry['target']} "
+                                f"fallback={entry['fallback']}"
+                                if entry["status"] == "executed"
+                                else entry["status"]))
+        print(f"contract_states: {outcome['contract_states']}")
         print(f"selected: {outcome['selected']} -> {args.out}")
         return 0
 
@@ -1556,9 +1744,13 @@ def main(argv: list[str] | None = None) -> int:
         max_vram = (int(args.max_vram_gib * 2 ** 30)
                     if args.max_vram_gib is not None
                     else MAX_PEAK_VRAM_BYTES)
-        verdict = admit_singleton(runs, WORKER_DEV_NAMESPACE,
-                                  max_seconds=args.max_seconds,
-                                  max_vram_bytes=max_vram)
+        try:
+            verdict = admit_singleton(runs, WORKER_DEV_NAMESPACE,
+                                      max_seconds=args.max_seconds,
+                                      max_vram_bytes=max_vram)
+        except InfrastructureError as error:
+            print(f"TRANCHE STOP: {error}")
+            return 2
         print(json.dumps(verdict, indent=1, sort_keys=True))
         print("ADMIT singleton-v1" if verdict["admitted"]
               else "FAIL: singleton-v1 not admitted (see §7.4: stop and "

@@ -60,6 +60,10 @@ CHECKPOINT_PARAMETERS = {
 
 REQUEST_CONTRACT_KEYS = {"current": CONTRACT_CURRENT,
                          "task_last": CONTRACT_TASK_LAST}
+
+# 96_s finding 8: the CUDA device is frozen across every P1 arm and
+# full run; a run on any other device refuses at verification.
+EXPERIMENT_DEVICE = "cuda"
 CODE_PROMPTS = ("rev9", "code_local_v1")
 
 _TRANCHE_MODELS = {"A": ("coder_1p5b", "generic_1p5b"),
@@ -138,7 +142,8 @@ def candidate_bundle(cid: str):
     return resolve_prompts(candidate_config(cid)["code_prompt"])
 
 
-def physical_layout(profile: Mapping[str, Any]) -> dict[str, Any]:
+def physical_layout(profile: Mapping[str, Any],
+                    device: str = EXPERIMENT_DEVICE) -> dict[str, Any]:
     """Planned physical-worker layout (92_s §3): unique checkpoint keys,
     declared parameters and the logical-endpoint mapping. Logical
     endpoints stay distinct; only model/tokenizer objects are shared."""
@@ -165,5 +170,6 @@ def physical_layout(profile: Mapping[str, Any]) -> dict[str, Any]:
         "declared_parameter_sum": sum(c["declared_parameters"]
                                       for c in checkpoints),
         "quantization": copy.deepcopy(profile["nf4"]),
+        "device": device,
         "checkpoints": checkpoints,
     }
