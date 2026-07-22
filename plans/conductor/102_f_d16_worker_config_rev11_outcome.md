@@ -65,3 +65,30 @@ is necessarily a new decision, not a rerun.
 
 Option (a) is the natural continuation of the frozen escalation logic;
 (b)/(c) change definitions and belong to a design review.
+
+## Addendum (2026-07-22, after 103_s review)
+
+Two claims above are corrected per 103_s; the numbers stand (the
+reviewer independently recomputed and we re-verified all figures from
+the retained artifacts).
+
+1. **Point 2's mechanism is wrong as stated.** The rev11 rules were
+   inserted *before* `_CODE_FINAL`, so the sentence forbidding handle
+   substitution remained the byte-identical, literally final sentence —
+   and the mode returned anyway. Strict last-position recency was
+   intact; the defensible mechanism is **prompt interference /
+   instruction-load pressure**, not dilution of the final restatement.
+2. **Point 3 is a hypothesis, not a demonstrated law.** rev11 changed
+   three rules in one amendment, so the failure-mode trade cannot be
+   attributed to a capacity mechanism from this design. The narrow,
+   supported claim: generic-1.5B + NF4 + full-Problem `task_last` +
+   unconstrained DSL generation appears near its practical
+   single-prompt reliability frontier. It is **not** evidence of a
+   general reasoning-capacity ceiling — 103_s's union analysis (no Code
+   case missed by all three of rev10/rev11-generic/rev11-coder;
+   A∪B∪C = 270/270) argues against that stronger reading.
+
+Disposition: option (a) proceeds as the 104_f 3B screen (widened to
+{rev10, rev11} per 103_s); the complementary 1.5B policies are
+preserved for a separate, deliberately-qualified orchestration
+preregistration rather than discarded.

@@ -130,6 +130,21 @@ for _model in ("generic_1p5b", "coder_1p5b"):
         "tranche": "F2",
     }
 
+# 104_f 3B screen (103_s recommendation): Code scale is the only model
+# change — Lookup/Math stay on the generic 1.5B checkpoint with the
+# rev10 bundle texts, task_last for every arm. rev11 at 3B tests
+# whether the larger model keeps rev11's targeted repairs without its
+# 1.5B regressions (the instruction-capacity question).
+for _model in ("generic_3b", "coder_3b"):
+    for _prompt in ("rev10", "rev11"):
+        CANDIDATES[f"{_model}-task_last-{_prompt}"] = {
+            "code_model": _model,
+            "contract_label": "task_last",
+            "request_contract_key": REQUEST_CONTRACT_KEYS["task_last"],
+            "code_prompt": _prompt,
+            "tranche": "F3",
+        }
+
 
 def sentinel_order(contract_label: str, tranche: str) -> list[str]:
     """§7 frozen sentinel designation order for one request contract."""

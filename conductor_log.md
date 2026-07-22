@@ -560,6 +560,24 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   the commit carrying THIS addendum is the executable commit for
   Tranche A. Nothing else lands before launch; the screening/reveal
   checkout guard verifies against the P1 artifacts' recorded commit.
+- **2026-07-22 103_s REVIEW + 104_f 3B SCREEN PREREG:** reviewer
+  verified all rev10/rev11 figures and added the union analysis — no
+  Code case is missed by all three 1.5B policies (A∪B∪C = 270/270
+  oracle; cell×renderer routing perfect, held-out 135/135, but
+  renderer-conditioned). Two 102_f claims corrected by addendum:
+  conservation-of-failures is a hypothesis (three rules changed
+  jointly), and the recency mechanism is wrong (the final
+  handle-substitution sentence stayed literally last) — the defensible
+  framing is prompt interference/instruction load. 104_f preregisters
+  the 103_s course: {generic_3b, coder_3b} × task_last × {rev10,
+  rev11}, tranche F3, generic arms first (rev11-at-3B unconditional as
+  the instruction-capacity test), coder arms only if both generic arms
+  miss; frozen gates unamended; 630 Lookup/Math records byte-identity
+  guard vs the 99_f run (F3 support digests are byte-identical to the
+  1.5B counterparts — one shared Qwen2.5 chat template, so the screen
+  swaps weights only). Prompt editing on the current worker_dev
+  population is closed; the complementary 1.5B policies are preserved
+  for a separate orchestration prereg.
 - **2026-07-22 rev11 FOLLOW-UP OUTCOME (101_f/102_f):** both arms
   admitted; both MISS; stop rule applied. rev11 fixed 10/13 targeted
   cases but induced 19 regressions (handle substitution returned —

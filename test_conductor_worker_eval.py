@@ -1574,7 +1574,7 @@ def test_admit_verifies_endpoint_and_request_identity_against_plan():
 
 from tasks.conductor import render
 from tasks.conductor.candidates import (
-    CANDIDATES, arm_order, candidate_bundle, candidate_config,
+    CANDIDATES, CODE_MODELS, arm_order, candidate_bundle, candidate_config,
     candidate_runtime_profile, physical_layout, sentinel_order,
 )
 from tasks.conductor.worker_eval_probe import (
@@ -1612,9 +1612,9 @@ def test_task_last_contract_renders_declared_block_order():
 
 
 def test_candidate_registry_and_physical_layout():
-    # The frozen 92_s matrix is 16; the 99_f follow-up adds exactly one
-    # registered candidate outside the frozen tranches.
-    assert len(CANDIDATES) == 19
+    # The frozen 92_s matrix is 16; follow-ups add one F1 (99_f), two F2
+    # (101_f) and four F3 (104_f) candidates outside the frozen tranches.
+    assert len(CANDIDATES) == 23
     assert sum(1 for c in CANDIDATES.values()
                if c["tranche"] in ("A", "B")) == 16
     order = arm_order("A")
@@ -2003,3 +2003,30 @@ def test_rev11_amends_code_only_over_rev10():
     for b, r in zip(base, rev11):
         assert b[0] == r[0] and b[2] == r[2]
         assert (b[3] != r[3]) == (b[1] == "code")
+
+
+# =============================================================================
+# 104_f 3B screen: {generic_3b, coder_3b} x task_last x {rev10, rev11}.
+# =============================================================================
+
+def test_f3_arms_are_pure_checkpoint_swaps():
+    for model in ("generic_3b", "coder_3b"):
+        for prompt in ("rev10", "rev11"):
+            cid = f"{model}-task_last-{prompt}"
+            config = candidate_config(cid)
+            assert config["tranche"] == "F3"
+            profile = candidate_runtime_profile(cid)
+            # Code scale is the only model change; Lookup/Math stay on
+            # the default generic 1.5B pins.
+            assert profile["workers"]["code"]["model_id"] == \
+                CODE_MODELS[model]["model_id"]
+            for endpoint in ("lookup", "math"):
+                assert profile["workers"][endpoint] == \
+                    DEFAULT_RUNTIME_PROFILE["workers"][endpoint]
+            assert physical_layout(profile)["unique_checkpoints"] == 2
+            # Qwen2.5 checkpoints share one chat template, so every F3
+            # arm's plan identity equals its 1.5B counterpart's — the
+            # screen swaps weights, not a single request byte.
+            anchor = candidate_plan_identity(
+                f"generic_1p5b-task_last-{prompt}")
+            assert candidate_plan_identity(cid) == anchor
