@@ -9,29 +9,35 @@ three-vs-four-worker bundle mixing refusal.
 
 import dataclasses
 import hashlib
+import json
 
 import pytest
 
 from tasks.conductor import oracle
 from tasks.conductor.workerpool import (
     STAGE0_POOL_FINGERPRINT, STAGE0_WORKER_POOL, WORKER_IDS, WORKER_NAMES,
-    WORKER_TO_ENDPOINT, WorkerPoolError, WorkerSpec, validate_worker_pool,
-    worker_fingerprint, worker_pool_fingerprint,
+    WORKER_TO_ENDPOINT, WORKER_TO_ENDPOINT_ID, WorkerPoolError, WorkerSpec,
+    validate_worker_pool, worker_pool_fingerprint, worker_static_fingerprint,
 )
 
 
 def test_stage0_pool_is_the_frozen_106s_table():
     assert WORKER_IDS == (0, 1, 2, 3)
-    assert WORKER_NAMES == {0: "lookup_1p5b", 1: "math_1p5b",
-                            2: "code_1p5b", 3: "code_3b"}
-    assert WORKER_TO_ENDPOINT == {0: "lookup", 1: "math",
-                                  2: "code", 3: "code"}
+    assert dict(WORKER_NAMES) == {0: "lookup_1p5b", 1: "math_1p5b",
+                                  2: "code_1p5b", 3: "code_3b"}
+    assert dict(WORKER_TO_ENDPOINT) == {0: "lookup", 1: "math",
+                                        2: "code", 3: "code"}
+    assert dict(WORKER_TO_ENDPOINT_ID) == {0: 0, 1: 1, 2: 2, 3: 2}
+    # Immutable views (108_f): dispatch cannot be mutated in place.
+    for view in (WORKER_NAMES, WORKER_TO_ENDPOINT, WORKER_TO_ENDPOINT_ID):
+        with pytest.raises(TypeError):
+            view[3] = "mutated"  # type: ignore[index]
     for spec in STAGE0_WORKER_POOL:
         assert spec.prompt_bundle_revision == "rev10"
     # Two physical checkpoints, derived from the exact key.
-    keys = {spec.physical_checkpoint_key() for spec in STAGE0_WORKER_POOL}
+    keys = {spec.weights_key() for spec in STAGE0_WORKER_POOL}
     assert len(keys) == 2
-    assert STAGE0_WORKER_POOL[3].physical_checkpoint_key() == (
+    assert STAGE0_WORKER_POOL[3].weights_key() == (
         "Qwen/Qwen2.5-3B-Instruct",
         "aa8e72537993ba99e69dfaafa59ed015b17504d1")
     # Golden pool fingerprint: any identity change is a deliberate,
@@ -59,18 +65,18 @@ def test_both_code_workers_share_family_but_never_identity():
     w2, w3 = STAGE0_WORKER_POOL[2], STAGE0_WORKER_POOL[3]
     assert w2.endpoint_family == w3.endpoint_family == "code"
     assert w2.endpoint_system_prompt_sha256 == w3.endpoint_system_prompt_sha256
-    assert w2.physical_checkpoint_key() != w3.physical_checkpoint_key()
-    assert worker_fingerprint(w2) != worker_fingerprint(w3)
+    assert w2.weights_key() != w3.weights_key()
+    assert worker_static_fingerprint(w2) != worker_static_fingerprint(w3)
 
 
 def test_shared_checkpoint_workers_never_share_prompt_identity():
     """Workers 0-2 share one physical checkpoint object; their prompt
     identities and worker fingerprints all differ (106_s §8)."""
     shared = [STAGE0_WORKER_POOL[i] for i in (0, 1, 2)]
-    assert len({spec.physical_checkpoint_key() for spec in shared}) == 1
+    assert len({spec.weights_key() for spec in shared}) == 1
     assert len({spec.endpoint_system_prompt_sha256
                 for spec in shared}) == 3
-    fingerprints = [worker_fingerprint(spec) for spec in STAGE0_WORKER_POOL]
+    fingerprints = [worker_static_fingerprint(spec) for spec in STAGE0_WORKER_POOL]
     assert len(set(fingerprints)) == 4
 
 
@@ -160,3 +166,49 @@ def test_three_and_four_worker_bundles_cannot_be_mixed():
         frozen, source_surface_digest="surfdig1-" + "0" * 32)
     with pytest.raises(oracle.PayoffSurfaceError):
         stale.verify_against(bundle)
+
+
+# =============================================================================
+# 108_f finding 4: persisted payoff identity binds the pool fingerprint.
+# =============================================================================
+
+def _atomic_full_surface():
+    from test_conductor_executor import cluster_ids, observation_id
+    cluster = cluster_ids("code_atomic", 1)[0]
+    return oracle.validate_payoff_surface(
+        {(w,): {cluster: {observation_id(cluster): 1}}
+         for w in WORKER_IDS}, "code_atomic")
+
+
+def test_surface_json_carries_and_verifies_the_pool_fingerprint():
+    surface = _atomic_full_surface()
+    obj = surface.to_json()
+    assert obj["worker_pool"] == STAGE0_POOL_FINGERPRINT
+    assert oracle.ValidatedSurface.from_json(obj).worker_pool == \
+        STAGE0_POOL_FINGERPRINT
+    # A same-cardinality surface from a *different* pool fails closed.
+    foreign = dict(obj, worker_pool="wp-0000000000000000")
+    with pytest.raises(oracle.PayoffSurfaceError, match="bound to worker"):
+        oracle.ValidatedSurface.from_json(foreign)
+    # A pool-free (pre-108_f) persisted surface fails the exact-key check.
+    legacy = {k: v for k, v in obj.items() if k != "worker_pool"}
+    with pytest.raises(oracle.PayoffSurfaceError, match="keys must be"):
+        oracle.ValidatedSurface.from_json(legacy)
+
+
+def test_frozen_selections_carry_and_verify_the_pool_fingerprint():
+    bundle = oracle.CalibrationBundle(assignment=_atomic_full_surface())
+    frozen = bundle.freeze_selections()
+    assert frozen.worker_pool == STAGE0_POOL_FINGERPRINT
+    obj = frozen.to_json()
+    assert obj["worker_pool"] == STAGE0_POOL_FINGERPRINT
+    assert oracle.FrozenSelections.from_json(obj) == frozen
+    with pytest.raises(oracle.PayoffSurfaceError, match="bound to worker"):
+        oracle.FrozenSelections.from_json(
+            dict(obj, worker_pool="wp-0000000000000000"))
+    legacy = {k: v for k, v in obj.items() if k != "worker_pool"}
+    with pytest.raises(oracle.PayoffSurfaceError, match="keys must be"):
+        oracle.FrozenSelections.from_json(legacy)
+    # The digest binds the pool too: same outcomes under a different
+    # pool could never reproduce this digest, because to_json embeds it.
+    assert "worker_pool" in json.dumps(bundle.assignment.to_json())

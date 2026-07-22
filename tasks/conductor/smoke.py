@@ -1,15 +1,13 @@
-"""Stage-0B recorded acceptance command: offline executor smoke on the
-real NF4 pool (plan rev6, Stage 0B).
+"""Stage-0B offline executor smoke — DISABLED pending the four-worker
+runtime (108_f finding 2).
 
-Run:  uv run python -m tasks.conductor.smoke --per-cell 2 --run-name <name>
-
-Builds the real runtime from `DEFAULT_RUNTIME_PROFILE` (three NF4 1.5B
-workers, SQLite write-through cache), executes the reference routing for a
-few construction instances per cell through `execute_workflow_batch` with
-JSONL traces, then re-executes the same batch and **fails unless every
-second-pass call is a cache hit**. Reports per-endpoint telemetry and
-descriptive accuracy (a smoke diagnostic, not a Stage-1 gate: no
-registered population, no calibration manifest).
+The historical smoke built its runtime from `DEFAULT_RUNTIME_PROFILE`,
+which still carries the retired Coder-1.5B Code checkpoint, rev9
+prompts and the v0 request contract. Executing it now would record the
+new logical worker identities against the historical model and request
+configuration — a silent identity conflation, so the command fails
+closed until unit 2 binds it to the exact frozen four-worker pool
+(106_s §4). The historical recorded result stands in conductor_log.md.
 """
 
 from __future__ import annotations
@@ -57,20 +55,21 @@ def build_items(per_cell: int) -> tuple[list[WorkflowItem], dict[str, int]]:
     return items, golds
 
 
+_DISABLED = (
+    "the Stage-0B smoke is disabled until the four-worker runtime "
+    "lands (108_f finding 2): DEFAULT_RUNTIME_PROFILE still carries "
+    "the retired Coder-1.5B Code checkpoint, rev9 prompts and the v0 "
+    "request contract, so running it would record the new worker "
+    "identities against the historical execution configuration")
+
+
 def run_pass(rt, items, trace=None):
+    raise InfrastructureError(_DISABLED)
+
     stats = {"calls": Counter(), "cache_hits": 0, "truncated": 0,
              "truncated_by_endpoint": Counter(), "records": []}
 
     def call(worker_id, requests):
-        # Worker ids resolve through the four-worker registry; this
-        # smoke still drives the three-endpoint v1 runtime, so only the
-        # canonical family workers 0-2 are executable here until the
-        # worker-aware runtime lands (106_s §9.1). Fail closed rather
-        # than silently aliasing worker 3 onto the 1.5B code endpoint.
-        if worker_id not in (0, 1, 2):
-            raise InfrastructureError(
-                f"worker {worker_id} needs the four-worker runtime; "
-                "this smoke executes the canonical family workers only")
         name = WORKER_TO_ENDPOINT[worker_id]
         records = rt.worker_call_batch(name, requests)
         stats["calls"][name] += len(records)
@@ -86,6 +85,8 @@ def run_pass(rt, items, trace=None):
 
 
 def main() -> int:
+    raise InfrastructureError(_DISABLED)
+
     argp = argparse.ArgumentParser()
     argp.add_argument("--per-cell", type=int, default=2)
     argp.add_argument("--run-name", default="stage0b-smoke")

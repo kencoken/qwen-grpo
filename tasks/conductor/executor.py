@@ -78,6 +78,19 @@ def _step_failed(record: StepRecord) -> bool:
     return record.result is None or record.result.status != "success"
 
 
+def _endpoint_id(worker_id: int) -> int:
+    """106_s §5: artifact parsing and tool execution are by endpoint
+    family; the worker id resolves through the registry (workers 2 and 3
+    share the Code grammar/tool). An unregistered id here is an
+    infrastructure error — the parser already bounds actions to the
+    pool."""
+    from .workerpool import WORKER_TO_ENDPOINT_ID
+    if worker_id not in WORKER_TO_ENDPOINT_ID:
+        raise InfrastructureError(
+            f"worker id {worker_id} is not in the registered pool")
+    return WORKER_TO_ENDPOINT_ID[worker_id]
+
+
 def build_worker_call(public_prompt: str, subtask: str,
                       resource: str | None, registry: InstanceRegistry,
                       previous: Mapping[int, int] | None,
@@ -197,7 +210,8 @@ def execute_workflow_batch(items: list[WorkflowItem],
                 item = items[call.item_index]
                 step = item.action.steps[call.position - 1]
                 result = contract.run_worker_output(
-                    step.worker_id, call_record.completion, call.binding)
+                    _endpoint_id(step.worker_id), call_record.completion,
+                    call.binding)
                 rec = _finish_step(item, call.position, step, result,
                                    call.request, call_record.completion,
                                    wire_values[call.item_index],
@@ -352,6 +366,16 @@ class TraceWriter:
 def _trace_step(trace: TraceWriter | None, item: WorkflowItem,
                 record: StepRecord, call_record: Any | None) -> None:
     if trace is not None:
+        # 108_f F4: the v1 trace schema binds endpoint fingerprints, not
+        # the four-worker pool. Four-worker trace writing (worker names,
+        # pool hash, derived physical keys) arrives with the worker-aware
+        # runtime in unit 2; recording worker 3 under v1 would persist a
+        # pool-free identity, so it fails closed instead.
+        if record.worker_id not in (0, 1, 2):
+            raise InfrastructureError(
+                f"worker {record.worker_id} cannot be recorded under "
+                f"trace schema v{TRACE_SCHEMA_VERSION}; the pool-bound "
+                "trace schema lands with the four-worker runtime")
         trace.write_step(item.item_id, record, call_record)
 
 

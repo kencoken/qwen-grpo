@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, fields
+from types import MappingProxyType
 
 from .profiles import canonical_json
 from .types import ENDPOINT_NAMES
@@ -45,9 +46,12 @@ class WorkerSpec:
     prompt_bundle_revision: str
     endpoint_system_prompt_sha256: str
 
-    def physical_checkpoint_key(self) -> tuple[str, str]:
-        """Physical sharing is derived from this exact key (106_s §5);
-        a shorthand label is never an independent sharing claim."""
+    def weights_key(self) -> tuple[str, str]:
+        """Checkpoint *weights* identity — the sharing-derivation input
+        (106_s §5); a shorthand label is never an independent sharing
+        claim. The complete physical key additionally includes
+        quantization config and device, composed at the runtime
+        boundary where those settings live (108_f)."""
         return (self.model_id, self.model_revision)
 
 
@@ -80,10 +84,19 @@ STAGE0_WORKER_POOL: tuple[WorkerSpec, ...] = tuple(
 
 WORKER_IDS: tuple[int, ...] = tuple(
     spec.worker_id for spec in STAGE0_WORKER_POOL)
-WORKER_NAMES: dict[int, str] = {
-    spec.worker_id: spec.name for spec in STAGE0_WORKER_POOL}
-WORKER_TO_ENDPOINT: dict[int, str] = {
-    spec.worker_id: spec.endpoint_family for spec in STAGE0_WORKER_POOL}
+# Immutable views (108_f): mutating dispatch must not be possible
+# without changing the pool fingerprint.
+WORKER_NAMES: "MappingProxyType[int, str]" = MappingProxyType(
+    {spec.worker_id: spec.name for spec in STAGE0_WORKER_POOL})
+WORKER_TO_ENDPOINT: "MappingProxyType[int, str]" = MappingProxyType(
+    {spec.worker_id: spec.endpoint_family for spec in STAGE0_WORKER_POOL})
+# Family *index* view for the three-valued artifact/tool boundary
+# (contract.run_worker_output): workers 2 and 3 both resolve to the
+# code family's index.
+_FAMILY_INDEX = {name: index for index, name in ENDPOINT_NAMES.items()}
+WORKER_TO_ENDPOINT_ID: "MappingProxyType[int, int]" = MappingProxyType(
+    {spec.worker_id: _FAMILY_INDEX[spec.endpoint_family]
+     for spec in STAGE0_WORKER_POOL})
 
 
 def validate_worker_pool(specs: tuple[WorkerSpec, ...] | list[WorkerSpec]
@@ -124,12 +137,14 @@ def validate_worker_pool(specs: tuple[WorkerSpec, ...] | list[WorkerSpec]
     return specs
 
 
-def worker_fingerprint(spec: WorkerSpec) -> str:
-    """Selected-logical-worker identity hash (`lw-…`) — the four-worker
-    replacement for the selected-endpoint fingerprint in the cache key
-    scope (106_s §9.3). Two workers may share weights (0–2) or share
-    request bytes (2 and 3); they never share this identity, so cache
-    hits never cross workers."""
+def worker_static_fingerprint(spec: WorkerSpec) -> str:
+    """STATIC logical-worker identity hash (`lw-…`). This is the
+    identity half only: the complete selected-logical-worker execution
+    fingerprint (chat-template bytes, request contract, decoding, token
+    caps, grammar/tool versions) is composed at the runtime boundary in
+    unit 2, where those settings live (108_f). Two workers may share
+    weights (0-2) or request bytes (2 and 3); they never share this
+    identity."""
     record = {spec_field.name: getattr(spec, spec_field.name)
               for spec_field in fields(spec)}
     return "lw-" + hashlib.sha256(
@@ -143,7 +158,7 @@ def worker_pool_fingerprint(specs: tuple[WorkerSpec, ...]) -> str:
     (106_s §§8, 9.3)."""
     validate_worker_pool(specs)
     return "wp-" + hashlib.sha256(canonical_json(
-        [worker_fingerprint(spec) for spec in specs]
+        [worker_static_fingerprint(spec) for spec in specs]
     ).encode("utf-8")).hexdigest()[:16]
 
 

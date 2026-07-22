@@ -40,7 +40,7 @@ from .types import (
     CELL_NODES, RENDERER_IDS, parse_latent_program_id,
     parse_render_instance_id,
 )
-from .workerpool import WORKER_IDS
+from .workerpool import STAGE0_POOL_FINGERPRINT, WORKER_IDS
 
 # Raw, unvalidated input shape.
 RawSurface = Mapping[Any, Mapping[str, Mapping[str, float]]]
@@ -244,8 +244,17 @@ class ValidatedSurface:
     observations: Mapping[str, tuple[str, ...]]  # cluster -> observation ids
     data: Mapping[Any, Mapping[str, Mapping[str, float]]]
     namespace: str = ""
+    # 108_f finding 4: candidate ids are meaningless without the pool
+    # that defines them; a surface generated under a different
+    # four-worker pool (same cardinality, different models/prompts)
+    # must fail closed rather than be silently reinterpreted.
+    worker_pool: str = STAGE0_POOL_FINGERPRINT
 
     def __post_init__(self) -> None:
+        if self.worker_pool != STAGE0_POOL_FINGERPRINT:
+            raise PayoffSurfaceError(
+                f"surface is bound to worker pool {self.worker_pool!r}; "
+                f"this registry is {STAGE0_POOL_FINGERPRINT!r}")
         # Type before membership: an unhashable cell_id (a list, say) would
         # raise a raw TypeError from the `in` test.
         if not isinstance(self.kind, str) or self.kind not in _SURFACE_KINDS:
@@ -390,6 +399,7 @@ class ValidatedSurface:
         return {
             "kind": self.kind,
             "cell_id": self.cell_id,
+            "worker_pool": self.worker_pool,
             "entries": [
                 {"candidate": _candidate_to_json(self.kind, candidate),
                  "outcomes": {cluster: dict(self.data[candidate][cluster])
@@ -409,11 +419,17 @@ class ValidatedSurface:
         """
         if not isinstance(obj, Mapping):
             raise PayoffSurfaceError("surface JSON must be an object")
-        if set(obj) != {"kind", "cell_id", "entries"}:
+        if set(obj) != {"kind", "cell_id", "worker_pool", "entries"}:
             raise PayoffSurfaceError(
-                f"surface JSON keys must be exactly kind/cell_id/entries, "
-                f"got {sorted(obj)}")
+                f"surface JSON keys must be exactly kind/cell_id/"
+                f"worker_pool/entries, got {sorted(obj)}")
         kind, cell_id = obj["kind"], obj["cell_id"]
+        if obj["worker_pool"] != STAGE0_POOL_FINGERPRINT:
+            raise PayoffSurfaceError(
+                f"persisted surface is bound to worker pool "
+                f"{obj['worker_pool']!r}; this registry is "
+                f"{STAGE0_POOL_FINGERPRINT!r} — a surface from another "
+                f"pool must be regenerated, never reinterpreted")
         # Type before membership: an unhashable value would raise a raw
         # TypeError from the `in` test.
         if not isinstance(kind, str) or kind not in _SURFACE_KINDS:
@@ -677,8 +693,14 @@ class FrozenSelections:
     source_surface_digest: str
     best_one_call: int | None = None
     best_two_call: tuple[str, tuple[int, int]] | None = None
+    worker_pool: str = STAGE0_POOL_FINGERPRINT
 
     def __post_init__(self) -> None:
+        if self.worker_pool != STAGE0_POOL_FINGERPRINT:
+            raise PayoffSurfaceError(
+                f"selections are bound to worker pool "
+                f"{self.worker_pool!r}; this registry is "
+                f"{STAGE0_POOL_FINGERPRINT!r}")
         if not isinstance(self.cell_id, str) \
                 or self.cell_id not in CELL_NODES:
             raise PayoffSurfaceError(f"unknown cell_id {self.cell_id!r}")
@@ -773,6 +795,7 @@ class FrozenSelections:
             "best_two_call": (None if self.best_two_call is None else
                               [self.best_two_call[0],
                                list(self.best_two_call[1])]),
+            "worker_pool": self.worker_pool,
         }
 
     @classmethod
@@ -785,7 +808,7 @@ class FrozenSelections:
         required = {"cell_id", "namespace", "deployable",
                     "best_fixed_assignment", "node_runner_ups",
                     "construction_random_accuracy", "source_surface_digest",
-                    "best_one_call", "best_two_call"}
+                    "best_one_call", "best_two_call", "worker_pool"}
         if set(obj) != required:
             raise PayoffSurfaceError(
                 f"selections JSON keys must be exactly {sorted(required)}, "
@@ -822,7 +845,8 @@ class FrozenSelections:
             node_runner_ups=runner_ups,
             construction_random_accuracy=obj["construction_random_accuracy"],
             source_surface_digest=obj["source_surface_digest"],
-            best_one_call=obj["best_one_call"], best_two_call=two_call)
+            best_one_call=obj["best_one_call"], best_two_call=two_call,
+            worker_pool=obj["worker_pool"])
 
 
 @dataclass(frozen=True)

@@ -896,3 +896,93 @@ def test_reward_boundary():
 
     assert executor.reward_for_completion(parse_misroute, run_misroute,
                                           gold) == 0.5
+
+
+# =============================================================================
+# 108_f: worker-3 execution boundary (findings 1 and 4).
+# =============================================================================
+
+def test_worker_3_executes_the_code_family():
+    """106_s §6.2: worker 3 resolves to the Code grammar/tool at the
+    artifact boundary and reaches the terminal exactly like worker 2."""
+    latent, inst, registry, steps = make_env("code_atomic")
+    worker_ids, worker_call = perfect_worker(latent)
+    assert worker_ids == [2]
+    for code_worker in (2, 3):
+        action = parser.routing_to_workflow([code_worker], steps)
+        result = executor.execute_workflow(action, inst["public_prompt"],
+                                           registry, worker_call)
+        assert result.terminal == inst["gold_answer"], code_worker
+        assert result.steps[0].result.status == "success"
+
+
+def test_worker_3_executes_in_a_composed_workflow():
+    latent, inst, registry, steps = make_env("fork_join")
+    worker_ids, worker_call = perfect_worker(latent)
+    swapped = [3 if w == 2 else w for w in worker_ids]
+    assert swapped != worker_ids  # fork_join routes one code node
+    action = parser.routing_to_workflow(swapped, steps)
+    result = executor.execute_workflow(action, inst["public_prompt"],
+                                       registry, worker_call)
+    assert result.terminal == inst["gold_answer"]
+    assert [r.worker_id for r in result.steps] == swapped
+
+
+def test_wrong_family_selection_is_a_typed_failure_not_an_abort():
+    """Selecting an incompatible family is a well-formed world action
+    (reward 0.5), for worker 3 exactly as for workers 0-2 (106_s §6.2)."""
+    latent, inst, registry, steps = make_env("lookup_atomic")
+    _, worker_call = perfect_worker(latent)
+    for wrong_worker in (1, 3):
+        action = parser.routing_to_workflow([wrong_worker], steps)
+        result = executor.execute_workflow(action, inst["public_prompt"],
+                                           registry, worker_call)
+        assert result.steps[0].result.status == "typed_failure", wrong_worker
+        assert result.terminal is None
+        assert executor.score_terminal(result.terminal,
+                                       inst["gold_answer"]) == 0.5
+
+
+def test_unregistered_worker_id_is_an_infrastructure_error():
+    """The parser bounds actions to the pool; a directly constructed
+    workflow with an unregistered id must abort, never guess a family."""
+    latent, inst, registry, steps = make_env("lookup_atomic")
+    _, worker_call = perfect_worker(latent)
+    action = parser.WorkflowAction(steps=(parser.WorkflowStep(
+        subtask=steps[0]["subtask"], worker_id=7,
+        resource=steps[0]["resource"], access="none"),))
+    with pytest.raises(executor.InfrastructureError,
+                       match="not in the registered pool"):
+        executor.execute_workflow(action, inst["public_prompt"],
+                                  registry, worker_call)
+
+
+def test_worker_3_refuses_the_v1_trace_schema():
+    """108_f finding 4: the v1 trace schema is pool-free; recording
+    worker 3 under it fails closed until the unit-2 trace schema."""
+    latent, inst, registry, steps = make_env("code_atomic")
+    _, worker_call = perfect_worker(latent)
+    record = executor.StepRecord(1, 3, None, "unknown_handle", None, None,
+                                 False)
+    item = executor.WorkflowItem(
+        item_id="t", action=parser.routing_to_workflow([3], steps),
+        public_prompt=inst["public_prompt"], registry=registry)
+
+    class _Sentinel:
+        def write_step(self, *args):
+            raise AssertionError("worker 3 must not reach a v1 trace")
+
+    with pytest.raises(executor.InfrastructureError, match="trace schema"):
+        executor._trace_step(_Sentinel(), item, record, None)
+
+
+def test_workflow_action_worker_domain():
+    """108_f smaller issue: the full-workflow parser accepts worker 3
+    and rejects worker 4."""
+    def wf(worker_id):
+        return json.dumps({"steps": [{"subtask": "s", "worker_id": worker_id,
+                                      "resource": "R-1A1", "access": "none"}]})
+    parsed = parser.parse_workflow_action(wf(3))
+    assert parsed.steps[0].worker_id == 3
+    with pytest.raises(ActionSchemaError, match="outside"):
+        parser.parse_workflow_action(wf(4))

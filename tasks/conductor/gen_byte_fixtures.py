@@ -3,6 +3,14 @@ worker-request byte string — one per cell × step × access pattern, the
 plural `Resources:` forms (B3/B5), and the registry-derived two-call
 shortcut family × 2 calls (106_s §6.3).
 
+Scope (108_f addendum): this is the **generator/semantic-rendering**
+regression fixture. It pins user-message bytes under the historical v0
+request layout so that generation and rendering semantics provably do
+not drift; it is NOT the selected execution-contract fixture. The
+frozen 106_s §4 configuration (rev10 prompts, task_last contract,
+per-worker tokenizers) is pinned separately by `gen_chat_fixtures`
+(`pool_rendered_requests.json`).
+
 Run:  uv run python -m tasks.conductor.gen_byte_fixtures
 Regenerating after an intentional freeze-relevant change requires a
 generator-version bump and (post-qualification) retires qualification sets.

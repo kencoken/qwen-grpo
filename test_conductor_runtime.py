@@ -525,15 +525,29 @@ def test_trace_refuses_to_overwrite(tmp_path):
     rt2.close()
 
 
-# --- chat-template byte fixture (§1.5 canonical rendered request) -----------
+# --- pool-bound rendered-request fixture (108_f F3) --------------------------
+# Pins the frozen 106_s §4 execution configuration: rev10 prompts,
+# task_last contract, each worker's independently pinned tokenizer.
 
-def test_chat_template_fixture_stable():
+def test_pool_rendered_request_fixture_stable():
     from tasks.conductor.gen_chat_fixtures import FIXTURE_PATH, build_fixture
     try:
-        from tasks.conductor.workers import WorkerPool
-        pool = WorkerPool(PROFILE, device="cpu")
+        built = build_fixture()
     except OSError as error:  # tokenizer cache unavailable offline
         pytest.skip(f"pinned tokenizers unavailable: {error}")
     stored = json.loads(FIXTURE_PATH.read_text())
-    assert build_fixture(pool) == stored
-    pool.close()
+    assert built == stored
+    # The fixture carries its own provenance (108_f addendum).
+    from tasks.conductor.workerpool import STAGE0_POOL_FINGERPRINT
+    assert stored["pool_fingerprint"] == STAGE0_POOL_FINGERPRINT
+    assert stored["request_contract_key"] == "worker-blocks-task-last-v1"
+    # One shared Qwen2.5 chat template across all four pinned tokenizers.
+    templates = {v for k, v in stored.items()
+                 if k.startswith("chat_template:")}
+    assert len(templates) == 1
+    # §6.2 attribution guarantee: workers 2 and 3 render byte-identical
+    # requests through independently pinned tokenizers.
+    for key, value in stored.items():
+        if ":code_1p5b" in key and not key.startswith(("chat_template",
+                                                       "tokenizer")):
+            assert stored[key.replace("code_1p5b", "code_3b")] == value, key
