@@ -1,0 +1,112 @@
+{
+ "cases": [
+  {
+   "case_id": "code_atomic:worker_dev:00000:641a0144:resource_first:private:n1",
+   "request_sha256": "f50f9f12da0d00290e42c4a2dbb41c755aba7248d6326907350c5c69f52824da",
+   "user_message": "Problem:\nFrom the integer sequence in R-4B9, remove later occurrences of repeated values, rotate the remaining sequence left by 6 positions, and return the value at zero-based index 3.\n\nResource:\nR-4B9:\n[1, 4, 9, 3, 5, 2, 6, 5, 9, 8, 6, 2, 8]\n\nTask:\nRemove later occurrences of repeated values from the integer sequence in the requested resource, rotate the remaining sequence left by 6 positions, and return the value at zero-based index 3.\n\nTranslate only the assigned Task. The Problem is background; do not complete or combine other operations from it. Respond with exactly one <artifact>...</artifact> containing a single expression.",
+   "worker_2": {
+    "completion": "<artifact>at(rotate_left(stable_unique(resource), 6), 3)</artifact>",
+    "finish_reason": "eos",
+    "generated_tokens": 21,
+    "generation_hit_token_cap": false
+   },
+   "worker_3": {
+    "completion": "<artifact>at(rotate_left(stable_unique(resource), 6), 3)</artifact>",
+    "finish_reason": "eos",
+    "generated_tokens": 21,
+    "generation_hit_token_cap": false
+   }
+  },
+  {
+   "case_id": "code_atomic:worker_dev:00000:641a0144:goal_first:private:n1",
+   "request_sha256": "2290da995f25aa5f429f50993e45e1e83baa447c7d0f5a329ca3cc1b83f1a272",
+   "user_message": "Problem:\nReturn the value at zero-based index 3 of the sequence obtained from R-4B9 by removing later occurrences of repeated values and rotating it left by 6 positions.\n\nResource:\nR-4B9:\n[1, 4, 9, 3, 5, 2, 6, 5, 9, 8, 6, 2, 8]\n\nTask:\nRemove later occurrences of repeated values from the integer sequence in the requested resource, rotate the remaining sequence left by 6 positions, and return the value at zero-based index 3.\n\nTranslate only the assigned Task. The Problem is background; do not complete or combine other operations from it. Respond with exactly one <artifact>...</artifact> containing a single expression.",
+   "worker_2": {
+    "completion": "<artifact>at(rotate_left(stable_unique(resource), 6), 3)</artifact>",
+    "finish_reason": "eos",
+    "generated_tokens": 21,
+    "generation_hit_token_cap": false
+   },
+   "worker_3": {
+    "completion": "<artifact>at(rotate_left(stable_unique(resource), 6), 3)</artifact>",
+    "finish_reason": "eos",
+    "generated_tokens": 21,
+    "generation_hit_token_cap": false
+   }
+  },
+  {
+   "case_id": "code_atomic:worker_dev:00000:641a0144:bound_var:private:n1",
+   "request_sha256": "f859fde6d95911b4ac75f54659d3ce2eca8919eb7a450b6e770799f83413a809",
+   "user_message": "Problem:\nLet s be the sequence in R-4B9 after removing later occurrences of repeated values and rotating left by 6 positions. Output the value of s at zero-based index 3.\n\nResource:\nR-4B9:\n[1, 4, 9, 3, 5, 2, 6, 5, 9, 8, 6, 2, 8]\n\nTask:\nRemove later occurrences of repeated values from the integer sequence in the requested resource, rotate the remaining sequence left by 6 positions, and return the value at zero-based index 3.\n\nTranslate only the assigned Task. The Problem is background; do not complete or combine other operations from it. Respond with exactly one <artifact>...</artifact> containing a single expression.",
+   "worker_2": {
+    "completion": "<artifact>at(rotate_left(stable_unique(resource), 6), 3)</artifact>",
+    "finish_reason": "eos",
+    "generated_tokens": 21,
+    "generation_hit_token_cap": false
+   },
+   "worker_3": {
+    "completion": "<artifact>at(rotate_left(stable_unique(resource), 6), 3)</artifact>",
+    "finish_reason": "eos",
+    "generated_tokens": 21,
+    "generation_hit_token_cap": false
+   }
+  },
+  {
+   "case_id": "fork_join:worker_dev:00000:5b6d01a9:resource_first:private:n2",
+   "request_sha256": "cd316c4d5a7bf8fa2b0b798c1e6f499df6890c8ecac121e0bebcbc3b70d5bafd",
+   "user_message": "Problem:\nRemove later occurrences of repeated values from the integer sequence in R-5W8 and count the values greater than 2. Separately, retrieve Birch's points from R-5R4. Return the product of the two results plus 5.\n\nResource:\nR-5W8:\n[1, 4, 7, 1, 4, 3, 3, 3, 5, 3, 2, 3, 3]\n\nTask:\nRemove later occurrences of repeated values from the integer sequence in the requested resource and count the values greater than 2.\n\nTranslate only the assigned Task. The Problem is background; do not complete or combine other operations from it. Respond with exactly one <artifact>...</artifact> containing a single expression.",
+   "worker_2": {
+    "completion": "<artifact>count_gt(stable_unique(resource), 2)</artifact>",
+    "finish_reason": "eos",
+    "generated_tokens": 16,
+    "generation_hit_token_cap": false
+   },
+   "worker_3": {
+    "completion": "<artifact>count_gt(stable_unique(resource), 2)</artifact>",
+    "finish_reason": "eos",
+    "generated_tokens": 16,
+    "generation_hit_token_cap": false
+   }
+  },
+  {
+   "case_id": "fork_join:worker_dev:00000:5b6d01a9:goal_first:private:n2",
+   "request_sha256": "1ca639b4a28d163ad04e8bd69300f6471c2e536d28425dbe365919335bb09c8d",
+   "user_message": "Problem:\nReturn 5 plus the product of two values: the count of values greater than 2 after removing later occurrences of repeated values from the sequence in R-5W8, and Birch's points recorded in R-5R4.\n\nResource:\nR-5W8:\n[1, 4, 7, 1, 4, 3, 3, 3, 5, 3, 2, 3, 3]\n\nTask:\nRemove later occurrences of repeated values from the integer sequence in the requested resource and count the values greater than 2.\n\nTranslate only the assigned Task. The Problem is background; do not complete or combine other operations from it. Respond with exactly one <artifact>...</artifact> containing a single expression.",
+   "worker_2": {
+    "completion": "<artifact>count_gt(stable_unique(resource), 2)</artifact>",
+    "finish_reason": "eos",
+    "generated_tokens": 16,
+    "generation_hit_token_cap": false
+   },
+   "worker_3": {
+    "completion": "<artifact>at(count_gt(stable_unique(resource), 3), 4)</artifact>",
+    "finish_reason": "eos",
+    "generated_tokens": 20,
+    "generation_hit_token_cap": false
+   }
+  },
+  {
+   "case_id": "fork_join:worker_dev:00000:5b6d01a9:bound_var:private:n2",
+   "request_sha256": "3d934924c3168262ae70809299564978dd766bd567d75c46af8bf689af5842ed",
+   "user_message": "Problem:\nLet x be the count of values greater than 2 in the sequence from R-5W8 after removing later occurrences of repeated values. Let y be Birch's points in R-5R4. Output `x \u00d7 y + 5`.\n\nResource:\nR-5W8:\n[1, 4, 7, 1, 4, 3, 3, 3, 5, 3, 2, 3, 3]\n\nTask:\nRemove later occurrences of repeated values from the integer sequence in the requested resource and count the values greater than 2.\n\nTranslate only the assigned Task. The Problem is background; do not complete or combine other operations from it. Respond with exactly one <artifact>...</artifact> containing a single expression.",
+   "worker_2": {
+    "completion": "<artifact>count_gt(stable_unique(resource), 2)</artifact>",
+    "finish_reason": "eos",
+    "generated_tokens": 16,
+    "generation_hit_token_cap": false
+   },
+   "worker_3": {
+    "completion": "<artifact>count_gt(stable_unique(resource), 3)</artifact>",
+    "finish_reason": "eos",
+    "generated_tokens": 16,
+    "generation_hit_token_cap": false
+   }
+  }
+ ],
+ "provenance": {
+  "runs/104f-3b-screen/generic_3b-task_last-rev10-sel-r1/calls.jsonl": "b288fd0310da1e5abdff5cd79735625c2046d37085c94fb97559a5d6adb12ba1",
+  "runs/99f-rev10/generic_1p5b-task_last-rev10-sel-r1/calls.jsonl": "f6d3bc84d1dbd435dc356c2806017a41cc2cf564cd0d7989e610206fb494e237"
+ },
+ "selection_rule": "first-latent Code-node cases (code_atomic n1, fork_join n2) x three renderers, from the retained rev10 worker-2 and worker-3 runs",
+ "sentinels": "stage0-retained-requests-v1"
+}
