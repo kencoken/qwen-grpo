@@ -1,10 +1,17 @@
 # Stage 0 four-worker model-orchestration pivot
 
-**Status: DRAFT FOR REVIEW.** This document becomes normative only after
-Ken's sign-off and a targeted review against the frozen plan and cell
-specification. It is a versioned amendment to the remaining Stage 0 work; it
-does not rewrite the historical signed documents or authorize construction,
-qualification, or Stage-2 training.
+**Status: FROZEN 2026-07-22 (Ken).** All five §0 decisions approved
+in-session after a verification review (§1 overlap table 235/22/13/0,
+§7 cascade 270/270 in 283 calls, §11 arithmetic, and §10.3 canary
+existence all re-verified from the retained artifacts; no blocking
+findings). Content hashes are recorded in the Freeze Record appended
+at the end of this document; the status line and that record are the
+only changes from the approved draft. It is a versioned amendment to
+the remaining Stage 0 work; it does not rewrite the historical signed
+documents or authorize construction, qualification, or Stage-2
+training. Original draft status line for the record: DRAFT FOR
+REVIEW; becomes normative only after Ken's sign-off and a targeted
+review against the frozen plan and cell specification.
 
 ## 0. Review and freeze procedure
 
@@ -795,3 +802,47 @@ The Stage-0 handoff, not this plan, informs:
 No result from the four-worker pivot retroactively changes the historical
 three-worker D16 artifacts. They remain the evidence that motivated this
 versioned model-orchestration design.
+
+## Freeze Record (appended at freeze, 2026-07-22)
+
+Recorded per §0 with Ken's approval of all five sign-off decisions.
+Approved draft = this document at commit `08ae2a1`, sha256
+`73f30391359abaa0f4ee426275f17d1e0338952c1f9ab02d05d34b716308f21d`
+(the status line and this record are the only subsequent changes).
+
+**Worker pool identities (§4):**
+
+- `generic_1p5b` = `Qwen/Qwen2.5-1.5B-Instruct`
+  `@989aa7980e4cf806f80c7fef2b1adb7bc71aa306`, 1,543,714,304
+  parameters (device-verified)
+- `generic_3b` = `Qwen/Qwen2.5-3B-Instruct`
+  `@aa8e72537993ba99e69dfaafa59ed015b17504d1`, 3,085,938,688
+  parameters (device-verified in the 104_f runs)
+
+**Prompt bundle `rev10`** (one global bundle; Lookup/Code bytes
+inherited from rev9):
+
+- lookup `b013c142be2ed48fea221196f80bdbc0b8fb459c83a73c62c42c03986f6f952f`
+- math   `24c16a2115eceed072c0189692bf25799e59977f199829cc1f896e9da3b48787`
+- code   `9b08f3e6f4afad854484a13257d973e79e8664194f16cf44930644ab22e88aea`
+
+**Request contract:** `worker-blocks-task-last-v1` digest
+`8638fdad716e1e0c55b733298f8d0b4061af8dc5851ba0e6b8c99017642b5a7c`
+(all four workers).
+
+**Chat template** (shared across all Qwen2.5 endpoints, the fact that
+made the F3 screen a weights-only swap):
+`cd8e9439f0570856fd70470bf8889ebd8b5d1107207f67a5efb46e342330527f`.
+
+**Support registry at freeze:** `support_digests.json`
+`afa796aac5994841dbbb13e74cf699fae9b89517769fa513c19df3182e599899`
+(23 candidates).
+
+**Evidence base:** `runs/99f-rev10` (worker-2 policy),
+`runs/104f-3b-screen` (worker-3 policy; guard: 630 Lookup/Math records
+byte-identical across every arm and the 99_f run). Historical
+three-worker D16 artifacts are unchanged by this freeze (§15).
+
+Per §0, each new registry, replay-support and launch-profile artifact
+is reviewed and hashed before its first GPU use; implementation
+proceeds in the §13 review units.

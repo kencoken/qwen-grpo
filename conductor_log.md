@@ -560,6 +560,20 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   the commit carrying THIS addendum is the executable commit for
   Tranche A. Nothing else lands before launch; the screening/reveal
   checkout guard verifies against the P1 artifacts' recorded commit.
+- **2026-07-22 106_s FROZEN — STAGE 0 FOUR-WORKER ORCHESTRATION
+  PIVOT (Ken sign-off, all five §0 decisions):** the universal-Code-
+  worker search stops; Stage 0 finishes around a flat four-worker /
+  two-checkpoint pool (lookup_1p5b, math_1p5b, code_1p5b, code_3b; one
+  rev10 bundle, task_last, NF4, singleton-v1), motivated by the
+  verified 235/22/13/0 rev10 overlap (union 270/270, selection
+  evidence only). 4^S action space (4/16/64), Coder checkpoints
+  retired, universal-worker acceptance requirement retired (§6.4),
+  cascade + router analysis deferred to Stage 1, pre-materialized
+  outcomes the preferred Stage-0C path. Freeze Record appended
+  (approved draft @08ae2a1 sha 73f30391…; identity hashes recorded).
+  Implementation proceeds in the §13 review units: (1) registry +
+  schema erratum + CPU fixtures, (2) 0B runtime, (3) evaluation
+  support, (4) 0C integration, (5) CE0 + handoff.
 - **2026-07-22 3B SCREEN OUTCOME — ALL FOUR ARMS MISS (105_f):**
   generic_3b 878 (rev10) / 869 (rev11); coder_3b 741 / 752. Guard held
   everywhere (4×630 Lookup/Math records byte-identical to 99_f). Scale
