@@ -439,3 +439,98 @@ def test_aborted_execution_marks_the_trace_aborted(tmp_path):
     assert manifest["status"] == "aborted"
     assert manifest["closed"] is True
     rt.close()
+
+
+# =============================================================================
+# 115_f findings: provenance immutability, preflight bypass, per-cell bound.
+# =============================================================================
+
+def test_runtime_provenance_is_immutable_after_construction(tmp_path):
+    """115_f F1: neither the caller's dict nor the profile property can
+    move preflight or trace metadata off the recorded fingerprints."""
+    profile = profile_with(cache_path=str(tmp_path / "cache.sqlite"))
+    pool = FakeFourPool(profile, {0: "<artifact>1</artifact>"})
+    rt = FourWorkerRuntime(profile, pool,
+                           WorkerCompletionCache(profile["cache_path"]))
+    rtp_before = rt.runtime_profile_fingerprint
+    # Mutating the caller's original changes nothing.
+    profile["device"] = "mutated"
+    profile["request_contract"] = "worker-blocks-v0"
+    # Mutating the returned property changes nothing either.
+    view = rt.profile
+    view["device"] = "mutated"
+    view["request_contract"] = "worker-blocks-v0"
+    assert rt.profile["device"] == "cuda"
+    assert rt.profile["request_contract"] == CONTRACT_TASK_LAST
+    assert rt.runtime_profile_fingerprint == rtp_before
+    # A v0 item is still refused after both mutation attempts.
+    latent, inst, registry, steps = make_env("lookup_atomic")
+    item = WorkflowItem(
+        item_id="i", action=parser.routing_to_workflow([0], steps),
+        public_prompt=inst["public_prompt"], registry=registry)
+    with pytest.raises(InfrastructureError, match="request contract"):
+        rt.execute_batch([item])
+    with pytest.raises(TypeError):
+        rt.worker_fingerprints[0] = "forged"  # type: ignore[index]
+    rt.close()
+
+
+def test_public_executor_composition_cannot_bypass_the_preflight(tmp_path):
+    """115_f F2: the reviewer's reproduction — executor +
+    worker_call_batch + a bound v2 trace — raises before any call."""
+    latent, inst, registry, steps = make_env("lookup_atomic")
+    rt, pool = build_rt(tmp_path, {0: "<artifact>1</artifact>"})
+    item = WorkflowItem(  # default v0 contract
+        item_id="i", action=parser.routing_to_workflow([0], steps),
+        public_prompt=inst["public_prompt"], registry=registry)
+    trace = PoolTraceWriter("run-a", rt, base_dir=tmp_path / "runs")
+    with pytest.raises(InfrastructureError, match="request contract"):
+        executor.execute_workflow_batch([item], rt.worker_call_batch,
+                                        trace=trace)
+    assert pool.singleton_calls == []
+    trace.close("aborted")
+    rt.close()
+
+
+def test_smoke_per_cell_bound_is_enforced():
+    """115_f F3: an index past the consumed 0-29 construction prefix
+    is rejected before any runtime or cache construction."""
+    from tasks.conductor.smoke import validate_per_cell
+    assert validate_per_cell(2) == 2
+    assert validate_per_cell(30) == 30
+    for bad in (0, 31, -1):
+        with pytest.raises(SystemExit, match="per-cell"):
+            validate_per_cell(bad)
+
+
+def test_trace_write_rejects_internally_inconsistent_records(tmp_path):
+    """115_f P2 hardening: swapped same-worker records, missing binding
+    hashes and non-rerendering user messages all refuse to persist."""
+    import dataclasses
+    latent, inst, registry, steps = make_env("lookup_atomic")
+    rt, pool = build_rt(
+        tmp_path,
+        {0: lambda req: f"<artifact>{len(req)}</artifact>"})
+    trace = PoolTraceWriter("run-a", rt, base_dir=tmp_path / "runs")
+    record = rt.worker_call_batch(0, ["user"])[0]
+    good = executor.StepRecord(1, 0, None, None, "user",
+                               record.completion, False, "bind")
+    # Same worker, different call record (swapped completion).
+    other = rt.worker_call_batch(0, ["other user"])[0]
+    with pytest.raises(InfrastructureError, match="completion"):
+        trace.write_step("i", good, dataclasses.replace(
+            other, request_text=record.request_text,
+            request_sha256=record.request_sha256))
+    # A real call without a binding hash.
+    unbound = executor.StepRecord(1, 0, None, None, "user",
+                                  record.completion, False, None)
+    with pytest.raises(InfrastructureError, match="binding"):
+        trace.write_step("i", unbound, record)
+    # A user message that does not re-render to the recorded bytes.
+    mismatched = executor.StepRecord(1, 0, None, None, "tampered user",
+                                     record.completion, False, "bind")
+    with pytest.raises(InfrastructureError, match="re-render"):
+        trace.write_step("i", mismatched, record)
+    trace.write_step("i", good, record)  # the consistent row persists
+    trace.close()
+    rt.close()

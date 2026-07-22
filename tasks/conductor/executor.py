@@ -157,6 +157,13 @@ def execute_workflow_batch(items: list[WorkflowItem],
             "trace schema v1 is pool-free; the four-worker executor "
             "refuses legacy TraceWriter output (110_f) — the pool-bound "
             "trace schema lands with the four-worker runtime")
+    # 115_f F2: a trace that owns provenance obligations (the v2
+    # pool-bound writer) preflights the items BEFORE any worker call,
+    # so composing this executor with a runtime callback directly
+    # cannot record a request contract the items do not use.
+    preflight = getattr(trace, "preflight_items", None)
+    if preflight is not None:
+        preflight(items)
     ids = [item.item_id for item in items]
     if len(set(ids)) != len(ids):
         raise InfrastructureError("duplicate item_id in batch")

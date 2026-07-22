@@ -60,6 +60,19 @@ from .workerpool import WORKER_NAMES
 
 WRONG_FAMILY_WORKER = 1  # deliberate math-family routing of a lookup node
 
+# 115_f F3: the support declaration claims every construction index
+# lies inside the already-consumed 0-29 D16 prefix; the bound makes
+# that claim true by construction rather than trusting the flag.
+MAX_PER_CELL = 30
+
+
+def validate_per_cell(per_cell: int) -> int:
+    if not isinstance(per_cell, int) or not 1 <= per_cell <= MAX_PER_CELL:
+        raise SystemExit(
+            f"--per-cell must be in 1..{MAX_PER_CELL} (the consumed "
+            f"construction prefix), got {per_cell!r}")
+    return per_cell
+
 
 def build_items(per_cell: int, request_contract: str
                 ) -> tuple[list[WorkflowItem], dict[str, int]]:
@@ -122,6 +135,7 @@ def main() -> int:
     argp.add_argument("--device", default="cuda")
     args = argp.parse_args()
 
+    validate_per_cell(args.per_cell)
     profile = copy.deepcopy(FOUR_WORKER_RUNTIME_PROFILE)
     profile["device"] = args.device
     profile["cache_path"] = str(Path("runs") / args.run_name

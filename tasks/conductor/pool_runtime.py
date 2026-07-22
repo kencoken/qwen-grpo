@@ -445,8 +445,12 @@ class FourWorkerRuntime:
                 "pool profile does not match the runtime profile; the "
                 "fingerprints would describe settings the pool does not "
                 "execute (113_f finding 1)")
-        self.profile = copy.deepcopy(dict(profile))
-        self.specs = profile_worker_pool(self.profile)
+        # 115_f F1: provenance is immutable after construction — the
+        # profile is private and exposed only as a defensive copy, so
+        # neither the caller's original dict nor the property can move
+        # preflight or trace metadata off the recorded fingerprints.
+        self._profile = copy.deepcopy(dict(profile))
+        self.specs = profile_worker_pool(self._profile)
         self.pool = pool
         self.cache = cache
         chat_shas = {spec.name: pool.chat_template_sha(spec.worker_id)
@@ -457,21 +461,24 @@ class FourWorkerRuntime:
             for spec in self.specs}
         self.pool_fingerprint = worker_pool_fingerprint(self.specs)
         self.runtime_profile_fingerprint = pool_profile_fingerprint(
-            self.profile)
+            self._profile)
         self.worker_visible_fingerprint = pool_worker_visible_fingerprint(
-            self.profile, chat_shas, system_shas)
+            self._profile, chat_shas, system_shas)
         self.worker_fingerprints = {
             spec.worker_id: selected_worker_fingerprint(
-                self.profile, spec, chat_shas[spec.name],
+                self._profile, spec, chat_shas[spec.name],
                 system_shas[spec.name])
             for spec in self.specs}
         self.chat_template_shas = chat_shas
         self.system_prompt_shas = system_shas
-        self.endpoint_family_fingerprints = {
-            family: endpoint_family_fingerprint(self.profile, family)
-            for family in ("lookup", "math", "code")}
+        from types import MappingProxyType
+        self.worker_fingerprints = MappingProxyType(
+            dict(self.worker_fingerprints))
+        self.endpoint_family_fingerprints = MappingProxyType({
+            family: endpoint_family_fingerprint(self._profile, family)
+            for family in ("lookup", "math", "code")})
         self.logical_to_physical = physical_mapping(
-            self.specs, self.profile["nf4"], self.profile["device"])
+            self.specs, self._profile["nf4"], self._profile["device"])
         self._closed = False
 
     def worker_call_batch(self, worker_id: int,
@@ -522,6 +529,11 @@ class FourWorkerRuntime:
             raise InfrastructureError("unfilled cache slot after generation")
         return cached  # type: ignore[return-value]
 
+    @property
+    def profile(self) -> dict[str, Any]:
+        """Defensive copy (115_f F1): mutating it changes nothing."""
+        return copy.deepcopy(self._profile)
+
     def execute_batch(self, items: list[Any], trace: Any = None):
         """Runtime-bound execution (113_f F1): every item's request
         contract is preflighted against this profile, generation goes
@@ -531,11 +543,11 @@ class FourWorkerRuntime:
         (worker_id, CallRecord) in generation order."""
         from . import executor as executor_mod
         for item in items:
-            if item.request_contract != self.profile["request_contract"]:
+            if item.request_contract != self._profile["request_contract"]:
                 raise InfrastructureError(
                     f"item {item.item_id!r} uses request contract "
                     f"{item.request_contract!r}; this runtime executes "
-                    f"{self.profile['request_contract']!r} — a mixed-"
+                    f"{self._profile['request_contract']!r} — a mixed-"
                     "contract batch is misattributed provenance "
                     "(113_f finding 1)")
         if trace is not None:
@@ -645,6 +657,19 @@ class PoolTraceWriter:
         self._file = self._trace_path.open("x", encoding="utf-8")
         self._steps_written = 0
 
+    def preflight_items(self, items: Any) -> None:
+        """Trace-owned contract preflight (115_f F2): the executor calls
+        this before any worker call, so the old public composition
+        (execute_workflow_batch + worker_call_batch + this trace) can
+        no longer record a contract the items do not use."""
+        expected = self.runtime.profile["request_contract"]
+        for item in items:
+            if item.request_contract != expected:
+                raise InfrastructureError(
+                    f"item {item.item_id!r} uses request contract "
+                    f"{item.request_contract!r}; this trace records "
+                    f"{expected!r} (115_f finding 2)")
+
     def _write_manifest(self) -> None:
         self._manifest_path.write_text(
             self._json.dumps(self._manifest, indent=1, sort_keys=True)
@@ -683,6 +708,21 @@ class PoolTraceWriter:
                 raise InfrastructureError(
                     "rendered request text does not hash to the recorded "
                     "request_sha256")
+            # 115_f P2 hardening: a swapped same-worker record must not
+            # produce an internally inconsistent trace.
+            if record.completion != call_record.completion:
+                raise InfrastructureError(
+                    "step completion does not match the producing "
+                    "call record's completion")
+            if not record.binding_sha256:
+                raise InfrastructureError(
+                    "a real worker call must carry a binding hash")
+            rerendered = self.runtime.pool.render_request(
+                worker_id, record.request)
+            if rerendered != request_text.encode("utf-8"):
+                raise InfrastructureError(
+                    "user_message does not re-render to the recorded "
+                    "request bytes under the bound pool")
         result = record.result
         line = {
             "item_id": item_id,
