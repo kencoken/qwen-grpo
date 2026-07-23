@@ -121,10 +121,18 @@ CONDUCTOR_DEMOS: tuple[dict[str, Any], ...] = (
     },
     {
         "name": "specialist_check",
+        # Repair round 1 (disclosed): the original goal-chained text
+        # ("…then read the rack entry at that count") triggered worker
+        # 3's known composition mode (at(count_gt(…), …)). Reframed to
+        # the in-domain resource_first imperative style — sequential
+        # sentences, no chained goal expression. Steps, payloads,
+        # worker ids and gold are unchanged (executability-only).
         "problem": ("A gauge log holds an integer sequence, and a "
-                    "rack list holds another. Count the gauge values "
-                    "greater than 4 after removing repeats, then read "
-                    "the rack entry at that count."),
+                    "rack list holds another. Remove later occurrences "
+                    "of repeated values from the gauge sequence and "
+                    "count the values greater than 4. Then use that "
+                    "count as a zero-based index into the rack "
+                    "sequence and return the entry there."),
         "manifest": ["R-9J5", "R-2M8"],
         "resources": {
             "R-9J5": {"kind": "integer_list",
