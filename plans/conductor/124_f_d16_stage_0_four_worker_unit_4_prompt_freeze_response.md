@@ -34,11 +34,12 @@ worker 3 failed at step 1 (typed failure), step 2 was
 dependency-blocked, and worker 2 therefore never executed step 2 in
 the assigned workflow. The earlier claim that "both Code workers
 execute every Code node in both Code-bearing demos" described the
-planned assignments, not reached nodes, and is corrected: worker 2's
-step-2 execution evidence comes from the swapped `[2,3]`… step-2
-worker-3 execution and the round-independent swapped runs; the
-narrowed claims in `policy.py` now distinguish the matched pair from
-the asymmetric example.
+planned assignments, not reached nodes, and is corrected. (Corrected
+per 125_s finding 4: in the passing `[2,3]` workflow, step 1 is
+worker 2 and step 2 is worker 3 — no worker-2 execution of the
+specialist step 2 exists or is required; the demonstrated route is
+what the check verifies.) The narrowed claims in `policy.py`
+distinguish the matched pair from the asymmetric example.
 
 **Corrected cumulative request accounting (123_s §8.2):** 8 distinct
 rendered request hashes in each round, 6 shared between rounds —
@@ -137,9 +138,16 @@ surface lookups 287 (= valid actions); zero infrastructure aborts
 
 Every §10.4 "sane, non-degenerate" condition holds: all four ids in
 schema-valid actions; workers 2 AND 3 each at Code positions; 1.0
-outcomes present; mixed-reward groups present. Sampled success (48.3%)
-is far above the ~19.8% uniform-action expectation — the demonstrations
-supply a substantial routing prior exactly as 123_s §5 anticipated,
-which is the disclosed demonstration-bootstrapped framing; the
-few-shot-vs-no-few-shot measurement remains the registered Stage-2
-decision. The trained adapter and optimizer state are discarded.
+outcomes present; mixed-reward groups present.
+
+**Attribution (as corrected by 125_s finding 1):** the
+few-shot-conditioned pretrained policy, while being updated for 18
+GRPO steps, achieved 48.3% rollout success against a ~19.8%
+uniform-action expectation. This is consistent with a strong routing
+initialization and/or rapid early adaptation — first 144 completions
+38.9% success (mean reward 0.694), second 144 completions 57.6%
+(0.785) — but the ordered integration schedule is not a controlled
+learning-curve experiment, and **the contribution of demonstrations
+is not identified by this smoke**. The registered untrained few-shot
+and no-demonstration comparisons (123_s §9) remain necessary. The
+trained adapter and optimizer state are discarded.

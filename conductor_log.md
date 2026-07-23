@@ -572,12 +572,19 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   format probe 144/144 valid + right length (floor 0.80); PROMPT
   FROZEN (fixture 6cf44e2d…, profile 0815c033…). Reward-bearing smoke
   COMPLETE: 18 updates/153s/14.43 GiB, parse 99.65%, rewards 1/148/139
-  (48.3% success vs ~19.8% uniform — demonstration prior confirmed),
+  (48.3% success vs ~19.8% uniform; per 125_s the demonstration
+  contribution is NOT identified — initialization and/or rapid early
+  adaptation; halves 38.9%→57.6%),
   zero-variance 28/36, mixed groups 7, all four workers selected (w2
   49 / w3 54 at Code positions), canary exact, zero infra aborts,
   schedule enforced, model discarded. All §10.4 sanity conditions
-  hold. Stage-2 demo-treatment decision registered as deferred. NEXT:
-  unit 5 (CE0 worst-case benchmark + Stage-0 go/no-go handoff).
+  hold. Stage-2 demo-treatment decision registered as deferred. 125_s wrap-up
+  review CLOSED record-only (126_f): partial-source-digest scope note
+  + environment/run content addresses (all four artifact hashes match
+  the reviewer's), frozen-source errata recorded unedited,
+  attribution corrected, unidirectional scale contrast carried to the
+  handoff. NEXT: unit 5 (CE0 prereg w/ complete source/environment
+  manifest + Stage-0 go/no-go handoff).
 - **2026-07-23 106_s UNIT 4 — STAGE-0C TRAINER INTEGRATION (120_f):**
   single trainer-facing conductor reward (0/0.5/1; NO format_reward;
   missing surface row = infra abort) with positional->semantic
