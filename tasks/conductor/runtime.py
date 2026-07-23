@@ -27,11 +27,13 @@ floats/bools at hash time.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .profiles import ProfileError, canonical_json
+from .prompts import D16_REVISION
 from .types import ENDPOINT_NAMES, InfrastructureError
 
 # Grammar/tool versioning (§1.10 "artifact grammar, tool version"): the
@@ -75,9 +77,15 @@ DEFAULT_RUNTIME_PROFILE: dict[str, Any] = {
             "max_new_tokens": 256,
             "microbatch": 16,
         },
+        # Math endpoint runs the base Instruct model, NOT
+        # Qwen2.5-Math-1.5B-Instruct as spec §1.6 names: the Math-Instruct
+        # model's solve-and-box alignment never emits the artifact under
+        # any prompt (evidence: plans/conductor/64_f probes 1-2; decision
+        # provisionally signed off 2026-07-21, recorded in 70_f; spec
+        # erratum deferred to the D16/third-party review).
         "math": {
-            "model_id": "Qwen/Qwen2.5-Math-1.5B-Instruct",
-            "revision": "aafeb0fc6f22cbf0eaeed126eff8be45b0360a35",
+            "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+            "revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
             "max_new_tokens": 256,
             "microbatch": 16,
         },
@@ -100,6 +108,11 @@ DEFAULT_RUNTIME_PROFILE: dict[str, Any] = {
         "stopping": "eos",
     },
     "tools": dict(TOOL_VERSIONS),
+    # D16 prompt revision — execution provenance named by the 0A
+    # close-out; worker-visible (the system prompt is in every rendered
+    # request), so a prompt revision retires cached completions even
+    # beyond the byte change in the requests themselves.
+    "prompts": {"d16_revision": D16_REVISION},
     "resource_policy": RESOURCE_POLICY,
     "visibility_condition": "private",
     # Conductor-side fields (never worker-visible):
@@ -151,6 +164,9 @@ def validate_runtime_profile(profile: Mapping[str, Any]) -> None:
             if not isinstance(worker[key], str) or not worker[key]:
                 raise ProfileError(f"worker {name}.{key} must be a non-empty "
                                    "string")
+    if set(profile["prompts"]) != {"d16_revision"} or \
+            not isinstance(profile["prompts"]["d16_revision"], str):
+        raise ProfileError("prompts must hold exactly a string d16_revision")
     if profile["visibility_condition"] not in ("private", "visible"):
         raise ProfileError("visibility_condition must be private|visible")
     if profile["decoding"].get("do_sample") != "false":
@@ -176,35 +192,42 @@ def runtime_profile_fingerprint(profile: Mapping[str, Any]) -> str:
 
 def worker_visible_projection(
         profile: Mapping[str, Any],
-        chat_template_shas: Mapping[str, str]) -> dict[str, Any]:
+        chat_template_shas: Mapping[str, str],
+        system_prompt_shas: Mapping[str, str]) -> dict[str, Any]:
     """The §1.10 worker-visible slice: profile minus Conductor-only keys,
-    plus the resolved chat-template bytes hash per endpoint (the template
-    is a property of the pinned tokenizer, resolved at build time)."""
+    plus the resolved chat-template bytes hash and the actual system-prompt
+    hash per endpoint (81_f §5.2: a request's completion depends on the
+    prompt bytes actually rendered, so they are worker-visible identity)."""
     validate_runtime_profile(profile)
-    if set(chat_template_shas) != set(ENDPOINT_ORDER):
-        raise ProfileError("chat_template_shas must cover exactly "
-                           f"{ENDPOINT_ORDER}")
+    for label, shas in (("chat_template_shas", chat_template_shas),
+                        ("system_prompt_shas", system_prompt_shas)):
+        if set(shas) != set(ENDPOINT_ORDER):
+            raise ProfileError(f"{label} must cover exactly {ENDPOINT_ORDER}")
     projection = {key: profile[key] for key in profile
                   if key not in _CONDUCTOR_ONLY_KEYS}
     projection["chat_template_sha256"] = dict(chat_template_shas)
+    projection["system_prompt_sha256"] = dict(system_prompt_shas)
     return projection
 
 
 def worker_visible_fingerprint(
         profile: Mapping[str, Any],
-        chat_template_shas: Mapping[str, str]) -> str:
-    return "wv-" + _sha16(canonical_json(
-        worker_visible_projection(profile, chat_template_shas)))
+        chat_template_shas: Mapping[str, str],
+        system_prompt_shas: Mapping[str, str]) -> str:
+    return "wv-" + _sha16(canonical_json(worker_visible_projection(
+        profile, chat_template_shas, system_prompt_shas)))
 
 
 def endpoint_fingerprint(profile: Mapping[str, Any], endpoint_name: str,
-                         chat_template_sha: str) -> str:
+                         chat_template_sha: str,
+                         system_prompt_sha: str) -> str:
     """Selected-endpoint fingerprint: which worker, pinned exactly."""
     validate_runtime_profile(profile)
     if endpoint_name not in ENDPOINT_ORDER:
         raise ProfileError(f"unknown endpoint {endpoint_name!r}")
     record = {"endpoint": endpoint_name,
               "chat_template_sha256": chat_template_sha,
+              "system_prompt_sha256": system_prompt_sha,
               **profile["workers"][endpoint_name]}
     return "ep-" + _sha16(canonical_json(record))
 
@@ -214,13 +237,24 @@ def endpoint_fingerprint(profile: Mapping[str, Any], endpoint_name: str,
 @dataclass(frozen=True)
 class CallRecord:
     """One worker call's completion + §1.6 backend telemetry. Raw text and
-    generation metadata only — never an executed WorkerResult (§1.10)."""
+    generation metadata only — never an executed WorkerResult (§1.10).
+    `request_text` is the exact rendered chat request as lossless UTF-8
+    text (81_f §5.3 provenance; the bytes are its UTF-8 encoding).
+
+    The two producer-identity fields are set only by the four-worker
+    runtime (113_s F1/F4): the v2 trace writer verifies each row against
+    the record that actually produced the completion, so a record from a
+    different runtime or worker cannot be recorded under this trace's
+    fingerprints. The v1 runtime leaves them None."""
     completion: str
     finish_reason: str
     generated_tokens: int
     generation_hit_token_cap: bool
     cache_hit: bool
+    request_text: str
     request_sha256: str
+    selected_worker_fp: str | None = None
+    runtime_fingerprint: str | None = None
 
 
 class Runtime:
@@ -236,17 +270,28 @@ class Runtime:
     def __init__(self, profile: Mapping[str, Any], pool: Any,
                  cache: Any) -> None:
         validate_runtime_profile(profile)
-        self.profile = {key: profile[key] for key in profile}
+        # Own the effective configuration (81_f §6.2): caller mutation
+        # after construction changes neither behavior nor provenance.
+        self.profile = copy.deepcopy(dict(profile))
         self.pool = pool
         self.cache = cache
         shas = {name: pool.chat_template_sha(name)
                 for name in ENDPOINT_ORDER}
-        self.runtime_profile_fingerprint = runtime_profile_fingerprint(profile)
-        self.worker_visible_fingerprint = worker_visible_fingerprint(
-            profile, shas)
-        self.endpoint_fingerprints = {
-            name: endpoint_fingerprint(profile, name, shas[name])
+        # Hash the prompts the pool actually renders (81_f §5.2): the
+        # fingerprints describe behavior, not a declared label.
+        self.system_prompt_shas = {
+            name: hashlib.sha256(
+                pool.system_prompt(name).encode("utf-8")).hexdigest()
             for name in ENDPOINT_ORDER}
+        self.runtime_profile_fingerprint = runtime_profile_fingerprint(
+            self.profile)
+        self.worker_visible_fingerprint = worker_visible_fingerprint(
+            self.profile, shas, self.system_prompt_shas)
+        self.endpoint_fingerprints = {
+            name: endpoint_fingerprint(self.profile, name, shas[name],
+                                       self.system_prompt_shas[name])
+            for name in ENDPOINT_ORDER}
+        self.chat_template_shas = shas
         self._closed = False
 
     def worker_call_batch(self, endpoint_name: str,
@@ -267,6 +312,7 @@ class Runtime:
                 generated_tokens=row.generated_tokens,
                 generation_hit_token_cap=row.generation_hit_token_cap,
                 cache_hit=True,
+                request_text=request.decode("utf-8"),
                 request_sha256=_request_sha(request)))
         # Deduplicate misses: byte-identical requests are one generation
         # (and one stored row) — batching nondeterminism across duplicate
@@ -292,6 +338,7 @@ class Runtime:
                         generated_tokens=gen.generated_tokens,
                         generation_hit_token_cap=gen.generation_hit_token_cap,
                         cache_hit=False,
+                        request_text=request.decode("utf-8"),
                         request_sha256=_request_sha(request))
         if any(record is None for record in cached):
             raise InfrastructureError("unfilled cache slot after generation")
@@ -315,13 +362,17 @@ def _request_sha(request_bytes: bytes) -> str:
 
 
 def build_runtime(profile: Mapping[str, Any], pool: Any = None,
-                  cache: Any = None) -> Runtime:
+                  cache: Any = None, prompts: Any = None) -> Runtime:
     """Assemble a Runtime. With no arguments this builds the real NF4 pool
+    (binding `prompts`, a resolved PromptBundle, or the current revision)
     and the profile's SQLite cache; tests inject fakes for both."""
     validate_runtime_profile(profile)
     if pool is None:
         from .workers import WorkerPool
-        pool = WorkerPool(profile)
+        pool = WorkerPool(profile, prompts=prompts)
+    elif prompts is not None:
+        raise ProfileError("prompts binds at pool construction; pass it "
+                           "only when this call builds the pool")
     if cache is None:
         from .cache import CompletionCache
         cache = CompletionCache(profile["cache_path"])

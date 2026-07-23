@@ -17,11 +17,12 @@ rendered request bytes to raw completions plus the §1.6 backend telemetry
 
 from __future__ import annotations
 
+import copy
 import hashlib
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from .prompts import SYSTEM_PROMPTS
+from .prompts import PromptBundle, WORKER_ENDPOINT_SET, resolve_prompts
 from .types import ENDPOINT_NAMES, InfrastructureError
 
 
@@ -34,23 +35,82 @@ class Generation:
     generation_hit_token_cap: bool
 
 
+FROZEN_NF4_CONFIG = {"load_in_4bit": "true", "quant_type": "nf4",
+                     "double_quant": "true", "compute_dtype": "bfloat16"}
+
+
+def load_nf4_checkpoint(model_id: str, revision: str,
+                        nf4: Mapping[str, Any], device: str) -> Any:
+    """Load one pinned checkpoint under the frozen NF4 config — shared
+    by the v1 endpoint pool and the four-worker pool so quantization can
+    never drift between them."""
+    import torch
+    from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+    if nf4 != FROZEN_NF4_CONFIG:
+        raise InfrastructureError(f"unsupported nf4 config {nf4!r}")
+    return AutoModelForCausalLM.from_pretrained(
+        model_id, revision=revision, dtype=torch.bfloat16,
+        quantization_config=BitsAndBytesConfig(
+            load_in_4bit=True, bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=torch.bfloat16),
+        device_map=device).eval()
+
+
+def measured_parameters(model: Any) -> int:
+    """NF4 packs 4-bit weights two per byte, so Params4bit reports half
+    its logical size; unpack to count actual model parameters (verified
+    against the cached checkpoints, 2026-07-21)."""
+    return sum((p.numel() * 2 if p.__class__.__name__ == "Params4bit"
+                else p.numel()) for p in model.parameters())
+
+
 class WorkerPool:
     """Real HF/bitsandbytes backend. Tests substitute fakes implementing
     `chat_template_sha`, `render_request`, `generate`, `close`."""
 
     def __init__(self, profile: Mapping[str, Any],
-                 device: str = "cuda") -> None:
+                 device: str = "cuda",
+                 prompts: PromptBundle | None = None) -> None:
         from .runtime import validate_runtime_profile
         validate_runtime_profile(profile)
         if profile["decoding"]["stopping"] != "eos":
             raise InfrastructureError(
                 f"unsupported stopping rule {profile['decoding']['stopping']!r}")
-        self._profile = profile
+        # Own the configuration (plan 81_f §6.2): caller mutation after
+        # construction must not change generation behavior.
+        self._profile = copy.deepcopy(dict(profile))
+        # Bind the resolved prompt strings now (81_f §5.2): rendering never
+        # re-reads module globals, so the hashes recorded from this bundle
+        # describe exactly what every request contained.
+        # Default binding resolves the profile's *declared* revision, so
+        # a label that disagrees with the registry fails here, before any
+        # generation (78_s finding 7, fully closed by this merge).
+        self._prompts = (prompts if prompts is not None else resolve_prompts(
+            self._profile["prompts"]["d16_revision"]))
+        if {name for name, _ in self._prompts.prompts} != WORKER_ENDPOINT_SET:
+            raise InfrastructureError(
+                f"prompt bundle {self._prompts.revision!r} must cover "
+                f"exactly {sorted(WORKER_ENDPOINT_SET)}")
         self._device = device
-        self._tokenizers: dict[str, Any] = {}
-        self._models: dict[str, Any] = {}
+        # Physical checkpoint sharing (92_s §3): model/tokenizer objects
+        # are keyed by (model_id, revision), so logical endpoints with the
+        # same pinned checkpoint share one resident object while keeping
+        # distinct prompts, tools and fingerprints. Sharing is structural,
+        # never introduced or removed between arms.
+        self._tokenizers: dict[tuple[str, str], Any] = {}
+        self._models: dict[tuple[str, str], Any] = {}
         for name in sorted(set(ENDPOINT_NAMES.values())):
-            self._tokenizers[name] = self._load_tokenizer(name)
+            key = self._checkpoint_key(name)
+            if key not in self._tokenizers:
+                self._tokenizers[key] = self._load_tokenizer(name)
+
+    def _checkpoint_key(self, endpoint_name: str) -> tuple[str, str]:
+        worker = self._profile["workers"][endpoint_name]
+        return (worker["model_id"], worker["revision"])
+
+    def _tokenizer(self, endpoint_name: str) -> Any:
+        return self._tokenizers[self._checkpoint_key(endpoint_name)]
 
     def _load_tokenizer(self, endpoint_name: str) -> Any:
         from transformers import AutoTokenizer
@@ -69,18 +129,34 @@ class WorkerPool:
     # --- fingerprint inputs -------------------------------------------------
 
     def chat_template_sha(self, endpoint_name: str) -> str:
-        template = self._tokenizers[endpoint_name].chat_template
+        template = self._tokenizer(endpoint_name).chat_template
         return hashlib.sha256(template.encode("utf-8")).hexdigest()
+
+    def system_prompt(self, endpoint_name: str) -> str:
+        """The exact system prompt this pool renders for the endpoint —
+        the provenance source for prompt hashes in fingerprints/manifests."""
+        return self._prompts.text(endpoint_name)
+
+    def tokenizer_facts(self, endpoint_name: str) -> dict[str, Any]:
+        """Actual tokenizer-level facts used at render/decode time (81_f
+        §6.3). The model generation-config eos set is only known after the
+        lazy model load and is validated at decode, not recorded here."""
+        tokenizer = self._tokenizer(endpoint_name)
+        return {
+            "pad_token_id": tokenizer.pad_token_id,
+            "padding_side": tokenizer.padding_side,
+            "eos_token_id": tokenizer.eos_token_id,
+        }
 
     # --- canonical rendered request (§1.5, cache-key component) -------------
 
     def render_request(self, endpoint_name: str, user_message: str) -> bytes:
-        """Chat template over (system, user); system prompt is the D16
-        artifact for this endpoint. Returned bytes are the cache-key
+        """Chat template over (system, user); system prompt comes from the
+        bundle bound at construction. Returned bytes are the cache-key
         request component and the byte-stability test target."""
-        tokenizer = self._tokenizers[endpoint_name]
+        tokenizer = self._tokenizer(endpoint_name)
         text = tokenizer.apply_chat_template(
-            [{"role": "system", "content": SYSTEM_PROMPTS[endpoint_name]},
+            [{"role": "system", "content": self.system_prompt(endpoint_name)},
              {"role": "user", "content": user_message}],
             tokenize=False, add_generation_prompt=True)
         return text.encode("utf-8")
@@ -88,25 +164,34 @@ class WorkerPool:
     # --- generation ---------------------------------------------------------
 
     def _load_model(self, endpoint_name: str) -> Any:
-        if endpoint_name not in self._models:
-            import torch
-            from transformers import (AutoModelForCausalLM,
-                                      BitsAndBytesConfig)
+        key = self._checkpoint_key(endpoint_name)
+        if key not in self._models:
             worker = self._profile["workers"][endpoint_name]
-            nf4 = self._profile["nf4"]
-            if nf4 != {"load_in_4bit": "true", "quant_type": "nf4",
-                       "double_quant": "true", "compute_dtype": "bfloat16"}:
-                raise InfrastructureError(
-                    f"unsupported nf4 config {nf4!r}")
-            self._models[endpoint_name] = AutoModelForCausalLM.from_pretrained(
-                worker["model_id"], revision=worker["revision"],
-                dtype=torch.bfloat16,
-                quantization_config=BitsAndBytesConfig(
-                    load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                    bnb_4bit_use_double_quant=True,
-                    bnb_4bit_compute_dtype=torch.bfloat16),
-                device_map=self._device).eval()
-        return self._models[endpoint_name]
+            self._models[key] = load_nf4_checkpoint(
+                worker["model_id"], worker["revision"],
+                self._profile["nf4"], self._device)
+        return self._models[key]
+
+    def checkpoint_report(self) -> list[dict[str, Any]]:
+        """Actual physical layout for the §3 execution measurements:
+        which checkpoints are loaded, which endpoints share them, and
+        the measured parameter count of each loaded model."""
+        report = []
+        endpoints_by_key: dict[tuple[str, str], list[str]] = {}
+        for name in sorted(set(ENDPOINT_NAMES.values())):
+            endpoints_by_key.setdefault(self._checkpoint_key(name),
+                                        []).append(name)
+        for key, endpoints in sorted(endpoints_by_key.items()):
+            model = self._models.get(key)
+            report.append({
+                "model_id": key[0],
+                "revision": key[1],
+                "endpoints": endpoints,
+                "loaded": model is not None,
+                "measured_parameters": (measured_parameters(model)
+                                        if model is not None else None),
+            })
+        return report
 
     def generate(self, endpoint_name: str,
                  requests: list[bytes]) -> list[Generation]:
@@ -114,7 +199,7 @@ class WorkerPool:
         microbatched at the profile's per-worker cap. Returns one
         Generation per request, in order."""
         import torch
-        tokenizer = self._tokenizers[endpoint_name]
+        tokenizer = self._tokenizer(endpoint_name)
         model = self._load_model(endpoint_name)
         worker = self._profile["workers"][endpoint_name]
         cap = worker["max_new_tokens"]

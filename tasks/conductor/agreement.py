@@ -59,9 +59,12 @@ def reference_artifact(latent: dict, node_id: str) -> str:
     raise ValueError(op)
 
 
-_ENDPOINT_FOR_OP = {"lookup": 0, "affine": 1, "mul_add": 1, "ratio": 1,
-                    "modular": 1, "product_affine": 1, "seq_count": 2,
-                    "seq_select": 2, "seq_at": 2}
+# Operator-aligned endpoint assignment in stable semantic-node terms —
+# the D16 schedule shared with the worker evaluator (81_f §6.1). Not a
+# presumed gold assignment; Stage 1 measures the payoff surface.
+ENDPOINT_FOR_OP = {"lookup": 0, "affine": 1, "mul_add": 1, "ratio": 1,
+                   "modular": 1, "product_affine": 1, "seq_count": 2,
+                   "seq_select": 2, "seq_at": 2}
 
 # Every operator × cell stratum the six cells can produce. A run that never
 # exercises one of these has not tested what the command claims to test, so
@@ -124,7 +127,7 @@ def run(cases: int, namespace: str = "train") -> int:
                 completion = (f"<artifact>{reference_artifact(latent, node_id)}"
                               f"</artifact>")
                 result = run_worker_output(
-                    _ENDPOINT_FOR_OP[node["op"]], completion,
+                    ENDPOINT_FOR_OP[node["op"]], completion,
                     Binding(resources=resources, steps=steps))
                 strata[(node["op"], cell)] += 1
                 if result.status != "success" or \
