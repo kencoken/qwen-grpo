@@ -616,6 +616,14 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   renamed _f→_s (misprefixed; originals cited by name in historical
   docs and frozen source, one-to-one mapping). Stage-1/2 revision
   from the measured evidence is the next work item.
+- **2026-07-23 CLOSURE RECORD REORGANIZED (129_f).** On Ken's review,
+  the 128_s corrections were moved out of 127_f into the paired
+  completion record 129_f_stage_0_completion.md (forward revert, no
+  history rewrite): 127_f is restored to the exact bytes 128_s
+  reviewed plus one disclosed pointer block, and 129_f carries the six
+  dispositions, the naming trail and the closure statement. The
+  "corrections in 127_f" phrasing in the entry above is superseded by
+  129_f. The authoritative closure set: 127_f + 128_s + 129_f.
 - **2026-07-23 106_s UNIT 4 COMPLETE — PROMPT FROZEN + STAGE-0C SMOKE
   (122_f/123_s/124_f):** demo probe ran under the preregistered
   bounded procedure (one repair round; specialist [3,2] failed twice =

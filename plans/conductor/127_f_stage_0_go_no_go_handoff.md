@@ -1,8 +1,13 @@
 # 127_f — Stage-0 go/no-go handoff (106_s §14)
 
-**Decision: GO** (with the 128_s record-only erratum below). Every
-§14 exit criterion is met; CE0 passed all frozen gates at the
-preregistered commit, with every prediction confirmed or beaten.
+> **Record note:** this document is preserved at the exact bytes
+> reviewed by `128_s` (as of commit `242f1c1`); this pointer block
+> is the only addition. The `128_s` erratum, its dispositions, and
+> the Stage-0 completion record are in
+> `129_f_stage_0_completion.md`.
+
+**Decision: GO.** Every §14 exit criterion is met; CE0 passed all
+frozen gates at the preregistered commit with every prediction hit.
 Stage 0 stops here per §3: no construction, qualification or headline
 GRPO seed runs under the 106_s document. Stages 1–2 are revised from
 the measured four-worker evidence below.
@@ -36,64 +41,19 @@ RTX 4090 24564 MiB; `uv.lock` `f5486ec4…`).
 | materialization in-process / full-command | 46–55 s / 90–240 s | **46.7 s / 51.1 s** (startup+loads 4.4 s) |
 | worker-phase device peak | ≤ 6 GiB | **3.77 GiB** |
 | surface disk | ~3–4 MB | **3.6 MB** |
-| reference-route live benchmark: physical generations | exactly 30 | **30** |
-| reference-route live benchmark: wall / per-generation | ≤ 60 s | **9.5 s / 0.315 s** |
-| reference-route live benchmark: terminals reached | **17/18** | **17/18** |
+| live worst case: physical generations | exactly 30 | **30** |
+| live worst case: wall / per-generation | ≤ 60 s | **9.5 s / 0.315 s** |
+| live worst case: terminals | **17/18 (math_code×goal_first miss)** | **17/18** |
 | enumeration (324 through S=3) | < 5 s | **< 0.1 s** |
 
 **Gates (frozen):** max observed peak reserved VRAM 14.43 GiB
 (training phase; worker phases 3.77 / 1.2 GiB) < 22 GiB ✓; projected
-seed at the **diagnostic-surface scale**: first seed 43.4 min,
-additional 42.6 min (pre-materialized; live mode 84.8 min) — and at a
-100-latent-per-cell reference scale (128_s): ~32,400 payoff rows,
-~12,400 expected physical generations, ~78 min materialization, ~2 h
-including training; even a pessimistic no-dedup extrapolation is
-~9.1 h — all ≤ the 12 h gate ✓ (the real estimate is recomputed when
-the Stage-2 population and schedule freeze); zero infrastructure
-failures represented as reward ✓; sane non-degenerate distribution
-held by the recorded smoke ✓. Gate-provenance note (128_s): the VRAM
-and seed gates are computed from CE0 measurements; the
-no-infra-failures and sane-distribution gates are **manually carried
-prior evidence** from the recorded unit-4 smoke and the
-trainer-callable abort tests, not values the CE0 command recomputed.
-**Deployment: pre-materialized routing (mode 1); modes 2/3 not
-implemented, per the frozen §10.4 rule.**
-
-## Erratum (128_s close-out pass — record-only; GO stands)
-
-1. The 43.4-minute figure prices the 18-observation **diagnostic**
-   surface, not a full Stage-2 seed; the reference-scale projection
-   above supersedes it as the planning number.
-2. The "live worst case" is renamed the **reference-route live
-   benchmark**: its family-reference routing selects worker 2 at every
-   Code node, so worker 3 was not exercised there. Worker 3 WAS
-   exercised by the complete materialization (all four workers evenly:
-   31 distinct requests each, per the 128_s verification).
-3. "17/18" counts **terminals reached**, not verified-correct answers;
-   the identity of the `math_code × goal_first` miss rests on the
-   earlier surface evidence, not on the persisted CE0 result.
-4. The automated `go` flag mixes computed gates with declared prior
-   evidence (see the gate-provenance note above); the record now
-   distinguishes them.
-5. "Every prediction hit" is corrected: the full-command wall (51.1 s)
-   **beat** the 90–240 s prediction rather than falling inside it, and
-   "startup+loads 4.4 s" was wrong — model loading is lazy and
-   occurred inside the 46.7 s materialization timer; the 4.4 s is
-   interpreter and import overhead only.
-6. The CE0 materialization manifest is content-addressed:
-   `runs/ce0/materialize/manifest.json` =
-   `1e52c399a6e60ebe7c0d475ec3c5f8374f5cd9ca963d63d5c86365cb8f12b6f7`.
-
-Naming note (closure): the reviewer documents 108/110/113/115 were
-misprefixed `_f` and are renamed `_s` at closure. Citations in all
-non-freeze-digested code (60 occurrences across 11 files) are
-corrected in place. Exactly three citations remain under the original
-names: comment strings in the freeze-digested `workerpool.py`, whose
-correction is **queued for the Stage-1/2 launch-profile freeze**
-(when the successor source digest is issued anyway) rather than
-regenerating the closed Stage-0 freeze for a comment edit. Historical
-review-cycle documents keep the names that were correct when written;
-the mapping is one-to-one.
+Stage-2 seed: **first seed 43.4 min, additional seeds 42.6 min**
+(pre-materialized; live mode 84.8 min) ≤ overnight ✓; zero
+infrastructure failures represented as reward (abort path raises,
+trainer-callable-tested) ✓; sane non-degenerate distribution held by
+the recorded smoke ✓. **Deployment: pre-materialized routing (mode 1);
+modes 2/3 not implemented, per the frozen §10.4 rule.**
 
 ## Frozen artifact identity (what Stage 1/2 consumes)
 
@@ -137,9 +97,7 @@ the mapping is one-to-one.
    non-zero-variance ≥25%, win+lower ≥10%).
 4. B1 control fitting; `SYSTEM_DIRECT` freeze (a Stage-1 prompt
    blocker, not part of the worker-side freeze); D4 consumed-prefix
-   decision; the formal construction difficulty-band decision —
-   especially the `math_code` index band (the D16-era ≤8 mitigation)
-   — before the construction screen (128_s).
+   decision.
 5. Stage-2 demonstration treatment (few-shot primary vs schema-only;
    untrained few-shot baseline mandatory; one-seed no-demo pilot
    preferred) — registered decision, 123_s §9.
