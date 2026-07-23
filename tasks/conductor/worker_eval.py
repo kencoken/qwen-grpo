@@ -44,7 +44,7 @@ from .agreement import ENDPOINT_FOR_OP
 from .profiles import DEFAULT_PROFILE, ProfileError, canonical_json, \
     profile_version
 from .prompts import PromptBundle, resolve_prompts
-from .render import ARTIFACT_FINAL_LINE, TASK_LAST_FINAL_LINE
+from .render import ARTIFACT_FINAL_LINE
 from .resources import InstanceRegistry
 from .runtime import CallRecord, Runtime, runtime_profile_fingerprint
 from .tools import Binding, ToolRejection, binding_sha256
@@ -109,9 +109,9 @@ def singleton_call(runtime: Runtime, endpoint_name: str,
 
 # --- request-contract binding (81_f §5.2) -----------------------------------
 
-# The worker request contracts render.build_worker_request implements
-# (92_s §2.2). A key resolves to exact content AND configures the
-# builder; a metadata-only key is forbidden (84_s finding 3).
+# The v0 worker request contract: render.build_worker_request's frozen block
+# order and final instruction. A key resolves to exact content; a label
+# alone ("task_last") is not provenance.
 REQUEST_CONTRACTS: dict[str, dict[str, Any]] = {
     "worker-blocks-v0": {
         "builder": "render.build_worker_request",
@@ -119,13 +119,6 @@ REQUEST_CONTRACTS: dict[str, dict[str, Any]] = {
         "block_order": ["problem", "task", "resource", "previous_results",
                         "final_line"],
         "final_line": ARTIFACT_FINAL_LINE,
-    },
-    "worker-blocks-task-last-v1": {
-        "builder": "render.build_worker_request",
-        "builder_version": "specs-v0.8",
-        "block_order": ["problem", "resource", "previous_results", "task",
-                        "final_line"],
-        "final_line": TASK_LAST_FINAL_LINE,
     },
 }
 
@@ -188,8 +181,7 @@ def endpoint_schedule(latent: Mapping[str, Any]) -> dict[str, str]:
 
 
 def node_cases_for_latent(latent: Mapping[str, Any], renderers: list[str],
-                          visibility: str,
-                          request_contract_key: str = "worker-blocks-v0"
+                          visibility: str
                           ) -> tuple[list[WorkerEvalCase], list[NodeLabel]]:
     """Isolated cases for every scheduled reference node of one latent
     (81_f §4.3): ordinary per-step requests, gold values for every
@@ -220,7 +212,7 @@ def node_cases_for_latent(latent: Mapping[str, Any], renderers: list[str],
                         if step["access"] == "all" else None)
             user_message, binding = executor.build_worker_call(
                 inst["public_prompt"], step["subtask"], step["resource"],
-                inst_registry, previous, contract=request_contract_key)
+                inst_registry, previous)
             case_id = f"{inst['render_instance_id']}:{node_id}"
             cases.append(WorkerEvalCase(
                 case_id=case_id,
@@ -289,8 +281,7 @@ def build_node_cases(population: Mapping[str, Any],
             latent = program.generate_latent(
                 cell, population["namespace"], index, gen_profile).latent
             latent_cases, latent_labels = node_cases_for_latent(
-                latent, renderers, population["visibility"],
-                request_contract_key)
+                latent, renderers, population["visibility"])
             cases.extend(latent_cases)
             labels.extend(latent_labels)
     ids = [case.case_id for case in cases]
@@ -393,8 +384,7 @@ def build_workflow_plan(population: Mapping[str, Any],
                 items.append(executor.WorkflowItem(
                     item_id=case_id, action=action,
                     public_prompt=inst["public_prompt"],
-                    registry=registry,
-                    request_contract=request_contract_key))
+                    registry=registry))
                 labels.append(WorkflowLabel(
                     case_id=case_id,
                     latent_program_id=latent["latent_program_id"],
@@ -710,7 +700,6 @@ def build_manifest(runtime: Runtime, prompts: PromptBundle, *,
                    expected_scores: int = 0,
                    evaluation_mode: str = "isolated",
                    generation_policy: str = GENERATION_POLICY_SINGLETON,
-                   physical_layout: Mapping[str, Any] | None = None,
                    frozen_candidate: bool = False,
                    seed_policy: str = "greedy-no-sampling",
                    git_info: Mapping[str, Any] | None = None,
@@ -756,13 +745,6 @@ def build_manifest(runtime: Runtime, prompts: PromptBundle, *,
     if evaluation_mode not in ("isolated", "composed"):
         raise ProfileError(f"unknown evaluation mode {evaluation_mode!r}")
     profile = runtime.profile
-    # 92_s §6.8: the profile's declared prompt label and the resolved
-    # bundle are one identity; a mismatch fails before execution.
-    if prompts.revision != profile["prompts"]["d16_revision"]:
-        raise ProfileError(
-            f"profile declares d16_revision "
-            f"{profile['prompts']['d16_revision']!r} but the bundle is "
-            f"{prompts.revision!r}; label and bundle must agree")
     if runtime_profile_fingerprint(profile) \
             != runtime.runtime_profile_fingerprint:
         raise ProfileError(
@@ -808,9 +790,6 @@ def build_manifest(runtime: Runtime, prompts: PromptBundle, *,
         "generation_policy": generation_policy,
         "expected_rows": {"calls": expected_calls,
                           "scores": expected_scores},
-        # 92_s §3: planned physical-worker layout for candidate runs.
-        **({"physical_layout": copy.deepcopy(dict(physical_layout))}
-           if physical_layout is not None else {}),
     }
 
 
@@ -1115,7 +1094,6 @@ class RunWriter:
             "x", encoding="utf-8")
         self._written = {"calls": 0, "scores": 0}
         self._summary: dict[str, Any] | None = None
-        self._extras: dict[str, dict[str, Any]] = {}
         self.manifest_sha256: str | None = None
 
     @property
@@ -1145,16 +1123,6 @@ class RunWriter:
             raise InfrastructureError("run is finalized")
         self._summary = copy.deepcopy(dict(summary))
 
-    def write_extra(self, name: str, payload: Mapping[str, Any]) -> None:
-        """Additional payload file (92_s §3: execution measurements),
-        written at finalize and hashed with the other payloads."""
-        if self._manifest["status"] != "running":
-            raise InfrastructureError("run is finalized")
-        if name in ("manifest.json", "calls.jsonl", "scores.jsonl",
-                    "summary.json"):
-            raise InfrastructureError(f"reserved payload name {name!r}")
-        self._extras[name] = copy.deepcopy(dict(payload))
-
     def _finalize(self, status: str) -> None:
         if self._manifest["status"] != "running":
             return
@@ -1163,10 +1131,6 @@ class RunWriter:
         if self._summary is not None:
             (self.run_dir / "summary.json").write_text(
                 json.dumps(self._summary, indent=1, sort_keys=True) + "\n",
-                encoding="utf-8")
-        for name, payload in sorted(self._extras.items()):
-            (self.run_dir / name).write_text(
-                json.dumps(payload, indent=1, sort_keys=True) + "\n",
                 encoding="utf-8")
         self._manifest["written_rows"] = dict(self._written)
         self._manifest["payload_sha256"] = {
@@ -1211,73 +1175,6 @@ class RunWriter:
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line)
             for line in path.read_text(encoding="utf-8").splitlines()]
-
-
-def _validate_measurements(run_dir: Path,
-                           manifest: Mapping[str, Any]) -> None:
-    """92_s §3: candidate runs carry a planned physical layout and
-    loader-validated execution measurements; selection consumes only the
-    validated record, never a console value."""
-    path = run_dir / "measurements.json"
-    if not path.exists():
-        raise InfrastructureError(
-            "candidate run declares a physical layout but has no "
-            "measurements.json")
-    measurements = json.loads(path.read_text(encoding="utf-8"))
-    for field in ("wall_seconds", "idle_reserved_bytes",
-                  "peak_reserved_bytes"):
-        value = measurements.get(field)
-        if not isinstance(value, (int, float)) or value < 0 \
-                or value != value:
-            raise InfrastructureError(
-                f"measurement {field!r} is missing or invalid: {value!r}")
-    per_endpoint = measurements.get("per_endpoint")
-    expected_endpoints = set(ENDPOINT_NAMES.values())
-    if not isinstance(per_endpoint, dict) \
-            or set(per_endpoint) != expected_endpoints:
-        raise InfrastructureError(
-            f"per-endpoint telemetry must cover exactly "
-            f"{sorted(expected_endpoints)}")
-    for endpoint, entry in per_endpoint.items():
-        calls, seconds = entry.get("calls"), entry.get("seconds")
-        if not isinstance(calls, int) or calls < 1 \
-                or not isinstance(seconds, (int, float)) or seconds < 0 \
-                or seconds != seconds:
-            raise InfrastructureError(
-                f"per-endpoint telemetry for {endpoint!r} is invalid: "
-                f"{entry!r}")
-    layout_quant = manifest["physical_layout"].get("quantization")
-    if layout_quant != manifest["runtime_profile"]["nf4"]:
-        raise InfrastructureError(
-            "physical layout quantization does not match the profile")
-    if measurements.get("device") \
-            != manifest["physical_layout"].get("device"):
-        raise InfrastructureError(
-            "measured device does not match the planned layout device")
-    planned = manifest["physical_layout"]["checkpoints"]
-    actual = measurements.get("checkpoints")
-    if not isinstance(actual, list):
-        raise InfrastructureError("measurements lack a checkpoint report")
-    planned_keys = {(c["model_id"], c["revision"]): c for c in planned}
-    actual_keys = {(c["model_id"], c["revision"]): c for c in actual}
-    if set(planned_keys) != set(actual_keys):
-        raise InfrastructureError(
-            f"actual checkpoints {sorted(actual_keys)} differ from the "
-            f"planned layout {sorted(planned_keys)}")
-    for key, plan in planned_keys.items():
-        fact = actual_keys[key]
-        if sorted(fact.get("endpoints", [])) != sorted(plan["endpoints"]):
-            raise InfrastructureError(
-                f"checkpoint {key}: endpoint mapping differs from plan")
-        if not fact.get("loaded"):
-            raise InfrastructureError(
-                f"checkpoint {key} was never loaded; the measurement "
-                "does not describe the declared layout")
-        if fact.get("measured_parameters") != plan["declared_parameters"]:
-            raise InfrastructureError(
-                f"checkpoint {key}: measured parameters "
-                f"{fact.get('measured_parameters')!r} != declared "
-                f"{plan['declared_parameters']!r}")
 
 
 def load_run(run_dir: str | Path,
@@ -1365,8 +1262,6 @@ def load_run(run_dir: str | Path,
             raise InfrastructureError(
                 f"{row['case_id']}: uncalled row carries generation fields")
 
-    if "physical_layout" in manifest:
-        _validate_measurements(run_dir, manifest)
     mode = manifest["evaluation_mode"]
     population = manifest["population"]
     if mode == "isolated":
@@ -1473,16 +1368,11 @@ def load_run(run_dir: str | Path,
 # always reported; dirty trees are refused outright.
 _ALWAYS_ALLOWED_DIFFS = ("run_id", "purpose", "candidate_label", "git",
                          "process", "payload_sha256")
-def _prompt_scope(endpoint: str) -> tuple[str, ...]:
-    """Manifest paths a single-endpoint prompt contrast may change (92_s
-    §6.8): the declared endpoint's prompt bytes and what follows from
-    them. Other endpoints' prompt hashes must remain identical."""
-    return (f"system_prompts.text.{endpoint}",
-            f"system_prompts.sha256.{endpoint}",
-            "system_prompts.revision", "system_prompts.status",
-            f"endpoint_fingerprints.{endpoint}",
-            "worker_visible_fingerprint", "runtime_profile_fingerprint",
-            "runtime_profile.prompts.d16_revision")
+_PROMPT_ALLOWED_DIFFS = ("system_prompts", "worker_visible_fingerprint",
+                         "endpoint_fingerprints")
+# 84_s finding 3: the declared dimension must differ in *actual bytes*,
+# not in a relabelled revision or a template-only side effect.
+_PROMPT_MUST_DIFFER = ("system_prompts.text", "system_prompts.sha256")
 
 
 def _model_scope(endpoint: str) -> tuple[str, ...]:
@@ -1498,10 +1388,7 @@ def _model_scope(endpoint: str) -> tuple[str, ...]:
             f"tokenizer_facts.{endpoint}",
             f"endpoint_fingerprints.{endpoint}",
             "runtime_profile_fingerprint",
-            "worker_visible_fingerprint",
-            # 94_s finding 7: the planned physical layout follows from
-            # the declared endpoint's checkpoint.
-            "physical_layout")
+            "worker_visible_fingerprint")
 
 
 def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
@@ -1516,8 +1403,7 @@ def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
 def compare_worker_eval_runs(left: Mapping[str, Any],
                              right: Mapping[str, Any],
                              allowed_difference: str,
-                             model_endpoint: str | None = None,
-                             prompt_endpoint: str | None = None
+                             model_endpoint: str | None = None
                              ) -> dict[str, Any]:
     """Compare two loaded runs that differ in exactly one declared way.
     A model comparison names its subject endpoint explicitly (86_s
@@ -1526,19 +1412,15 @@ def compare_worker_eval_runs(left: Mapping[str, Any],
     identical population/case support and singleton generation; prints
     the exact differing manifest fields and refuses unexpected ones."""
     if allowed_difference == "request_contract":
-        # Re-enabled per 92_s §6.8: the key now configures the builder
-        # (render.build_worker_request block order), so a contract
-        # difference is real request bytes — proven per case below.
-        if model_endpoint is not None or prompt_endpoint is not None:
-            raise ProfileError(
-                "endpoint arguments do not apply to request_contract "
-                "comparisons (the contract is shared by every worker)")
-        dimension_allowed: tuple[str, ...] = ("request_contract",)
-        must_differ: tuple[str, ...] = ("request_contract.digest",)
-    elif allowed_difference == "model":
-        if prompt_endpoint is not None:
-            raise ProfileError(
-                "prompt_endpoint applies only to prompt comparisons")
+        # 84_s finding 3: the resolved contract metadata does not yet
+        # configure build_worker_call, so a second registry key would
+        # create a no-op arm with real-looking provenance. Re-enable
+        # only when a request-scope option actually parameterizes the
+        # builder.
+        raise ProfileError(
+            "request_contract comparison is disabled until the contract "
+            "key configures the request builder")
+    if allowed_difference == "model":
         if model_endpoint not in set(ENDPOINT_NAMES.values()):
             raise ProfileError(
                 "a model comparison names its endpoint explicitly: "
@@ -1551,19 +1433,11 @@ def compare_worker_eval_runs(left: Mapping[str, Any],
         if model_endpoint is not None:
             raise ProfileError(
                 "model_endpoint applies only to model comparisons")
-        if prompt_endpoint not in set(ENDPOINT_NAMES.values()):
-            raise ProfileError(
-                "a prompt comparison names its endpoint explicitly: "
-                f"prompt_endpoint must be one of "
-                f"{sorted(set(ENDPOINT_NAMES.values()))}, got "
-                f"{prompt_endpoint!r}")
-        dimension_allowed = _prompt_scope(prompt_endpoint)
-        must_differ = (f"system_prompts.text.{prompt_endpoint}",
-                       f"system_prompts.sha256.{prompt_endpoint}")
+        dimension_allowed = _PROMPT_ALLOWED_DIFFS
+        must_differ = _PROMPT_MUST_DIFFER
     else:
         raise ProfileError(
-            f"allowed_difference must be one of "
-            f"['model', 'prompt', 'request_contract'], "
+            f"allowed_difference must be one of ['model', 'prompt'], "
             f"got {allowed_difference!r}")
     for run in (left, right):
         manifest = run["manifest"]
@@ -1614,21 +1488,8 @@ def compare_worker_eval_runs(left: Mapping[str, Any],
             f"declared {allowed_difference!r} difference is not present "
             "in actual bytes: the two runs are identical on that "
             "dimension")
-    if allowed_difference == "request_contract":
-        # 92_s §6.8: prove actual request-byte differences, not just a
-        # differing digest in metadata.
-        right_by_key = {(row["case_id"], row["position"]): row
-                        for row in right["calls"]}
-        if not any(row["user_message"]
-                   != right_by_key[(row["case_id"], row["position"])][
-                       "user_message"]
-                   for row in left["calls"]):
-            raise InfrastructureError(
-                "request_contract arms posed byte-identical requests; "
-                "the declared contract difference is a no-op")
     return {"allowed_difference": allowed_difference,
             "model_endpoint": model_endpoint,
-            "prompt_endpoint": prompt_endpoint,
             "differing_fields": differing,
             "case_support": len(left_support)}
 
@@ -1665,9 +1526,10 @@ def confirm_repeat_run(left: Mapping[str, Any],
     result enters the final comparison/freeze.
 
     The population size is fixed at the full §7.4 design (86_s finding
-    2): the scientific entry point takes no override. The registered
-    worker-development namespace (D1 erratum, 88_f) is the CLI's
-    authoritative default."""
+    2): the scientific entry point takes no override. When the D1
+    erratum registers the dedicated worker-development namespace, bind
+    it here as the authoritative default rather than an operator
+    assertion."""
     return _confirm_repeat_run(left, right, expected_namespace,
                                FULL_RUN_PER_CELL)
 

@@ -37,10 +37,9 @@ from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
 from .types import (
-    CELL_NODES, RENDERER_IDS, parse_latent_program_id,
+    CELL_NODES, ENDPOINT_IDS, RENDERER_IDS, parse_latent_program_id,
     parse_render_instance_id,
 )
-from .workerpool import STAGE0_POOL_FINGERPRINT, WORKER_IDS
 
 # Raw, unvalidated input shape.
 RawSurface = Mapping[Any, Mapping[str, Mapping[str, float]]]
@@ -52,11 +51,7 @@ SELECTION_NAMESPACE = "construction"
 # produce identical payoff tables intentionally share a digest. Pair it
 # with the deferred population and execution-manifest digests when those
 # exist (see GATE_PROVENANCE_REQUIREMENT).
-# "surfdig2" = the 106_s four-worker candidate domain; a persisted
-# three-worker ("surfdig1") bundle can neither validate (incomplete
-# 4^S support) nor match a digest, so old and new pools fail closed
-# against each other rather than mixing.
-SURFACE_DIGEST_SCHEMA = "surfdig2"
+SURFACE_DIGEST_SCHEMA = "surfdig1"
 
 
 class PayoffSurfaceError(ValueError):
@@ -65,26 +60,22 @@ class PayoffSurfaceError(ValueError):
 
 
 def enumerate_assignments(num_nodes: int) -> list[tuple[int, ...]]:
-    """The 4^S worker-assignment set, lexicographic order (106_s §6.1)."""
+    """The 3^S assignment set, lexicographic order."""
     if num_nodes < 1:
         raise PayoffSurfaceError("a cell has at least one node")
-    return list(itertools.product(WORKER_IDS, repeat=num_nodes))
+    return list(itertools.product(ENDPOINT_IDS, repeat=num_nodes))
 
 
 TWO_CALL_ORIENTATIONS = ("lookup_first", "code_first")  # frozen tie order
 
 
 def enumerate_two_call_workflows() -> list[tuple[str, tuple[int, int]]]:
-    """The two-call contraction family (D12), regenerated mechanically
-    from the four-worker registry (106_s §6.3): orientation × worker
-    pair in the frozen tie order (lookup-first < code-first, then
-    lexicographic worker tuple). Cardinality is asserted here — 32 is
-    an acceptance expectation, never a second source of truth."""
-    workflows = [(orientation, pair)
-                 for orientation in TWO_CALL_ORIENTATIONS
-                 for pair in itertools.product(WORKER_IDS, repeat=2)]
-    assert len(workflows) == len(TWO_CALL_ORIENTATIONS) * len(WORKER_IDS) ** 2
-    return workflows
+    """The 18-workflow contraction family (D12): orientation × endpoint
+    pair, in the frozen tie order (lookup-first < code-first, then
+    lexicographic endpoint tuple)."""
+    return [(orientation, pair)
+            for orientation in TWO_CALL_ORIENTATIONS
+            for pair in itertools.product(ENDPOINT_IDS, repeat=2)]
 
 
 _SURFACE_KINDS = ("assignment", "one_call", "two_call")
@@ -98,7 +89,7 @@ def _expected_candidates(kind: str, cell_id: str) -> list[Any]:
     if kind == "assignment":
         return enumerate_assignments(len(CELL_NODES[cell_id]))
     if kind == "one_call":
-        return list(WORKER_IDS)
+        return list(ENDPOINT_IDS)
     if kind == "two_call":
         if cell_id not in TWO_CALL_CELLS:
             raise PayoffSurfaceError(
@@ -149,21 +140,21 @@ def _check_candidate(kind: str, candidate: Any, cell_id: str) -> None:
         if len(candidate) != num_nodes:
             raise PayoffSurfaceError(
                 f"assignment {candidate!r} must have {num_nodes} entries")
-        for worker in candidate:
-            if type(worker) is not int or worker not in WORKER_IDS:
+        for endpoint in candidate:
+            if type(endpoint) is not int or endpoint not in ENDPOINT_IDS:
                 raise PayoffSurfaceError(
                     f"assignment {candidate!r} has a non-integer or "
-                    f"out-of-range worker id")
+                    f"out-of-range endpoint id")
     elif kind == "one_call":
-        if type(candidate) is not int or candidate not in WORKER_IDS:
+        if type(candidate) is not int or candidate not in ENDPOINT_IDS:
             raise PayoffSurfaceError(
-                f"one-call candidate {candidate!r} must be an int worker "
+                f"one-call candidate {candidate!r} must be an int endpoint "
                 f"id (bools and floats alias integer keys)")
     elif kind == "two_call":
         ok = (isinstance(candidate, tuple) and len(candidate) == 2
               and candidate[0] in TWO_CALL_ORIENTATIONS
               and isinstance(candidate[1], tuple) and len(candidate[1]) == 2
-              and all(type(e) is int and e in WORKER_IDS
+              and all(type(e) is int and e in ENDPOINT_IDS
                       for e in candidate[1]))
         if not ok:
             raise PayoffSurfaceError(
@@ -244,17 +235,8 @@ class ValidatedSurface:
     observations: Mapping[str, tuple[str, ...]]  # cluster -> observation ids
     data: Mapping[Any, Mapping[str, Mapping[str, float]]]
     namespace: str = ""
-    # 108_s finding 4: candidate ids are meaningless without the pool
-    # that defines them; a surface generated under a different
-    # four-worker pool (same cardinality, different models/prompts)
-    # must fail closed rather than be silently reinterpreted.
-    worker_pool: str = STAGE0_POOL_FINGERPRINT
 
     def __post_init__(self) -> None:
-        if self.worker_pool != STAGE0_POOL_FINGERPRINT:
-            raise PayoffSurfaceError(
-                f"surface is bound to worker pool {self.worker_pool!r}; "
-                f"this registry is {STAGE0_POOL_FINGERPRINT!r}")
         # Type before membership: an unhashable cell_id (a list, say) would
         # raise a raw TypeError from the `in` test.
         if not isinstance(self.kind, str) or self.kind not in _SURFACE_KINDS:
@@ -399,7 +381,6 @@ class ValidatedSurface:
         return {
             "kind": self.kind,
             "cell_id": self.cell_id,
-            "worker_pool": self.worker_pool,
             "entries": [
                 {"candidate": _candidate_to_json(self.kind, candidate),
                  "outcomes": {cluster: dict(self.data[candidate][cluster])
@@ -419,17 +400,11 @@ class ValidatedSurface:
         """
         if not isinstance(obj, Mapping):
             raise PayoffSurfaceError("surface JSON must be an object")
-        if set(obj) != {"kind", "cell_id", "worker_pool", "entries"}:
+        if set(obj) != {"kind", "cell_id", "entries"}:
             raise PayoffSurfaceError(
-                f"surface JSON keys must be exactly kind/cell_id/"
-                f"worker_pool/entries, got {sorted(obj)}")
+                f"surface JSON keys must be exactly kind/cell_id/entries, "
+                f"got {sorted(obj)}")
         kind, cell_id = obj["kind"], obj["cell_id"]
-        if obj["worker_pool"] != STAGE0_POOL_FINGERPRINT:
-            raise PayoffSurfaceError(
-                f"persisted surface is bound to worker pool "
-                f"{obj['worker_pool']!r}; this registry is "
-                f"{STAGE0_POOL_FINGERPRINT!r} — a surface from another "
-                f"pool must be regenerated, never reinterpreted")
         # Type before membership: an unhashable value would raise a raw
         # TypeError from the `in` test.
         if not isinstance(kind, str) or kind not in _SURFACE_KINDS:
@@ -545,7 +520,7 @@ def _validate(raw: RawSurface, kind: str, cell_id: str,
 
 def validate_payoff_surface(raw: RawSurface, cell_id: str
                             ) -> ValidatedSurface:
-    """Validate a 4^S assignment surface for a named cell. `cell_id` is
+    """Validate a 3^S assignment surface for a named cell. `cell_id` is
     required: inferring S from the data cannot catch a surface built for
     the wrong cell."""
     if not isinstance(cell_id, str) or cell_id not in CELL_NODES:
@@ -561,13 +536,12 @@ def validate_one_call_surface(raw: RawSurface, cell_id: str
     enforces the shared population."""
     if not isinstance(cell_id, str) or cell_id not in CELL_NODES:
         raise PayoffSurfaceError(f"unknown cell_id {cell_id!r}")
-    return _validate(raw, "one_call", cell_id, list(WORKER_IDS))
+    return _validate(raw, "one_call", cell_id, list(ENDPOINT_IDS))
 
 
 def validate_two_call_surface(raw: RawSurface, cell_id: str
                               ) -> ValidatedSurface:
-    """The registry-derived two-call contraction family (D12; 106_s
-    §6.3) — fork/join only."""
+    """The 18-workflow contraction family (D12) — fork/join only."""
     if not isinstance(cell_id, str) or cell_id not in CELL_NODES:
         raise PayoffSurfaceError(f"unknown cell_id {cell_id!r}")
     return _validate(raw, "two_call", cell_id,
@@ -613,7 +587,7 @@ def _argmax_in_tie_order(surface: ValidatedSurface,
 def select_deployable(surface: ValidatedSurface) -> tuple[int, ...]:
     """Frozen executable selection rule: argmax of cluster-weighted terminal
     accuracy over the full enumeration; ties → lexicographically smallest
-    worker-id tuple. Construction data only."""
+    endpoint-index tuple. Construction data only."""
     vs = _require_surface(surface, "assignment")
     _require_selection_phase(vs)
     return _argmax_in_tie_order(vs, vs.candidates)
@@ -621,39 +595,38 @@ def select_deployable(surface: ValidatedSurface) -> tuple[int, ...]:
 
 def node_runner_up(surface: ValidatedSurface, deployable: tuple[int, ...],
                    node_index: int) -> tuple[int, ...]:
-    """Best alternative worker at one node, all others fixed at the
-    deployable assignment; ties → lowest worker id (106_s §6.3)."""
+    """Best alternative endpoint at one node, all others fixed at the
+    deployable assignment; ties → lowest endpoint index."""
     vs = _require_surface(surface, "assignment")
     _require_selection_phase(vs)
     _check_candidate("assignment", deployable, vs.cell_id)
     if type(node_index) is not int or not 0 <= node_index < vs.num_nodes:
         raise PayoffSurfaceError(f"node_index {node_index!r} out of range")
     alternatives = [
-        deployable[:node_index] + (worker,) + deployable[node_index + 1:]
-        for worker in WORKER_IDS if worker != deployable[node_index]]
+        deployable[:node_index] + (endpoint,) + deployable[node_index + 1:]
+        for endpoint in ENDPOINT_IDS if endpoint != deployable[node_index]]
     return _argmax_in_tie_order(vs, alternatives)
 
 
 def best_fixed(surface: ValidatedSurface) -> tuple[int, ...]:
-    """§1.8 control: best of the constant assignments `(0,…,0)` through
-    `(3,…,3)`, same objective and tie rule (context-partitioning
-    control, not selection)."""
+    """§1.8 control: best of the three constant assignments, same objective
+    and tie rule (context-partitioning control, not selection)."""
     vs = _require_surface(surface, "assignment")
     _require_selection_phase(vs)
-    constants = [(w,) * vs.num_nodes for w in WORKER_IDS]
+    constants = [(e,) * vs.num_nodes for e in ENDPOINT_IDS]
     return _argmax_in_tie_order(vs, constants)
 
 
 def uniform_random_accuracy(surface: ValidatedSurface) -> float:
     """§1.8 `random` control: the exact uniform mean over the enumerated
-    4^S payoff surface (analytic, never Monte Carlo). Descriptive, so it is
+    3^S payoff surface (analytic, never Monte Carlo). Descriptive, so it is
     computable on any split."""
     vs = _require_surface(surface, "assignment")
     return sum(vs.accuracy(c) for c in vs.candidates) / len(vs.candidates)
 
 
 def select_best_one_call(surface: ValidatedSurface) -> int:
-    """Argmax over the four workers; tie → lowest worker id (§1.8)."""
+    """Argmax over the 3 endpoints; tie → lowest index (§1.8)."""
     vs = _require_surface(surface, "one_call")
     _require_selection_phase(vs)
     return _argmax_in_tie_order(vs, vs.candidates)
@@ -661,9 +634,8 @@ def select_best_one_call(surface: ValidatedSurface) -> int:
 
 def select_best_two_call(surface: ValidatedSurface
                          ) -> tuple[str, tuple[int, int]]:
-    """Argmax over the registry-derived two-call family; tie → frozen
-    order (lookup-first < code-first, then lexicographic worker
-    tuple)."""
+    """Argmax over the 18-workflow family; tie → frozen order
+    (lookup-first < code-first, then lexicographic endpoint tuple)."""
     vs = _require_surface(surface, "two_call")
     _require_selection_phase(vs)
     return _argmax_in_tie_order(vs, vs.candidates)
@@ -693,14 +665,8 @@ class FrozenSelections:
     source_surface_digest: str
     best_one_call: int | None = None
     best_two_call: tuple[str, tuple[int, int]] | None = None
-    worker_pool: str = STAGE0_POOL_FINGERPRINT
 
     def __post_init__(self) -> None:
-        if self.worker_pool != STAGE0_POOL_FINGERPRINT:
-            raise PayoffSurfaceError(
-                f"selections are bound to worker pool "
-                f"{self.worker_pool!r}; this registry is "
-                f"{STAGE0_POOL_FINGERPRINT!r}")
         if not isinstance(self.cell_id, str) \
                 or self.cell_id not in CELL_NODES:
             raise PayoffSurfaceError(f"unknown cell_id {self.cell_id!r}")
@@ -795,7 +761,6 @@ class FrozenSelections:
             "best_two_call": (None if self.best_two_call is None else
                               [self.best_two_call[0],
                                list(self.best_two_call[1])]),
-            "worker_pool": self.worker_pool,
         }
 
     @classmethod
@@ -808,7 +773,7 @@ class FrozenSelections:
         required = {"cell_id", "namespace", "deployable",
                     "best_fixed_assignment", "node_runner_ups",
                     "construction_random_accuracy", "source_surface_digest",
-                    "best_one_call", "best_two_call", "worker_pool"}
+                    "best_one_call", "best_two_call"}
         if set(obj) != required:
             raise PayoffSurfaceError(
                 f"selections JSON keys must be exactly {sorted(required)}, "
@@ -845,8 +810,7 @@ class FrozenSelections:
             node_runner_ups=runner_ups,
             construction_random_accuracy=obj["construction_random_accuracy"],
             source_surface_digest=obj["source_surface_digest"],
-            best_one_call=obj["best_one_call"], best_two_call=two_call,
-            worker_pool=obj["worker_pool"])
+            best_one_call=obj["best_one_call"], best_two_call=two_call)
 
 
 @dataclass(frozen=True)

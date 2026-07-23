@@ -38,20 +38,6 @@ ARTIFACT_FINAL_LINE = ("Respond with exactly one <artifact>...</artifact> "
                        "containing a single expression.")
 DIRECT_FINAL_LINE = "Answer with a single integer on the final line."
 
-# 92_s §2.2: the task-last contract's final line, exact bytes. A bundled
-# treatment — block order AND instruction change together; results are
-# never described as a pure recency or scope effect.
-TASK_LAST_FINAL_LINE = (
-    "Translate only the assigned Task. The Problem is background; do not "
-    "complete or combine other operations from it. Respond with exactly "
-    "one <artifact>...</artifact> containing a single expression.")
-
-# Request-contract keys the builder implements (92_s §6.4: the key
-# configures the actual renderer; a metadata-only key is forbidden).
-CONTRACT_CURRENT = "worker-blocks-v0"
-CONTRACT_TASK_LAST = "worker-blocks-task-last-v1"
-WORKER_REQUEST_CONTRACTS = (CONTRACT_CURRENT, CONTRACT_TASK_LAST)
-
 
 def render_public_prompt(cell_id: str, renderer_id: str,
                          params: PublicParams) -> str:
@@ -335,19 +321,6 @@ def build_observation(instance: dict[str, Any],
                                visible_payload_texts=payloads)
 
 
-def format_ood_observation(public_prompt: str, manifest: list[str],
-                           steps: list[dict[str, Any]]) -> str:
-    """Canonical PRIVATE-condition observation layout for hand-written
-    out-of-domain content (the §10.2 policy demonstrations, 121_s
-    finding 1). Same skeleton as `build_observation`, but for synthetic
-    workflows that are not generator instances: there is no identity to
-    check and disclosure is fixed private (no payload block), so this
-    wrapper exposes the layout only. Generator instances always go
-    through `build_observation`."""
-    return _format_observation(public_prompt, manifest, steps,
-                               visible_payload_texts=None)
-
-
 def _format_observation(public_prompt: str, manifest: list[str],
                         steps: list[dict[str, Any]],
                         visible_payload_texts: list[str] | None = None) -> str:
@@ -373,27 +346,18 @@ def build_worker_request(public_prompt: str, subtask: str | None,
                          resource_text: str | None = None,
                          resources_texts: list[str] | None = None,
                          previous_results: dict[int, int] | None = None,
-                         direct: bool = False,
-                         contract: str = CONTRACT_CURRENT) -> str:
+                         direct: bool = False) -> str:
     """Canonical user-message bytes: blocks in fixed order, each present or
     omitted whole, one blank line between blocks, LF, no trailing whitespace.
 
     `resources_texts` is the harness-only plural block (B3/B5, §1.11).
     `direct=True` swaps the artifact final line for the answer-line protocol.
-    `contract` selects the block order (92_s §2.2): `current` is
-    Problem→Task→Resource(s)→Previous→final; `task_last` is
-    Problem→Resource(s)→Previous→Task→its own final line.
     """
     if resource_text is not None and resources_texts is not None:
         raise ValueError("Resource and Resources blocks are exclusive")
-    if contract not in WORKER_REQUEST_CONTRACTS:
-        raise ValueError(f"unknown request contract {contract!r}")
-    if direct and contract != CONTRACT_CURRENT:
-        raise ValueError("direct arms use the current contract only")
-    task_block = None if subtask is None else f"Task:\n{subtask}"
     blocks = [f"Problem:\n{public_prompt}"]
-    if contract == CONTRACT_CURRENT and task_block is not None:
-        blocks.append(task_block)  # B1/B3 direct arms carry no Task block
+    if subtask is not None:  # B1/B3 direct arms carry no Task block (§1.11)
+        blocks.append(f"Task:\n{subtask}")
     if resource_text is not None:
         blocks.append(f"Resource:\n{resource_text}")
     if resources_texts is not None:
@@ -402,11 +366,5 @@ def build_worker_request(public_prompt: str, subtask: str | None,
         result_lines = "\n".join(
             f"step_{k} = {v}" for k, v in sorted(previous_results.items()))
         blocks.append(f"Previous results:\n{result_lines}")
-    if contract == CONTRACT_TASK_LAST:
-        if task_block is None:
-            raise ValueError("task_last contract requires a Task block")
-        blocks.append(task_block)
-        blocks.append(TASK_LAST_FINAL_LINE)
-    else:
-        blocks.append(DIRECT_FINAL_LINE if direct else ARTIFACT_FINAL_LINE)
+    blocks.append(DIRECT_FINAL_LINE if direct else ARTIFACT_FINAL_LINE)
     return "\n\n".join(blocks)

@@ -33,7 +33,6 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .profiles import ProfileError, canonical_json
-from .prompts import D16_REVISION
 from .types import ENDPOINT_NAMES, InfrastructureError
 
 # Grammar/tool versioning (§1.10 "artifact grammar, tool version"): the
@@ -77,15 +76,9 @@ DEFAULT_RUNTIME_PROFILE: dict[str, Any] = {
             "max_new_tokens": 256,
             "microbatch": 16,
         },
-        # Math endpoint runs the base Instruct model, NOT
-        # Qwen2.5-Math-1.5B-Instruct as spec §1.6 names: the Math-Instruct
-        # model's solve-and-box alignment never emits the artifact under
-        # any prompt (evidence: plans/conductor/64_f probes 1-2; decision
-        # provisionally signed off 2026-07-21, recorded in 70_f; spec
-        # erratum deferred to the D16/third-party review).
         "math": {
-            "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
-            "revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+            "model_id": "Qwen/Qwen2.5-Math-1.5B-Instruct",
+            "revision": "aafeb0fc6f22cbf0eaeed126eff8be45b0360a35",
             "max_new_tokens": 256,
             "microbatch": 16,
         },
@@ -108,11 +101,6 @@ DEFAULT_RUNTIME_PROFILE: dict[str, Any] = {
         "stopping": "eos",
     },
     "tools": dict(TOOL_VERSIONS),
-    # D16 prompt revision — execution provenance named by the 0A
-    # close-out; worker-visible (the system prompt is in every rendered
-    # request), so a prompt revision retires cached completions even
-    # beyond the byte change in the requests themselves.
-    "prompts": {"d16_revision": D16_REVISION},
     "resource_policy": RESOURCE_POLICY,
     "visibility_condition": "private",
     # Conductor-side fields (never worker-visible):
@@ -164,9 +152,6 @@ def validate_runtime_profile(profile: Mapping[str, Any]) -> None:
             if not isinstance(worker[key], str) or not worker[key]:
                 raise ProfileError(f"worker {name}.{key} must be a non-empty "
                                    "string")
-    if set(profile["prompts"]) != {"d16_revision"} or \
-            not isinstance(profile["prompts"]["d16_revision"], str):
-        raise ProfileError("prompts must hold exactly a string d16_revision")
     if profile["visibility_condition"] not in ("private", "visible"):
         raise ProfileError("visibility_condition must be private|visible")
     if profile["decoding"].get("do_sample") != "false":
@@ -239,13 +224,7 @@ class CallRecord:
     """One worker call's completion + §1.6 backend telemetry. Raw text and
     generation metadata only — never an executed WorkerResult (§1.10).
     `request_text` is the exact rendered chat request as lossless UTF-8
-    text (81_f §5.3 provenance; the bytes are its UTF-8 encoding).
-
-    The two producer-identity fields are set only by the four-worker
-    runtime (113_s F1/F4): the v2 trace writer verifies each row against
-    the record that actually produced the completion, so a record from a
-    different runtime or worker cannot be recorded under this trace's
-    fingerprints. The v1 runtime leaves them None."""
+    text (81_f §5.3 provenance; the bytes are its UTF-8 encoding)."""
     completion: str
     finish_reason: str
     generated_tokens: int
@@ -253,8 +232,6 @@ class CallRecord:
     cache_hit: bool
     request_text: str
     request_sha256: str
-    selected_worker_fp: str | None = None
-    runtime_fingerprint: str | None = None
 
 
 class Runtime:

@@ -70,38 +70,20 @@ class WorkflowItem:
     registry: InstanceRegistry
     overrides: Mapping[int, int] = field(default_factory=dict)
     pseudo_workers: Mapping[int, PseudoWorker] = field(default_factory=dict)
-    # 92_s §6.4: the request contract configures composed rendering too.
-    request_contract: str = render.CONTRACT_CURRENT
 
 
 def _step_failed(record: StepRecord) -> bool:
     return record.result is None or record.result.status != "success"
 
 
-def _endpoint_id(worker_id: int) -> int:
-    """106_s §5: artifact parsing and tool execution are by endpoint
-    family; the worker id resolves through the registry (workers 2 and 3
-    share the Code grammar/tool). An unregistered id here is an
-    infrastructure error — the parser already bounds actions to the
-    pool."""
-    from .workerpool import WORKER_TO_ENDPOINT_ID
-    if worker_id not in WORKER_TO_ENDPOINT_ID:
-        raise InfrastructureError(
-            f"worker id {worker_id} is not in the registered pool")
-    return WORKER_TO_ENDPOINT_ID[worker_id]
-
-
 def build_worker_call(public_prompt: str, subtask: str,
                       resource: str | None, registry: InstanceRegistry,
-                      previous: Mapping[int, int] | None,
-                      contract: str = render.CONTRACT_CURRENT
+                      previous: Mapping[int, int] | None
                       ) -> tuple[str, Binding]:
     """Reference-free (request, binding) construction for one step — the
     single path shared by composed execution and isolated worker
-    evaluation (81_f §6.4), so the two cannot drift. The request
-    contract configures the actual block order here (92_s §6.4).
-    Callers handle resource-resolution failure first; an unknown handle
-    aborts."""
+    evaluation (81_f §6.4), so the two cannot drift. Callers handle
+    resource-resolution failure first; an unknown handle here aborts."""
     resource_text = None
     binding_resources: dict[str, Any] = {}
     if resource is not None:
@@ -113,8 +95,7 @@ def build_worker_call(public_prompt: str, subtask: str,
         binding_resources = {resource: payload}
     request = render.build_worker_request(
         public_prompt, subtask, resource_text=resource_text,
-        previous_results=dict(previous) if previous is not None else None,
-        contract=contract)
+        previous_results=dict(previous) if previous is not None else None)
     return request, Binding(resources=binding_resources,
                             steps=dict(previous) if previous else {})
 
@@ -140,30 +121,6 @@ def execute_workflow_batch(items: list[WorkflowItem],
     semantics are position-sequential by construction, so batching is
     invisible to any single workflow.
     """
-    # 110_s: the v1 trace schema is pool-free, and every worker id —
-    # not only worker 3 — is a new four-worker identity (worker 2 now
-    # means generic-1.5B/rev10/task-last, not the historical
-    # Coder-1.5B/rev9/v0). The amended executor therefore refuses the
-    # legacy TraceWriter entirely, BEFORE any worker call, so neither a
-    # complete nor a partial v1 trace of a new-pool execution can
-    # exist. Existing v1 traces are historical artifacts; the
-    # pool-bound schema lands with the unit-2 runtime. The worker-eval
-    # _ComposedTraceAdapter is a different, retained format (106_s
-    # §9.4 path 1): its rows and run manifests carry candidate
-    # model/prompt/contract identity and are verified by the
-    # worker-eval loader, so it is not gated here.
-    if isinstance(trace, TraceWriter):
-        raise InfrastructureError(
-            "trace schema v1 is pool-free; the four-worker executor "
-            "refuses legacy TraceWriter output (110_s) — the pool-bound "
-            "trace schema lands with the four-worker runtime")
-    # 115_s F2: a trace that owns provenance obligations (the v2
-    # pool-bound writer) preflights the items BEFORE any worker call,
-    # so composing this executor with a runtime callback directly
-    # cannot record a request contract the items do not use.
-    preflight = getattr(trace, "preflight_items", None)
-    if preflight is not None:
-        preflight(items)
     ids = [item.item_id for item in items]
     if len(set(ids)) != len(ids):
         raise InfrastructureError("duplicate item_id in batch")
@@ -201,7 +158,7 @@ def execute_workflow_batch(items: list[WorkflowItem],
                         else None)
             request, binding = build_worker_call(
                 item.public_prompt, step.subtask, step.resource,
-                item.registry, previous, contract=item.request_contract)
+                item.registry, previous)
 
             if position in item.pseudo_workers:
                 result = item.pseudo_workers[position](request)
@@ -234,8 +191,7 @@ def execute_workflow_batch(items: list[WorkflowItem],
                 item = items[call.item_index]
                 step = item.action.steps[call.position - 1]
                 result = contract.run_worker_output(
-                    _endpoint_id(step.worker_id), call_record.completion,
-                    call.binding)
+                    step.worker_id, call_record.completion, call.binding)
                 rec = _finish_step(item, call.position, step, result,
                                    call.request, call_record.completion,
                                    wire_values[call.item_index],
@@ -389,8 +345,6 @@ class TraceWriter:
 
 def _trace_step(trace: TraceWriter | None, item: WorkflowItem,
                 record: StepRecord, call_record: Any | None) -> None:
-    # Unreachable with a live trace until unit 2: the batch entry point
-    # refuses the pool-free v1 TraceWriter outright (110_s).
     if trace is not None:
         trace.write_step(item.item_id, record, call_record)
 

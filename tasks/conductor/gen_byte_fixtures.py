@@ -1,15 +1,6 @@
 """Generate the §4 byte-stability fixture: SHA-256 of every canonical
 worker-request byte string — one per cell × step × access pattern, the
-plural `Resources:` forms (B3/B5), and the registry-derived two-call
-shortcut family × 2 calls (106_s §6.3).
-
-Scope (108_s addendum): this is the **generator/semantic-rendering**
-regression fixture. It pins user-message bytes under the historical v0
-request layout so that generation and rendering semantics provably do
-not drift; it is NOT the selected execution-contract fixture. The
-frozen 106_s §4 configuration (rev10 prompts, task_last contract,
-per-worker tokenizers) is pinned separately by `gen_chat_fixtures`
-(`pool_rendered_requests.json`).
+plural `Resources:` forms (B3/B5), and all 18 shortcut workflows × 2 calls.
 
 Run:  uv run python -m tasks.conductor.gen_byte_fixtures
 Regenerating after an intentional freeze-relevant change requires a
@@ -26,7 +17,6 @@ from . import baselines, oracle, program, render
 from .profiles import DEFAULT_PROFILE
 from .resources import InstanceRegistry
 from .types import CELL_IDS
-from .workerpool import WORKER_TO_ENDPOINT
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "byte_stability.json"
 
@@ -62,18 +52,17 @@ def build_fixture() -> dict[str, str]:
         fixture[f"{cell}:B3"] = _sha(baselines.build_b3_request(inst))
         fixture[f"{cell}:B5"] = _sha(baselines.build_b5_request(inst)[0])
 
-    # Two-call shortcut workflows × 2 calls (fork_join, D12): request
-    # bytes are keyed by (orientation, worker pair, call) — the worker's
-    # endpoint family enters the canonical rendered request through the
-    # system prompt at 0B; here the fixture pins (system name, user
-    # bytes) per call. Workers 2 and 3 share the code family, so their
-    # entries pin byte-identical requests under distinct worker keys.
+    # 18 shortcut workflows × 2 calls (fork_join, D12): request bytes are
+    # keyed by (orientation, endpoint pair, call) — the endpoint pair enters
+    # the canonical rendered request through the system prompt at 0B; here
+    # the fixture pins (system name, user bytes) per call.
     latent = program.generate_latent("fork_join", "construction", 0,
                                      DEFAULT_PROFILE).latent
     inst = program.render_instance(latent, "resource_first", "private")
     registry = InstanceRegistry(inst["public_manifest"],
                                 inst["private_registry"])
     params = latent["public_params"]
+    endpoint_names = {0: "lookup", 1: "math", 2: "code"}
     for orientation, pair in oracle.enumerate_two_call_workflows():
         subtasks = render.two_call_subtasks(orientation, params)
         first_handle = (params["H1"] if orientation == "lookup_first"
@@ -88,11 +77,11 @@ def build_fixture() -> dict[str, str]:
             resource_text=registry.payload_text(second_handle),
             previous_results={1: latent["node_values"][
                 "n1" if orientation == "lookup_first" else "n2"]})
-        for call, (worker, req) in enumerate(
+        for call, (endpoint, req) in enumerate(
                 [(pair[0], req1), (pair[1], req2)], start=1):
             key = f"two_call:{orientation}:{pair[0]}{pair[1]}:call{call}"
-            family = WORKER_TO_ENDPOINT[worker]
-            fixture[key] = _sha(f"SYSTEM_{family.upper()}\x00" + req)
+            fixture[key] = _sha(f"SYSTEM_{endpoint_names[endpoint].upper()}"
+                                "\x00" + req)
     return fixture
 
 

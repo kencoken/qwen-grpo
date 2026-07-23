@@ -166,15 +166,14 @@ def test_unknown_handle_is_world_failure():
 
 # --- §1.5 routing schema bijection + rejections (§4) ------------------------
 
-# 106_s §8: routing bijection for the 4/16/64 four-worker assignments.
 @pytest.mark.parametrize("num_steps", [1, 2, 3])
 def test_routing_bijection(num_steps):
     seen = set()
-    for ids in itertools.product((0, 1, 2, 3), repeat=num_steps):
+    for ids in itertools.product((0, 1, 2), repeat=num_steps):
         parsed = parse_routing_action(json.dumps({"worker_ids": list(ids)}),
                                       num_steps)
         seen.add(tuple(parsed))
-    assert len(seen) == 4 ** num_steps
+    assert len(seen) == 3 ** num_steps
 
 
 @pytest.mark.parametrize("completion", [
@@ -183,7 +182,7 @@ def test_routing_bijection(num_steps):
     '{"workers": [0, 1]}',
     '{"worker_ids": [0]}',              # wrong length
     '{"worker_ids": [0, 1, 2]}',        # wrong length
-    '{"worker_ids": [0, 4]}',           # out of range -> malformed, not world
+    '{"worker_ids": [0, 3]}',           # out of range -> malformed, not world
     '{"worker_ids": [0, -1]}',
     '{"worker_ids": [0, 1.0]}',
     '{"worker_ids": [0, true]}',
@@ -340,11 +339,6 @@ TOY_RAW = _toy({
     (2, 0): (1, 1, 0),
     (2, 1): (1, 0, 1),
     (2, 2): (1, 1, 0),
-    # 106_s: the seven worker-3 assignments completing the 4^2 surface;
-    # all-zero rows leave every pinned tie above unchanged.
-    **{pair: (0, 0, 0)
-       for pair in [(0, 3), (1, 3), (2, 3), (3, 0), (3, 1), (3, 2),
-                    (3, 3)]},
 })
 
 
@@ -353,7 +347,7 @@ def test_oracle_toy_surface():
     assert surface.accuracy((1, 1)) == 0.75
     assert oracle.select_deployable(surface) == (0, 1)  # tie -> lexicographic
     assert oracle.best_fixed(surface) == (1, 1)
-    assert oracle.uniform_random_accuracy(surface) == pytest.approx(5.25 / 16)
+    assert oracle.uniform_random_accuracy(surface) == pytest.approx(5.25 / 9)
     # Runner-up at node 0 with node 1 fixed: (1,1) vs (2,1) tie -> lowest.
     assert oracle.node_runner_up(surface, (0, 1), 0) == (1, 1)
     assert oracle.node_runner_up(surface, (0, 1), 1) == (0, 0)
@@ -502,16 +496,14 @@ def _candidate_surface(candidates, value_for):
 
 
 def test_two_call_family_and_tie_order():
-    # 106_s §6.3: 2 orientations x 4 x 4 workers, derived from the
-    # registry (32 is an acceptance expectation, not a source of truth).
     workflows = oracle.enumerate_two_call_workflows()
-    assert len(workflows) == 32
+    assert len(workflows) == 18
     assert workflows[0] == ("lookup_first", (0, 0))
     tied = oracle.validate_two_call_surface(
         _candidate_surface(workflows, lambda c: 1), "fork_join")
     assert oracle.select_best_two_call(tied) == ("lookup_first", (0, 0))
     one_call = oracle.validate_one_call_surface(
-        _candidate_surface(oracle.WORKER_IDS,
+        _candidate_surface(oracle.ENDPOINT_IDS,
                            lambda e: 1 if e in (0, 1) else 0), "fork_join")
     assert oracle.select_best_one_call(one_call) == 0  # tie -> lowest index
 
@@ -533,7 +525,7 @@ def test_control_candidate_types_are_exact():
     """`False` and `0.0` hash equal to `0`, so key equality alone would
     admit an endpoint id of the wrong type."""
     for bad_key in (False, 0.0):
-        raw = _candidate_surface(oracle.WORKER_IDS, lambda e: 1)
+        raw = _candidate_surface(oracle.ENDPOINT_IDS, lambda e: 1)
         raw[bad_key] = raw.pop(0)
         with pytest.raises(oracle.PayoffSurfaceError, match="must be an int"):
             oracle.validate_one_call_surface(raw, "fork_join")
@@ -557,7 +549,7 @@ def test_calibration_bundle_requires_one_shared_population():
              FJ_C2: {observation_id(FJ_C2): 0}}
          for a in oracle.enumerate_assignments(3)}, "fork_join")
     one_call = oracle.validate_one_call_surface(
-        _candidate_surface(oracle.WORKER_IDS, lambda e: 0), "fork_join")
+        _candidate_surface(oracle.ENDPOINT_IDS, lambda e: 0), "fork_join")
     bundle = oracle.CalibrationBundle(assignment=assignment,
                                       one_call=one_call)
     assert bundle.cell_id == "fork_join"
@@ -573,7 +565,7 @@ def test_calibration_bundle_requires_one_shared_population():
     disjoint = oracle.validate_one_call_surface(
         {e: {other1: {observation_id(other1): 1},
              other2: {observation_id(other2): 1}}
-         for e in oracle.WORKER_IDS}, "fork_join")
+         for e in oracle.ENDPOINT_IDS}, "fork_join")
     with pytest.raises(oracle.PayoffSurfaceError, match="different clusters"):
         oracle.CalibrationBundle(assignment=assignment, one_call=disjoint)
 
@@ -626,7 +618,7 @@ def test_frozen_selections_round_trip_and_validate():
     construction = _surface_for("fork_join", "construction", (0, 1, 2), 3)
     one_call = oracle.validate_one_call_surface(
         {e: {c: {observation_id(c): 1} for c in construction.clusters}
-         for e in oracle.WORKER_IDS}, "fork_join")
+         for e in oracle.ENDPOINT_IDS}, "fork_join")
     frozen = oracle.CalibrationBundle(assignment=construction,
                                       one_call=one_call).freeze_selections()
     assert frozen.deployable == (0, 1, 2)
@@ -725,11 +717,11 @@ def test_random_control_belongs_to_the_surface_being_evaluated():
     construction = _surface_for("lookup_math", "construction", (0, 0), 2)
     frozen = oracle.CalibrationBundle(assignment=construction) \
         .freeze_selections()
-    assert frozen.construction_random_accuracy == pytest.approx(1 / 16)
+    assert frozen.construction_random_accuracy == pytest.approx(1 / 9)
     assert not hasattr(frozen, "random_accuracy")
     qualification = _surface_for("lookup_math", "qualification", (2, 2), 2)
     qual_bundle = oracle.CalibrationBundle(assignment=qualification)
-    assert qual_bundle.random_accuracy() == pytest.approx(1 / 16)
+    assert qual_bundle.random_accuracy() == pytest.approx(1 / 9)
 
 
 # --- population and execution provenance ------------------------------------
@@ -792,7 +784,7 @@ def test_evaluation_verifies_against_the_construction_bundle_in_one_call():
 def test_calibration_bundle_rejects_cross_cell_controls():
     assignment = oracle.validate_payoff_surface(TOY_RAW, "lookup_math")
     fork_control = oracle.validate_one_call_surface(
-        _candidate_surface(oracle.WORKER_IDS, lambda e: 1), "fork_join")
+        _candidate_surface(oracle.ENDPOINT_IDS, lambda e: 1), "fork_join")
     with pytest.raises(oracle.PayoffSurfaceError, match="for cell"):
         oracle.CalibrationBundle(assignment=assignment,
                                  one_call=fork_control)
@@ -842,8 +834,7 @@ def test_agreement_reports_failure_on_incomplete_coverage():
 def test_byte_stability_fixture():
     stored = json.loads(Path(FIXTURE_PATH).read_text())
     assert build_fixture() == stored
-    # 32 registry-derived two-call workflows x 2 calls (106_s §6.3).
-    assert sum(1 for k in stored if k.startswith("two_call")) == 64
+    assert sum(1 for k in stored if k.startswith("two_call")) == 36
 
 
 # --- D16 demos execute through the runtime ----------------------------------
@@ -896,100 +887,3 @@ def test_reward_boundary():
 
     assert executor.reward_for_completion(parse_misroute, run_misroute,
                                           gold) == 0.5
-
-
-# =============================================================================
-# 108_s: worker-3 execution boundary (findings 1 and 4).
-# =============================================================================
-
-def test_worker_3_executes_the_code_family():
-    """106_s §6.2: worker 3 resolves to the Code grammar/tool at the
-    artifact boundary and reaches the terminal exactly like worker 2."""
-    latent, inst, registry, steps = make_env("code_atomic")
-    worker_ids, worker_call = perfect_worker(latent)
-    assert worker_ids == [2]
-    for code_worker in (2, 3):
-        action = parser.routing_to_workflow([code_worker], steps)
-        result = executor.execute_workflow(action, inst["public_prompt"],
-                                           registry, worker_call)
-        assert result.terminal == inst["gold_answer"], code_worker
-        assert result.steps[0].result.status == "success"
-
-
-def test_worker_3_executes_in_a_composed_workflow():
-    latent, inst, registry, steps = make_env("fork_join")
-    worker_ids, worker_call = perfect_worker(latent)
-    swapped = [3 if w == 2 else w for w in worker_ids]
-    assert swapped != worker_ids  # fork_join routes one code node
-    action = parser.routing_to_workflow(swapped, steps)
-    result = executor.execute_workflow(action, inst["public_prompt"],
-                                       registry, worker_call)
-    assert result.terminal == inst["gold_answer"]
-    assert [r.worker_id for r in result.steps] == swapped
-
-
-def test_wrong_family_selection_is_a_typed_failure_not_an_abort():
-    """Selecting an incompatible family is a well-formed world action
-    (reward 0.5), for worker 3 exactly as for workers 0-2 (106_s §6.2)."""
-    latent, inst, registry, steps = make_env("lookup_atomic")
-    _, worker_call = perfect_worker(latent)
-    for wrong_worker in (1, 3):
-        action = parser.routing_to_workflow([wrong_worker], steps)
-        result = executor.execute_workflow(action, inst["public_prompt"],
-                                           registry, worker_call)
-        assert result.steps[0].result.status == "typed_failure", wrong_worker
-        assert result.terminal is None
-        assert executor.score_terminal(result.terminal,
-                                       inst["gold_answer"]) == 0.5
-
-
-def test_unregistered_worker_id_is_an_infrastructure_error():
-    """The parser bounds actions to the pool; a directly constructed
-    workflow with an unregistered id must abort, never guess a family."""
-    latent, inst, registry, steps = make_env("lookup_atomic")
-    _, worker_call = perfect_worker(latent)
-    action = parser.WorkflowAction(steps=(parser.WorkflowStep(
-        subtask=steps[0]["subtask"], worker_id=7,
-        resource=steps[0]["resource"], access="none"),))
-    with pytest.raises(executor.InfrastructureError,
-                       match="not in the registered pool"):
-        executor.execute_workflow(action, inst["public_prompt"],
-                                  registry, worker_call)
-
-
-def test_four_worker_executor_refuses_v1_traces_before_any_call():
-    """110_s: every worker id is a new four-worker identity (worker 2
-    now means generic-1.5B/rev10/task-last), so the executor refuses
-    the pool-free v1 TraceWriter entirely, as a preflight — a worker-2
-    action can neither be written to v1 nor executed first. (The
-    worker-eval composed adapter is a different, retained trace format
-    and stays accepted.)"""
-    latent, inst, registry, steps = make_env("code_atomic")
-    calls = []
-
-    def spy_call(worker_id, requests):
-        calls.append(worker_id)
-        raise AssertionError("no worker call may precede the trace refusal")
-
-    item = executor.WorkflowItem(
-        item_id="t", action=parser.routing_to_workflow([2], steps),
-        public_prompt=inst["public_prompt"], registry=registry)
-    # The isinstance gate fires before any writer attribute is touched,
-    # so an uninitialized instance exercises it without a runtime.
-    legacy = executor.TraceWriter.__new__(executor.TraceWriter)
-    with pytest.raises(executor.InfrastructureError,
-                       match="pool-free"):
-        executor.execute_workflow_batch([item], spy_call, trace=legacy)
-    assert calls == []  # the worker callback was never invoked
-
-
-def test_workflow_action_worker_domain():
-    """108_s smaller issue: the full-workflow parser accepts worker 3
-    and rejects worker 4."""
-    def wf(worker_id):
-        return json.dumps({"steps": [{"subtask": "s", "worker_id": worker_id,
-                                      "resource": "R-1A1", "access": "none"}]})
-    parsed = parser.parse_workflow_action(wf(3))
-    assert parsed.steps[0].worker_id == 3
-    with pytest.raises(ActionSchemaError, match="outside"):
-        parser.parse_workflow_action(wf(4))

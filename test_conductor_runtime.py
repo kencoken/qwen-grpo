@@ -174,7 +174,6 @@ def test_worker_visible_fields_change_worker_visible():
         prof,
         profile_with(nf4={**PROFILE["nf4"], "double_quant": "false"}),
         profile_with(tools={**PROFILE["tools"], "math": "v0.9"}),
-        profile_with(prompts={"d16_revision": "rev999"}),
         profile_with(resource_policy="other-policy"),
     ]
     base = worker_visible_fingerprint(PROFILE, SHAS, PSHAS)
@@ -471,29 +470,30 @@ def test_duplicate_item_ids_raise():
 
 
 # --- traces -----------------------------------------------------------------
-# The v1 TraceWriter is a historical artifact format: the four-worker
-# executor refuses it outright (110_s), so its file-format invariants
-# are exercised by driving write_step directly.
 
-def write_v1_trace(tmp_path, run_name="run-a"):
-    from types import SimpleNamespace
+def run_traced_batch(tmp_path, run_name="run-a"):
+    pool = FakePool(script={})
+    latent, inst, registry, steps = make_env("lookup_atomic")
+    _, worker_call = perfect_worker(latent)
+    action = parser.routing_to_workflow([0], steps)
     profile = profile_with(cache_path=str(tmp_path / "cache.sqlite"))
-    rt = build_runtime(profile, pool=FakePool(script={}),
+    rt = build_runtime(profile, pool=pool,
                        cache=CompletionCache(profile["cache_path"]))
-    record = executor.StepRecord(1, 0, None, None, "req",
-                                 "<artifact>1</artifact>", False, "ab")
-    telemetry = SimpleNamespace(finish_reason="eos", generated_tokens=3,
-                                generation_hit_token_cap=False,
-                                cache_hit=False, request_sha256="cd")
+
+    # route through the runtime so telemetry lands in the trace
+    def call(worker_id, requests):
+        return rt.worker_call_batch(ENDPOINT_NAMES[worker_id], requests)
+
+    items = [WorkflowItem("lookup_atomic:construction:00000:x:rf:private",
+                          action, inst["public_prompt"], registry)]
     with TraceWriter(run_name, rt, base_dir=tmp_path / "runs") as trace:
-        trace.write_step("lookup_atomic:construction:00000:x:rf:private",
-                         record, telemetry)
+        results = executor.execute_workflow_batch(items, call, trace=trace)
     rt.close()
-    return tmp_path / "runs" / run_name / "traces"
+    return tmp_path / "runs" / run_name / "traces", results, rt
 
 
 def test_trace_files_manifest_and_steps(tmp_path):
-    trace_dir = write_v1_trace(tmp_path)
+    trace_dir, results, rt = run_traced_batch(tmp_path)
     manifest = json.loads((trace_dir / "manifest.json").read_text())
     assert manifest["runtime_profile"]["profile_name"] == "stage0b-default"
     assert manifest["runtime_profile_fingerprint"].startswith("rtp-")
@@ -510,34 +510,12 @@ def test_trace_files_manifest_and_steps(tmp_path):
     assert line["finish_reason"] == "eos"
     assert line["cache_hit"] is False
     assert line["generation_hit_token_cap"] is False
-    assert line["request_sha256"] == "cd"
+    assert line["request_sha256"] is not None
     assert line["completion"] == "<artifact>1</artifact>"
 
 
-def test_executor_refuses_v1_trace_with_real_writer(tmp_path):
-    """110_s preflight at the runtime level: a real TraceWriter cannot
-    be threaded through the four-worker executor, and nothing executes
-    or is written before the refusal."""
-    latent, inst, registry, steps = make_env("lookup_atomic")
-    action = parser.routing_to_workflow([0], steps)
-    profile = profile_with(cache_path=str(tmp_path / "cache.sqlite"))
-    rt = build_runtime(profile, pool=FakePool(script={}),
-                       cache=CompletionCache(profile["cache_path"]))
-    items = [WorkflowItem("i", action, inst["public_prompt"], registry)]
-
-    def call(worker_id, requests):
-        raise AssertionError("no worker call may precede the refusal")
-
-    with TraceWriter("run-a", rt, base_dir=tmp_path / "runs") as trace:
-        with pytest.raises(InfrastructureError, match="pool-free"):
-            executor.execute_workflow_batch(items, call, trace=trace)
-    steps_file = tmp_path / "runs" / "run-a" / "traces" / "steps.jsonl"
-    assert steps_file.read_text() == ""  # nothing was written
-    rt.close()
-
-
 def test_trace_refuses_to_overwrite(tmp_path):
-    write_v1_trace(tmp_path)
+    trace_dir, _, rt = run_traced_batch(tmp_path)
     profile = profile_with(cache_path=str(tmp_path / "cache2.sqlite"))
     rt2 = build_runtime(profile, pool=FakePool(),
                         cache=CompletionCache(profile["cache_path"]))
@@ -546,38 +524,15 @@ def test_trace_refuses_to_overwrite(tmp_path):
     rt2.close()
 
 
-# --- pool-bound rendered-request fixture (108_s F3) --------------------------
-# Pins the frozen 106_s §4 execution configuration: rev10 prompts,
-# task_last contract, each worker's independently pinned tokenizer.
+# --- chat-template byte fixture (§1.5 canonical rendered request) -----------
 
-def test_pool_rendered_request_fixture_stable():
+def test_chat_template_fixture_stable():
     from tasks.conductor.gen_chat_fixtures import FIXTURE_PATH, build_fixture
     try:
-        built = build_fixture()
+        from tasks.conductor.workers import WorkerPool
+        pool = WorkerPool(PROFILE, device="cpu")
     except OSError as error:  # tokenizer cache unavailable offline
         pytest.skip(f"pinned tokenizers unavailable: {error}")
     stored = json.loads(FIXTURE_PATH.read_text())
-    assert built == stored
-    # The fixture carries its own provenance (108_s addendum).
-    from tasks.conductor.workerpool import STAGE0_POOL_FINGERPRINT
-    assert stored["pool_fingerprint"] == STAGE0_POOL_FINGERPRINT
-    assert stored["request_contract_key"] == "worker-blocks-task-last-v1"
-    # One shared Qwen2.5 chat template across all four pinned tokenizers.
-    templates = {v for k, v in stored.items()
-                 if k.startswith("chat_template:")}
-    assert len(templates) == 1
-    # §6.2 attribution guarantee: workers 2 and 3 render byte-identical
-    # requests through independently pinned tokenizers.
-    for key, value in stored.items():
-        if ":code_1p5b" in key and not key.startswith(("chat_template",
-                                                       "tokenizer")):
-            assert stored[key.replace("code_1p5b", "code_3b")] == value, key
-    # The same equality on the numeric two-call rows (110_s
-    # carry-forward, taken now): swapping worker 2 for worker 3 at a
-    # call position leaves that call's rendered hash unchanged.
-    for orientation in ("lookup_first", "code_first"):
-        for other in (0, 1, 2, 3):
-            assert stored[f"two_call:{orientation}:2{other}:call1"] == \
-                stored[f"two_call:{orientation}:3{other}:call1"]
-            assert stored[f"two_call:{orientation}:{other}2:call2"] == \
-                stored[f"two_call:{orientation}:{other}3:call2"]
+    assert build_fixture(pool) == stored
+    pool.close()
