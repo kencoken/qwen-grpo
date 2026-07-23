@@ -587,6 +587,20 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   routing passes, modes 2/3 (co-residency, adapter toggling) are NOT
   implemented. Results append below this entry; thresholds do not
   move after launch.
+- **2026-07-23 CE0 RESULTS — GO (runs/ce0/ce0_results.json,
+  executable commit 55a680f, clean tree).** Every prediction hit:
+  materialization 124 unique generations / 324 rows, in-process 46.7s,
+  full-command 51.1s (startup+loads only 4.4s), device peak 3.77 GiB,
+  surface 3.6 MB; live worst case 18 workflows / 30 planned steps /
+  EXACTLY 30 physical generations (no cross-instance dedup), wall
+  9.5s (0.315 s/generation), peak 1.2 GiB, 17/18 terminals — the
+  predicted math_code×goal_first reference miss; enumeration 324
+  builds in <0.1s. Gates: max observed peak 14.43 GiB < 22 ✓;
+  projected seed: pre-materialized FIRST SEED 43.4 min / additional
+  42.6 min (live mode 84.8 min) ≤ overnight ✓; no infra failures as
+  reward ✓; sane distribution held by the recorded smoke ✓. CE0 GO.
+  Per the frozen rule, modes 2/3 (co-residency, adapter toggling) are
+  NOT implemented — pre-materialized routing is the Stage-2 path.
 - **2026-07-23 106_s UNIT 4 COMPLETE — PROMPT FROZEN + STAGE-0C SMOKE
   (122_f/123_s/124_f):** demo probe ran under the preregistered
   bounded procedure (one repair round; specialist [3,2] failed twice =
