@@ -71,7 +71,7 @@ FOUR_WORKER_RUNTIME_PROFILE: dict[str, Any] = {
         "compute_dtype": "bfloat16",
     },
     "decoding": {"do_sample": "false", "stopping": "eos"},
-    # 113_f F3: the effective device is execution identity — it is part
+    # 113_s F3: the effective device is execution identity — it is part
     # of the frozen physical key and completions are device-dependent,
     # so it belongs in rtp, wv and slw (and hence the cache key).
     "device": "cuda",
@@ -136,7 +136,7 @@ def validate_pool_profile(profile: Mapping[str, Any]) -> None:
             "worker_pool does not match the frozen Stage-0 registry "
             f"({STAGE0_POOL_FINGERPRINT}); a different pool needs a new "
             "reviewed registry, not a profile edit")
-    # 113_f F2: the frozen treatment settings admit no variation — a
+    # 113_s F2: the frozen treatment settings admit no variation — a
     # profile is not a tuning surface. Exact equality, each with its
     # own message so the refusal names the drifted setting.
     if profile["worker_runtime"] != {"max_new_tokens": 256,
@@ -276,11 +276,11 @@ def physical_mapping(specs: tuple[WorkerSpec, ...],
 class FourWorkerPool:
     """Real HF/bitsandbytes backend over the frozen four-worker pool.
     Tests substitute fakes implementing the same interface, including
-    the owned `profile` (113_f F1: the runtime verifies its profile is
+    the owned `profile` (113_s F1: the runtime verifies its profile is
     the pool's, so independently configured objects fail closed).
 
     The effective device comes from the profile — it is execution
-    identity (113_f F3), not a construction convenience."""
+    identity (113_s F3), not a construction convenience."""
 
     def __init__(self, profile: Mapping[str, Any],
                  prompts: PromptBundle | None = None) -> None:
@@ -439,7 +439,7 @@ class FourWorkerRuntime:
                 "the four-worker runtime requires a WorkerCompletionCache "
                 "(106_s §8.5: the v1 endpoint-keyed cache is a different "
                 "identity)")
-        # 113_f F1: the pool must be configured by THIS profile — an
+        # 113_s F1: the pool must be configured by THIS profile — an
         # independently configured pool would generate under settings
         # the fingerprints do not describe. Prefer `build_pool_runtime`,
         # which constructs pool and cache from one owned profile.
@@ -449,8 +449,8 @@ class FourWorkerRuntime:
             raise InfrastructureError(
                 "pool profile does not match the runtime profile; the "
                 "fingerprints would describe settings the pool does not "
-                "execute (113_f finding 1)")
-        # 115_f F1: provenance is immutable after construction — the
+                "execute (113_s finding 1)")
+        # 115_s F1: provenance is immutable after construction — the
         # profile is private and exposed only as a defensive copy, so
         # neither the caller's original dict nor the property can move
         # preflight or trace metadata off the recorded fingerprints.
@@ -536,11 +536,11 @@ class FourWorkerRuntime:
 
     @property
     def profile(self) -> dict[str, Any]:
-        """Defensive copy (115_f F1): mutating it changes nothing."""
+        """Defensive copy (115_s F1): mutating it changes nothing."""
         return copy.deepcopy(self._profile)
 
     def execute_batch(self, items: list[Any], trace: Any = None):
-        """Runtime-bound execution (113_f F1): every item's request
+        """Runtime-bound execution (113_s F1): every item's request
         contract is preflighted against this profile, generation goes
         through this runtime's own worker_call_batch, and a trace must
         be a PoolTraceWriter bound to THIS runtime. Returns
@@ -554,14 +554,14 @@ class FourWorkerRuntime:
                     f"{item.request_contract!r}; this runtime executes "
                     f"{self._profile['request_contract']!r} — a mixed-"
                     "contract batch is misattributed provenance "
-                    "(113_f finding 1)")
+                    "(113_s finding 1)")
         if trace is not None:
             if not isinstance(trace, PoolTraceWriter) \
                     or trace.runtime is not self:
                 raise InfrastructureError(
                     "trace writer is not bound to this runtime; a trace "
                     "must record the fingerprints of the runtime that "
-                    "produced its completions (113_f finding 1)")
+                    "produced its completions (113_s finding 1)")
         telemetry: list[tuple[int, CallRecord]] = []
 
         def call(worker_id: int, requests: list[str]):
@@ -581,7 +581,7 @@ class FourWorkerRuntime:
 
 
 def build_pool_runtime(profile: Mapping[str, Any]) -> FourWorkerRuntime:
-    """Production builder (113_f F1): pool and cache are constructed
+    """Production builder (113_s F1): pool and cache are constructed
     from the one owned profile, so runtime, pool, cache and trace
     fingerprints can only describe what actually executes."""
     validate_pool_profile(profile)
@@ -591,13 +591,13 @@ def build_pool_runtime(profile: Mapping[str, Any]) -> FourWorkerRuntime:
 
 
 class PoolTraceWriter:
-    """Pool-bound trace writer — trace schema v2 (106_s §9.2, 110_f).
+    """Pool-bound trace writer — trace schema v2 (106_s §9.2, 110_s).
 
     Deliberately NOT a `TraceWriter` subclass: the executor refuses that
     class outright. The manifest binds the pool fingerprint, per-worker
     execution and endpoint-family fingerprints and the re-derived
     logical-to-physical mapping. Every real-call row is verified against
-    the CallRecord that actually produced the completion (113_f F4):
+    the CallRecord that actually produced the completion (113_s F4):
     producer worker and runtime fingerprints must match this trace's,
     and the persisted rendered request must hash to the recorded SHA —
     a record from another runtime or worker cannot be written here."""
@@ -621,7 +621,7 @@ class PoolTraceWriter:
         self._families = {spec.worker_id: spec.endpoint_family
                           for spec in runtime.specs}
         # Complete physical key per worker (weights + quantization +
-        # device), not the bare weights pair (113_f F4).
+        # device), not the bare weights pair (113_s F4).
         self._physical = {
             spec.worker_id: {
                 "model_id": spec.model_id,
@@ -663,7 +663,7 @@ class PoolTraceWriter:
         self._steps_written = 0
 
     def preflight_items(self, items: Any) -> None:
-        """Trace-owned contract preflight (115_f F2): the executor calls
+        """Trace-owned contract preflight (115_s F2): the executor calls
         this before any worker call, so the old public composition
         (execute_workflow_batch + worker_call_batch + this trace) can
         no longer record a contract the items do not use."""
@@ -673,7 +673,7 @@ class PoolTraceWriter:
                 raise InfrastructureError(
                     f"item {item.item_id!r} uses request contract "
                     f"{item.request_contract!r}; this trace records "
-                    f"{expected!r} (115_f finding 2)")
+                    f"{expected!r} (115_s finding 2)")
 
     def _write_manifest(self) -> None:
         self._manifest_path.write_text(
@@ -689,7 +689,7 @@ class PoolTraceWriter:
         request_text = None
         request_sha = None
         if call_record is not None:
-            # 113_f F4: the row records the call that actually produced
+            # 113_s F4: the row records the call that actually produced
             # this completion — verify producer identity and request
             # bytes rather than copying the planned action.
             if getattr(call_record, "selected_worker_fp", None) \
@@ -704,7 +704,7 @@ class PoolTraceWriter:
                     != self._rtp:
                 raise InfrastructureError(
                     "step was produced by a different runtime than this "
-                    "trace records (113_f finding 4)")
+                    "trace records (113_s finding 4)")
             request_text = call_record.request_text
             request_sha = call_record.request_sha256
             actual = hashlib.sha256(
@@ -713,7 +713,7 @@ class PoolTraceWriter:
                 raise InfrastructureError(
                     "rendered request text does not hash to the recorded "
                     "request_sha256")
-            # 115_f P2 hardening: a swapped same-worker record must not
+            # 115_s P2 hardening: a swapped same-worker record must not
             # produce an internally inconsistent trace.
             if record.completion != call_record.completion:
                 raise InfrastructureError(
@@ -775,6 +775,6 @@ class PoolTraceWriter:
         return self
 
     def __exit__(self, exc_type: Any, *exc: Any) -> None:
-        # 113_f cleanup: a trace interrupted by an exception must never
+        # 113_s cleanup: a trace interrupted by an exception must never
         # resemble a successful run.
         self.close("complete" if exc_type is None else "aborted")

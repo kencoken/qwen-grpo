@@ -70,7 +70,7 @@ class FakeFourPool:
     """Deterministic fake honoring the pool interface: family-shared
     system prompts (so workers 2 and 3 render byte-identical requests)
     but per-worker completions (simulating different weights). Owns its
-    profile like the real pool (113_f F1)."""
+    profile like the real pool (113_s F1)."""
 
     def __init__(self, profile, completions):
         self.profile = copy.deepcopy(profile)
@@ -260,7 +260,7 @@ def test_executor_runs_worker_3_through_runtime_with_v2_trace(tmp_path):
         rt.endpoint_family_fingerprints["code"]
     assert w3_line["runtime_profile_fingerprint"] == \
         rt.runtime_profile_fingerprint
-    # 113_f F4: exact request provenance on every real-call row.
+    # 113_s F4: exact request provenance on every real-call row.
     for line in lines:
         assert line["binding_sha256"]
         assert line["user_message"].startswith("Problem:")
@@ -280,7 +280,7 @@ def test_pool_trace_writer_is_not_the_refused_v1_class(tmp_path):
 
 def test_real_pool_rendering_matches_the_pool_fixture():
     """FourWorkerPool must render exactly the bytes the reviewed
-    pool_rendered_requests.json fixture pins (108_f F3)."""
+    pool_rendered_requests.json fixture pins (108_s F3)."""
     from tasks.conductor import render
     from tasks.conductor.gen_chat_fixtures import FIXTURE_PATH
     try:
@@ -313,7 +313,7 @@ def test_pool_rejects_a_bundle_that_contradicts_the_registry():
 
 
 # =============================================================================
-# 113_f findings: execution-identity binding, frozen treatments, device.
+# 113_s findings: execution-identity binding, frozen treatments, device.
 # =============================================================================
 
 @pytest.mark.parametrize("mutate,match", [
@@ -326,7 +326,7 @@ def test_pool_rejects_a_bundle_that_contradicts_the_registry():
     (lambda p: p.update(device=""), "device"),
 ])
 def test_frozen_treatment_settings_admit_no_variation(mutate, match):
-    """113_f F2: a declared setting the executor does not run is
+    """113_s F2: a declared setting the executor does not run is
     fabricated provenance."""
     profile = copy.deepcopy(FOUR_WORKER_RUNTIME_PROFILE)
     mutate(profile)
@@ -335,7 +335,7 @@ def test_frozen_treatment_settings_admit_no_variation(mutate, match):
 
 
 def test_runtime_refuses_a_pool_with_a_different_profile(tmp_path):
-    """113_f F1: fingerprints must describe what the pool executes."""
+    """113_s F1: fingerprints must describe what the pool executes."""
     profile_a = profile_with(cache_path=str(tmp_path / "a.sqlite"))
     profile_b = profile_with(cache_path=str(tmp_path / "b.sqlite"),
                              visibility_condition="visible")
@@ -346,7 +346,7 @@ def test_runtime_refuses_a_pool_with_a_different_profile(tmp_path):
 
 
 def test_execute_batch_preflights_the_request_contract(tmp_path):
-    """113_f F1: a default (v0-contract) WorkflowItem cannot execute
+    """113_s F1: a default (v0-contract) WorkflowItem cannot execute
     under a task_last profile, and no worker call happens first."""
     latent, inst, registry, steps = make_env("lookup_atomic")
     rt, pool = build_rt(tmp_path, {0: "<artifact>1</artifact>"})
@@ -379,7 +379,7 @@ def test_execute_batch_refuses_a_foreign_trace(tmp_path):
 
 
 def test_trace_write_verifies_the_producing_call_record(tmp_path):
-    """113_f F4: a CallRecord from another worker or runtime cannot be
+    """113_s F4: a CallRecord from another worker or runtime cannot be
     recorded under this trace's fingerprints."""
     import dataclasses
     latent, inst, registry, steps = make_env("lookup_atomic")
@@ -409,7 +409,7 @@ def test_trace_write_verifies_the_producing_call_record(tmp_path):
 
 
 def test_device_is_execution_and_cache_identity(tmp_path):
-    """113_f F3: a CPU-configured runtime must not serve CUDA-produced
+    """113_s F3: a CPU-configured runtime must not serve CUDA-produced
     cache rows — device is in wv and slw, so the lookup misses."""
     rt_cuda, _ = build_rt(tmp_path, {0: "<artifact>cuda</artifact>"},
                           device="cuda")
@@ -444,11 +444,11 @@ def test_aborted_execution_marks_the_trace_aborted(tmp_path):
 
 
 # =============================================================================
-# 115_f findings: provenance immutability, preflight bypass, per-cell bound.
+# 115_s findings: provenance immutability, preflight bypass, per-cell bound.
 # =============================================================================
 
 def test_runtime_provenance_is_immutable_after_construction(tmp_path):
-    """115_f F1: neither the caller's dict nor the profile property can
+    """115_s F1: neither the caller's dict nor the profile property can
     move preflight or trace metadata off the recorded fingerprints."""
     profile = profile_with(cache_path=str(tmp_path / "cache.sqlite"))
     pool = FakeFourPool(profile, {0: "<artifact>1</artifact>"})
@@ -478,7 +478,7 @@ def test_runtime_provenance_is_immutable_after_construction(tmp_path):
 
 
 def test_public_executor_composition_cannot_bypass_the_preflight(tmp_path):
-    """115_f F2: the reviewer's reproduction — executor +
+    """115_s F2: the reviewer's reproduction — executor +
     worker_call_batch + a bound v2 trace — raises before any call."""
     latent, inst, registry, steps = make_env("lookup_atomic")
     rt, pool = build_rt(tmp_path, {0: "<artifact>1</artifact>"})
@@ -495,7 +495,7 @@ def test_public_executor_composition_cannot_bypass_the_preflight(tmp_path):
 
 
 def test_smoke_per_cell_bound_is_enforced():
-    """115_f F3: an index past the consumed 0-29 construction prefix
+    """115_s F3: an index past the consumed 0-29 construction prefix
     is rejected before any runtime or cache construction."""
     from tasks.conductor.smoke import validate_per_cell
     assert validate_per_cell(2) == 2
@@ -506,7 +506,7 @@ def test_smoke_per_cell_bound_is_enforced():
 
 
 def test_trace_write_rejects_internally_inconsistent_records(tmp_path):
-    """115_f P2 hardening: swapped same-worker records, missing binding
+    """115_s P2 hardening: swapped same-worker records, missing binding
     hashes and non-rerendering user messages all refuse to persist."""
     import dataclasses
     latent, inst, registry, steps = make_env("lookup_atomic")

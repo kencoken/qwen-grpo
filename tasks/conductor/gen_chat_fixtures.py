@@ -1,4 +1,4 @@
-"""Generate the pool-bound rendered-request fixture (108_f finding 3).
+"""Generate the pool-bound rendered-request fixture (108_s finding 3).
 
 This fixture pins the complete **frozen execution configuration** of the
 106_s §4 worker pool: rev10 system prompts, the `worker-blocks-task-last-v1`

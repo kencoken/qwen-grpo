@@ -899,7 +899,7 @@ def test_reward_boundary():
 
 
 # =============================================================================
-# 108_f: worker-3 execution boundary (findings 1 and 4).
+# 108_s: worker-3 execution boundary (findings 1 and 4).
 # =============================================================================
 
 def test_worker_3_executes_the_code_family():
@@ -958,7 +958,7 @@ def test_unregistered_worker_id_is_an_infrastructure_error():
 
 
 def test_four_worker_executor_refuses_v1_traces_before_any_call():
-    """110_f: every worker id is a new four-worker identity (worker 2
+    """110_s: every worker id is a new four-worker identity (worker 2
     now means generic-1.5B/rev10/task-last), so the executor refuses
     the pool-free v1 TraceWriter entirely, as a preflight — a worker-2
     action can neither be written to v1 nor executed first. (The
@@ -984,7 +984,7 @@ def test_four_worker_executor_refuses_v1_traces_before_any_call():
 
 
 def test_workflow_action_worker_domain():
-    """108_f smaller issue: the full-workflow parser accepts worker 3
+    """108_s smaller issue: the full-workflow parser accepts worker 3
     and rejects worker 4."""
     def wf(worker_id):
         return json.dumps({"steps": [{"subtask": "s", "worker_id": worker_id,

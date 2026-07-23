@@ -1,6 +1,6 @@
 """Stage-0B recorded acceptance command: offline executor smoke on the
 real four-worker NF4 pool (106_s §9.5; re-enabled by unit 2 after the
-108_f finding-2 disablement).
+108_s finding-2 disablement).
 
 Run:  uv run python -m tasks.conductor.smoke --per-cell 2 --run-name <name>
 
@@ -20,14 +20,14 @@ pool-bound v2 traces:
 
 then re-executes the same batch and **fails unless every second-pass
 call is a cache hit** and replays are byte-identical. The first pass
-must be genuinely cold (113_f F5): a pre-existing cache file is
+must be genuinely cold (113_s F5): a pre-existing cache file is
 refused, zero first-pass hits are required, all four workers must
 execute cold, and `checkpoint_report` must show both physical models
 loaded before success. Reports per-worker telemetry, descriptive
 accuracy, wall time and peak reserved VRAM (a smoke diagnostic, not a
 Stage-1 gate: no registered population, no calibration manifest).
 
-Support note (113_f cleanup): the smoke reuses construction indices
+Support note (113_s cleanup): the smoke reuses construction indices
 0..per_cell-1, which lie inside the already-consumed 0-29 D16 prefix,
 so no new construction identities are exposed; the smoke-specific
 support declaration is written to `runs/<name>/support.json` — the
@@ -60,7 +60,7 @@ from .workerpool import WORKER_NAMES
 
 WRONG_FAMILY_WORKER = 1  # deliberate math-family routing of a lookup node
 
-# 115_f F3: the support declaration claims every construction index
+# 115_s F3: the support declaration claims every construction index
 # lies inside the already-consumed 0-29 D16 prefix; the bound makes
 # that claim true by construction rather than trusting the flag.
 MAX_PER_CELL = 30
@@ -113,7 +113,7 @@ def build_items(per_cell: int, request_contract: str
 
 
 def run_pass(rt, items, trace=None):
-    """Runtime-bound execution (113_f F1): contracts and trace binding
+    """Runtime-bound execution (113_s F1): contracts and trace binding
     are preflighted inside execute_batch."""
     results, telemetry = rt.execute_batch(items, trace=trace)
     stats = {"calls": Counter(), "cache_hits": 0, "truncated": 0,
@@ -140,7 +140,7 @@ def main() -> int:
     profile["device"] = args.device
     profile["cache_path"] = str(Path("runs") / args.run_name
                                 / "cache.sqlite")
-    # 113_f F5: a genuinely cold first pass is part of the acceptance
+    # 113_s F5: a genuinely cold first pass is part of the acceptance
     # evidence — a pre-populated cache could pass the warm check
     # without ever loading or parameter-checking a checkpoint.
     if Path(profile["cache_path"]).exists():

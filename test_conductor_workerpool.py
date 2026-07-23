@@ -28,7 +28,7 @@ def test_stage0_pool_is_the_frozen_106s_table():
     assert dict(WORKER_TO_ENDPOINT) == {0: "lookup", 1: "math",
                                         2: "code", 3: "code"}
     assert dict(WORKER_TO_ENDPOINT_ID) == {0: 0, 1: 1, 2: 2, 3: 2}
-    # Immutable views (108_f): dispatch cannot be mutated in place.
+    # Immutable views (108_s): dispatch cannot be mutated in place.
     for view in (WORKER_NAMES, WORKER_TO_ENDPOINT, WORKER_TO_ENDPOINT_ID):
         with pytest.raises(TypeError):
             view[3] = "mutated"  # type: ignore[index]
@@ -169,7 +169,7 @@ def test_three_and_four_worker_bundles_cannot_be_mixed():
 
 
 # =============================================================================
-# 108_f finding 4: persisted payoff identity binds the pool fingerprint.
+# 108_s finding 4: persisted payoff identity binds the pool fingerprint.
 # =============================================================================
 
 def _atomic_full_surface():
@@ -190,7 +190,7 @@ def test_surface_json_carries_and_verifies_the_pool_fingerprint():
     foreign = dict(obj, worker_pool="wp-0000000000000000")
     with pytest.raises(oracle.PayoffSurfaceError, match="bound to worker"):
         oracle.ValidatedSurface.from_json(foreign)
-    # A pool-free (pre-108_f) persisted surface fails the exact-key check.
+    # A pool-free (pre-108_s) persisted surface fails the exact-key check.
     legacy = {k: v for k, v in obj.items() if k != "worker_pool"}
     with pytest.raises(oracle.PayoffSurfaceError, match="keys must be"):
         oracle.ValidatedSurface.from_json(legacy)

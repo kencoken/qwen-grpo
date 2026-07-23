@@ -3,7 +3,7 @@ worker-request byte string — one per cell × step × access pattern, the
 plural `Resources:` forms (B3/B5), and the registry-derived two-call
 shortcut family × 2 calls (106_s §6.3).
 
-Scope (108_f addendum): this is the **generator/semantic-rendering**
+Scope (108_s addendum): this is the **generator/semantic-rendering**
 regression fixture. It pins user-message bytes under the historical v0
 request layout so that generation and rendering semantics provably do
 not drift; it is NOT the selected execution-contract fixture. The

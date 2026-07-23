@@ -472,7 +472,7 @@ def test_duplicate_item_ids_raise():
 
 # --- traces -----------------------------------------------------------------
 # The v1 TraceWriter is a historical artifact format: the four-worker
-# executor refuses it outright (110_f), so its file-format invariants
+# executor refuses it outright (110_s), so its file-format invariants
 # are exercised by driving write_step directly.
 
 def write_v1_trace(tmp_path, run_name="run-a"):
@@ -515,7 +515,7 @@ def test_trace_files_manifest_and_steps(tmp_path):
 
 
 def test_executor_refuses_v1_trace_with_real_writer(tmp_path):
-    """110_f preflight at the runtime level: a real TraceWriter cannot
+    """110_s preflight at the runtime level: a real TraceWriter cannot
     be threaded through the four-worker executor, and nothing executes
     or is written before the refusal."""
     latent, inst, registry, steps = make_env("lookup_atomic")
@@ -546,7 +546,7 @@ def test_trace_refuses_to_overwrite(tmp_path):
     rt2.close()
 
 
-# --- pool-bound rendered-request fixture (108_f F3) --------------------------
+# --- pool-bound rendered-request fixture (108_s F3) --------------------------
 # Pins the frozen 106_s §4 execution configuration: rev10 prompts,
 # task_last contract, each worker's independently pinned tokenizer.
 
@@ -558,7 +558,7 @@ def test_pool_rendered_request_fixture_stable():
         pytest.skip(f"pinned tokenizers unavailable: {error}")
     stored = json.loads(FIXTURE_PATH.read_text())
     assert built == stored
-    # The fixture carries its own provenance (108_f addendum).
+    # The fixture carries its own provenance (108_s addendum).
     from tasks.conductor.workerpool import STAGE0_POOL_FINGERPRINT
     assert stored["pool_fingerprint"] == STAGE0_POOL_FINGERPRINT
     assert stored["request_contract_key"] == "worker-blocks-task-last-v1"
@@ -572,7 +572,7 @@ def test_pool_rendered_request_fixture_stable():
         if ":code_1p5b" in key and not key.startswith(("chat_template",
                                                        "tokenizer")):
             assert stored[key.replace("code_1p5b", "code_3b")] == value, key
-    # The same equality on the numeric two-call rows (110_f
+    # The same equality on the numeric two-call rows (110_s
     # carry-forward, taken now): swapping worker 2 for worker 3 at a
     # call position leaves that call's rendered hash unchanged.
     for orientation in ("lookup_first", "code_first"):

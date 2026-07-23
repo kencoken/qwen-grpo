@@ -140,7 +140,7 @@ def execute_workflow_batch(items: list[WorkflowItem],
     semantics are position-sequential by construction, so batching is
     invisible to any single workflow.
     """
-    # 110_f: the v1 trace schema is pool-free, and every worker id —
+    # 110_s: the v1 trace schema is pool-free, and every worker id —
     # not only worker 3 — is a new four-worker identity (worker 2 now
     # means generic-1.5B/rev10/task-last, not the historical
     # Coder-1.5B/rev9/v0). The amended executor therefore refuses the
@@ -155,9 +155,9 @@ def execute_workflow_batch(items: list[WorkflowItem],
     if isinstance(trace, TraceWriter):
         raise InfrastructureError(
             "trace schema v1 is pool-free; the four-worker executor "
-            "refuses legacy TraceWriter output (110_f) — the pool-bound "
+            "refuses legacy TraceWriter output (110_s) — the pool-bound "
             "trace schema lands with the four-worker runtime")
-    # 115_f F2: a trace that owns provenance obligations (the v2
+    # 115_s F2: a trace that owns provenance obligations (the v2
     # pool-bound writer) preflights the items BEFORE any worker call,
     # so composing this executor with a runtime callback directly
     # cannot record a request contract the items do not use.
@@ -390,7 +390,7 @@ class TraceWriter:
 def _trace_step(trace: TraceWriter | None, item: WorkflowItem,
                 record: StepRecord, call_record: Any | None) -> None:
     # Unreachable with a live trace until unit 2: the batch entry point
-    # refuses the pool-free v1 TraceWriter outright (110_f).
+    # refuses the pool-free v1 TraceWriter outright (110_s).
     if trace is not None:
         trace.write_step(item.item_id, record, call_record)
 

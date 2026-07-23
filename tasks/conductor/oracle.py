@@ -244,7 +244,7 @@ class ValidatedSurface:
     observations: Mapping[str, tuple[str, ...]]  # cluster -> observation ids
     data: Mapping[Any, Mapping[str, Mapping[str, float]]]
     namespace: str = ""
-    # 108_f finding 4: candidate ids are meaningless without the pool
+    # 108_s finding 4: candidate ids are meaningless without the pool
     # that defines them; a surface generated under a different
     # four-worker pool (same cardinality, different models/prompts)
     # must fail closed rather than be silently reinterpreted.

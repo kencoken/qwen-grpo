@@ -85,9 +85,15 @@ implemented, per the frozen §10.4 rule.**
    `1e52c399a6e60ebe7c0d475ec3c5f8374f5cd9ca963d63d5c86365cb8f12b6f7`.
 
 Naming note (closure): the reviewer documents 108/110/113/115 were
-misprefixed `_f` and are renamed `_s` at closure; historical documents
-and freeze-digested source cite them by their original names, which
-map one-to-one to the `_s` names.
+misprefixed `_f` and are renamed `_s` at closure. Citations in all
+non-freeze-digested code (60 occurrences across 11 files) are
+corrected in place. Exactly three citations remain under the original
+names: comment strings in the freeze-digested `workerpool.py`, whose
+correction is **queued for the Stage-1/2 launch-profile freeze**
+(when the successor source digest is issued anyway) rather than
+regenerating the closed Stage-0 freeze for a comment edit. Historical
+review-cycle documents keep the names that were correct when written;
+the mapping is one-to-one.
 
 ## Frozen artifact identity (what Stage 1/2 consumes)
 
