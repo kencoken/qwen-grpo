@@ -110,16 +110,16 @@ def test_smoke_rows_use_the_canonical_observation_boundary():
 
 # --- the preregistered demonstrations (121_s) --------------------------------
 
-def test_demo_arrangement_is_the_reviewer_compact_form():
+def test_demo_arrangement_is_the_123s_approved_form():
     ids = [demo["worker_ids"] for demo in policy.CONDUCTOR_DEMOS]
-    assert ids == [[0], [0, 1], [2, 3, 1], [3, 2]]
+    assert ids == [[0], [0, 1], [3, 2, 1], [2, 3]]
     from collections import Counter
     appearances = Counter(w for action in ids for w in action)
     assert appearances == {0: 2, 1: 2, 2: 2, 3: 2}
     # Code order reversed across the two Code-bearing demos.
     code_orders = [[w for w in action if w in (2, 3)] for action in ids
                    if any(w in (2, 3) for w in action)]
-    assert code_orders == [[2, 3], [3, 2]]
+    assert code_orders == [[3, 2], [2, 3]]
 
 
 def test_demo_actions_parse_and_workflows_are_wellformed():
@@ -169,24 +169,27 @@ def test_policy_prompt_never_names_the_models():
                  "large", "small", "checkpoint", "parameter"):
         assert leak not in prompt, leak
     assert "0, 1, 2, or 3" in policy.SYSTEM_CONDUCTOR
+    # 123_s §7: the neutral full-request-context wording.
+    assert "in the context of the full request" in policy.SYSTEM_CONDUCTOR
+    assert "step descriptions tell you" not in policy.SYSTEM_CONDUCTOR
 
 
-def test_demo_check_covers_both_code_workers_on_every_code_node():
+def test_demo_check_cross_swaps_only_the_matched_pair():
+    """123_s §4: the matched independent pair is cross-swapped; the
+    asymmetric specialist example runs only its demonstrated route."""
     variants = grpo_smoke.demo_check_variants()
     labels = [label for label, _, _ in variants]
     assert labels == ["direct:assigned", "dependency:assigned",
                       "independent_final:assigned",
                       "independent_final:code-swapped",
-                      "specialist_check:assigned",
-                      "specialist_check:code-swapped"]
-    # Across variants, both 2 and 3 appear at every Code position.
-    for name in ("independent_final", "specialist_check"):
-        runs = [ids for label, demo, ids in variants
-                if demo["name"] == name]
-        code_positions = [i for i, w in enumerate(runs[0])
-                          if w in (2, 3)]
-        for position in code_positions:
-            assert {run[position] for run in runs} == {2, 3}
+                      "specialist_check:assigned"]
+    runs = [ids for label, demo, ids in variants
+            if demo["name"] == "independent_final"]
+    for position in (0, 1):
+        assert {run[position] for run in runs} == {2, 3}
+    specialist = [ids for label, demo, ids in variants
+                  if demo["name"] == "specialist_check"]
+    assert specialist == [[2, 3]]
 
 
 # --- launch profile and freeze gates -----------------------------------------

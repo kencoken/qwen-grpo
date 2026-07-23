@@ -58,6 +58,31 @@ from .workerpool import STAGE0_POOL_FINGERPRINT
 SURFACE_DIR = Path("runs/stage0-support")
 FREEZE_PATH = FIXTURES / "stage0c_policy_freeze.json"
 
+# 123_s §8.4: the freeze binds a deterministic digest over the
+# executable source that produces the model-visible bundle and the
+# smoke — not the live Git commit (self-referential once the fixture
+# commits) and not the fixture itself.
+SOURCE_DIGEST_FILES = (
+    "tasks/conductor/policy.py",
+    "tasks/conductor/render.py",
+    "tasks/conductor/grpo_task.py",
+    "tasks/conductor/grpo_smoke.py",
+    "tasks/conductor/parser.py",
+    "tasks/conductor/payoff_support.py",
+    "tasks/conductor/workerpool.py",
+    "tasks/conductor/prompts.py",
+)
+
+
+def executable_source_digest() -> str:
+    digest = hashlib.sha256()
+    for name in SOURCE_DIGEST_FILES:
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\x00")
+        digest.update(Path(name).read_bytes())
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
 STAGE0C_LAUNCH_PROFILE: dict[str, Any] = {
     "profile_name": "stage0c-smoke-v1",
     # §10.1: the Conductor shares worker 3's frozen base checkpoint.
@@ -160,14 +185,17 @@ def verify_surface_pin() -> dict:
 # --- demo-check: the exact preregistered workflows (121_s) -------------------
 
 def demo_check_variants() -> list[tuple[str, dict, list[int]]]:
-    """Every execution the check performs: each demo with its assigned
-    ids, plus — for Code-bearing demos — the Code-swapped variant, so
-    both Code workers execute every Code node in full context."""
+    """Every execution the check performs (123_s §4): each demo with
+    its assigned ids; the Code-swapped variant ONLY for the explicitly
+    matched independent→final pair. The specialist→check demo is an
+    asymmetric capability example — requiring universal
+    cross-executability there would contradict the heterogeneity that
+    motivates the four-worker pool."""
     variants = []
     for demo in CONDUCTOR_DEMOS:
         variants.append((f"{demo['name']}:assigned", demo,
                          list(demo["worker_ids"])))
-        if any(w in (2, 3) for w in demo["worker_ids"]):
+        if demo["name"] == "independent_final":
             swapped = [{2: 3, 3: 2}.get(w, w)
                        for w in demo["worker_ids"]]
             variants.append((f"{demo['name']}:code-swapped", demo,
@@ -205,9 +233,12 @@ def run_demo_check() -> int:
                     print(f"    step {step.position} w{step.worker_id}: "
                           f"{status} {step.completion!r}"[:170])
                 failures.append(label)
+        generations = rt.pool.singleton_generations
     finally:
         rt.close()
-    print(f"budget: {len(unique_requests)} unique rendered requests")
+    print(f"budget: {len(unique_requests)} unique rendered requests "
+          f"this run; {generations} new singleton generations "
+          "(cache-backed reruns are free)")
     if failures:
         print(f"FAIL: {failures}")
         return 1
@@ -344,7 +375,8 @@ def compute_freeze_record(review_record: str | None = None
         "launch_profile_sha256": launch_profile_sha256(),
         "support_declaration_sha256": hashlib.sha256(
             DECLARATION_PATH.read_bytes()).hexdigest(),
-        "executable_commit": commit,
+        "executable_source_sha256": executable_source_digest(),
+        "executable_commit_at_freeze": commit,  # informational
         "policy_prompt_review": review_record,
     }
 
@@ -360,7 +392,8 @@ def verify_freeze() -> dict[str, Any]:
     current = compute_freeze_record(frozen.get("policy_prompt_review"))
     for key in ("policy_system_prompt_sha256", "observation_sha256",
                 "chat_template_sha256", "conductor_tokenizer",
-                "launch_profile_sha256", "support_declaration_sha256"):
+                "launch_profile_sha256", "support_declaration_sha256",
+                "executable_source_sha256"):
         if frozen.get(key) != current[key]:
             raise InfrastructureError(
                 f"frozen policy bundle field {key!r} does not match the "

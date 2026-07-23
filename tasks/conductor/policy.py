@@ -15,14 +15,14 @@ generator namespace or `worker_dev` content; endpoint-compatible task
 shapes and the worker-tested `R-*` / "zero-based index … requested
 resource" language are deliberately reused, since demonstrations
 establish legal capabilities, not linguistic generalization). They
-cover the inherited 01_s workflow types under the reviewer's compact
+cover the inherited 01_s workflow types under the 123_s §4 approved
 arrangement, giving every worker exactly two appearances and reversing
 the Code-worker order across the two Code-bearing demos:
 
   1. direct route          [0]        (one step)
   2. dependency chain      [0, 1]     (two steps)
-  3. independent → final   [2, 3, 1]  (three steps)
-  4. specialist → check    [3, 2]     (two steps)
+  3. independent → final   [3, 2, 1]  (three steps)
+  4. specialist → check    [2, 3]     (two steps)
 
 Recorded interpretation (121_s addendum): "specialist → check" is a
 SEMANTIC ROLE PATTERN over the legal `[none, all]` two-step chain, not
@@ -31,16 +31,26 @@ the specialist counts qualifying values and the second worker reads the
 sequence entry at that count — a transform of the first result, not a
 verification operator, and it is recorded as such.
 
-Exchangeability (121_s standard): both Code workers execute both
-Code-bearing demos successfully (demo-check runs each Code-bearing
-workflow with the assigned ids AND with the Code ids swapped);
-assignment was fixed at preregistration, before any probing; no
-task-relevant feature — operation, index regime, wording, access
-pattern or difficulty — is intentionally varied with worker id.
+Exchangeability and capability cues (123_s §§4-5): only the
+independent→final demo is a MATCHED exchangeable pair — both Code
+workers execute both of its `at(...)` nodes, both orderings succeed,
+and assignment within it is not evidence of a capability difference.
+The specialist→check demo is an ASYMMETRIC SUCCESSFUL CAPABILITY
+EXAMPLE: `[2,3]` executes and `[3,2]` reproducibly fails (worker 3's
+characterized task-scope mode on the count-first node — the 122_f
+probe record), so its demonstrated route communicates a coarse,
+disclosed worker-capability cue. Approved framing: the demonstrations
+show workers succeeding on step types they can execute under the
+complete frozen request treatment; they establish executable endpoint
+compatibility while also supplying a limited routing prior. They must
+not be described as conveying format alone or as proving universal
+worker legality across every Code node. `[3,2]` remains a legal
+action in the space; only the false claim that it executes THIS
+specialist chain is absent from the prompt.
 
-STATUS: DRAFT pending the demo-check + reward-blind format probe under
-the 121_s-agreed procedure. Frozen immediately after a passing probe;
-any later change is a new launch profile.
+STATUS: DRAFT pending the cache-backed final demo verification and the
+reward-blind format probe (123_s §10). Frozen immediately after a
+passing probe; any later change is a new launch profile.
 """
 
 from __future__ import annotations
@@ -116,7 +126,7 @@ CONDUCTOR_DEMOS: tuple[dict[str, Any], ...] = (
              "resource": "R-5T4", "access": "none"},
             {"subtask": "Multiply step_1 by step_2, then add 9.",
              "resource": None, "access": "all"}],
-        "worker_ids": [2, 3, 1],
+        "worker_ids": [3, 2, 1],   # 123_s §4 approved amendment
         "gold": 19,   # 5 * 2 + 9
     },
     {
@@ -149,7 +159,7 @@ CONDUCTOR_DEMOS: tuple[dict[str, Any], ...] = (
                         "in the integer sequence from the requested "
                         "resource.",
              "resource": "R-2M8", "access": "all"}],
-        "worker_ids": [3, 2],
+        "worker_ids": [2, 3],      # 123_s §4 approved amendment
         "gold": 6,    # stable_unique -> [7,1,5,2]; count>4 = 2; at(,2) = 6
     },
 )
@@ -179,10 +189,10 @@ def _demo_block() -> str:
 SYSTEM_CONDUCTOR = f"""\
 You are a workflow router. Each request shows a Problem, the resources \
 available, and its numbered Steps. For every step you choose one \
-worker from the pool by its id: 0, 1, 2, or 3. Workers differ in what \
-they handle well; the step descriptions tell you what each step needs. \
-Each step line shows which resource it reads and whether it receives \
-the results of earlier steps.
+worker from the pool by its id: 0, 1, 2, or 3. Workers differ in how \
+they handle a step in the context of the full request. Use the \
+Problem, the step description, the resource and access annotations, \
+and the previous-result pattern.
 
 Reply with exactly {{"worker_ids": [...]}} — one id per step, in step \
 order, and nothing else.
