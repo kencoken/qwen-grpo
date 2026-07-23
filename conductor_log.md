@@ -601,6 +601,21 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   reward ✓; sane distribution held by the recorded smoke ✓. CE0 GO.
   Per the frozen rule, modes 2/3 (co-residency, adapter toggling) are
   NOT implemented — pre-materialized routing is the Stage-2 path.
+- **2026-07-23 STAGE 0 CLOSED — GO with record-only erratum (128_s;
+  corrections in 127_f).** Erratum highlights: 43.4 min prices the
+  diagnostic surface (reference-scale projection ~78 min
+  materialization / ~2 h seed / ≤9.1 h pessimistic, gate still
+  passes; real estimate recomputes at Stage-2 freeze); "live worst
+  case" renamed reference-route live benchmark (worker 3 exercised by
+  materialization — 31 distinct requests per worker — not by that
+  benchmark); 17/18 = terminals reached; computed vs carried gates
+  distinguished; full-command BEAT its prediction and loads sat
+  inside the materialization timer; materialization manifest
+  1e52c399… content-addressed; math_code difficulty-band decision
+  added to Stage-1 prerequisites. Reviewer docs 108/110/113/115
+  renamed _f→_s (misprefixed; originals cited by name in historical
+  docs and frozen source, one-to-one mapping). Stage-1/2 revision
+  from the measured evidence is the next work item.
 - **2026-07-23 106_s UNIT 4 COMPLETE — PROMPT FROZEN + STAGE-0C SMOKE
   (122_f/123_s/124_f):** demo probe ran under the preregistered
   bounded procedure (one repair round; specialist [3,2] failed twice =
