@@ -11,8 +11,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from .types import LEGAL_ACCESS_PATTERNS, is_utf8_encodable
-from .workerpool import WORKER_IDS
+from .types import ENDPOINT_IDS, LEGAL_ACCESS_PATTERNS, is_utf8_encodable
 
 
 class ActionSchemaError(ValueError):
@@ -47,13 +46,12 @@ def _load_action_json(completion: str) -> object:
 
 
 def parse_routing_action(completion: str, num_steps: int) -> list[int]:
-    """§1.5 routing-action schema as amended by 106_s §6.1: the policy
-    emits `{"worker_ids": [w_1, …, w_S]}` and nothing else.
+    """§1.5 frozen routing-action schema: the policy emits
+    `{"worker_ids": [w_1, …, w_S]}` and nothing else.
 
     Extra fields, wrong types, wrong length, non-integer entries, or ids
-    outside the registered worker pool are schema violations (the action
-    space is the enumerated 4^S assignment set); duplicates are
-    permitted.
+    outside {0, 1, 2} are schema violations (the action space is the
+    enumerated 3^S assignment set); duplicates are permitted.
     """
     obj = _load_action_json(completion)
     if not isinstance(obj, dict) or set(obj) != {"worker_ids"}:
@@ -64,8 +62,8 @@ def parse_routing_action(completion: str, num_steps: int) -> list[int]:
     out = []
     for w in ids:
         w = _require_int(w)
-        if w not in WORKER_IDS:
-            raise ActionSchemaError(f"worker id {w} outside {set(WORKER_IDS)}")
+        if w not in ENDPOINT_IDS:
+            raise ActionSchemaError(f"worker id {w} outside {{0, 1, 2}}")
         out.append(w)
     return out
 
@@ -104,9 +102,8 @@ def parse_workflow_action(completion: str) -> WorkflowAction:
             raise ActionSchemaError(f"step keys must be exactly {_STEP_KEYS}")
         subtask = _require_text(raw["subtask"], "subtask")
         worker_id = _require_int(raw["worker_id"])
-        if worker_id not in WORKER_IDS:
-            raise ActionSchemaError(
-                f"worker id {worker_id} outside {set(WORKER_IDS)}")
+        if worker_id not in ENDPOINT_IDS:
+            raise ActionSchemaError(f"worker id {worker_id} outside {{0, 1, 2}}")
         resource = raw["resource"]
         if resource is not None:
             resource = _require_text(resource, "resource")

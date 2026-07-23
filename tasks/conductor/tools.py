@@ -11,7 +11,6 @@ Endpoints: 0 = Lookup (keyed retrieval), 1 = Math (exact calculator),
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -42,32 +41,6 @@ class Binding:
 
     resources: dict[str, Resource] = field(default_factory=dict)
     steps: dict[int, int] = field(default_factory=dict)
-
-
-def binding_sha256(binding: Binding) -> str:
-    """Canonical SHA-256 of one call's authorized inputs (81_f §5.3):
-    resources and predecessor values, serialized deterministically. Shared
-    by the isolated evaluator and composed executor rows so the two paths
-    hash identically. Pure provenance — never affects tool execution."""
-    def unroll(value: Any) -> Any:
-        if isinstance(value, tuple):
-            return [unroll(item) for item in value]
-        return value
-
-    def resource_obj(resource: Resource) -> dict[str, Any]:
-        obj = {"kind": resource.kind, "payload": unroll(resource.payload)}
-        if isinstance(resource, IntegerRecord):
-            obj["layout"] = resource.layout
-        return obj
-
-    from .profiles import canonical_json
-    payload = {
-        "resources": {handle: resource_obj(resource)
-                      for handle, resource in binding.resources.items()},
-        "steps": {str(k): v for k, v in binding.steps.items()},
-    }
-    return hashlib.sha256(
-        canonical_json(payload).encode("utf-8")).hexdigest()
 
 
 # --- tokenizer --------------------------------------------------------------

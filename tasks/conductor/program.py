@@ -61,11 +61,6 @@ NAMESPACE_CONFIG: dict[str, dict[str, Any]] = {
             "stopping_rule": "fixed"},
     "test": {"max_latent_clusters": 2_000, "expansion_batch": 1_000,
              "stopping_rule": "fixed"},
-    # D1 erratum (88_f): the D16 worker-development universe. The cap is
-    # the stopping rule — exhausting 30/cell without a decision requires
-    # a further erratum, never quiet expansion.
-    "worker_dev": {"max_latent_clusters": 30, "expansion_batch": 30,
-                   "stopping_rule": "fixed"},
 }
 
 

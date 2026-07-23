@@ -14,13 +14,4 @@ The frozen executable specification lives at the repo root
 - `contract`   — spec §1.6–1.7 artifact envelope + WorkerResult paths.
 - `tools`      — spec §1.6 grammars/evaluators (independent of `program`).
 - `prompts`    — D16 system prompts + demonstrations (separate freeze).
-
-Stage 0B adds the runtime layer (plan rev6 §8, spec §1.10):
-
-- `runtime`    — versioned runtime profile, caching fingerprints,
-                 `build_runtime`/`close` lifecycle.
-- `workers`    — NF4 worker pool, chat-template request rendering,
-                 batched greedy generation + telemetry.
-- `cache`      — SQLite write-through completion cache (three-part key).
-- `executor`   — gains wave batching (worker × depth) and JSONL traces.
 """
