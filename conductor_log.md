@@ -560,6 +560,22 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   the commit carrying THIS addendum is the executable commit for
   Tranche A. Nothing else lands before launch; the screening/reveal
   checkout guard verifies against the P1 artifacts' recorded commit.
+- **2026-07-23 106_s UNIT 4 — STAGE-0C TRAINER INTEGRATION (120_f):**
+  single trainer-facing conductor reward (0/0.5/1; NO format_reward;
+  missing surface row = infra abort) with positional->semantic
+  inversion; frozen 36-group schedule (declaration order x2,
+  shuffle_dataset=False, 18 updates = one epoch); Conductor policy
+  prompt DRAFT (opaque ids, leakage-tested) + four out-of-domain demos
+  — demo drafting took 4 disclosed GPU probes and live-demonstrated
+  the D16 modes (w2 handle substitution on Q- handles / non-canonical
+  phrasing; w3 invented at()-nesting), final pair executes on BOTH
+  Code workers; named launch profile stage0c-smoke-v1 (sha b05f92ee…)
+  pinning surface manifest 221a04d5…, prompt sha, pool fingerprint,
+  every scientific setting explicit (train.py untouched), model
+  discarded, eval disabled. Reward-bearing smoke GATED on the §10.2
+  prompt review (CLI refuses while policy_prompt_review is null);
+  pre-smoke canary + surface preflights wired. 668 tests; agreement
+  unchanged.
 - **2026-07-22 106_s UNIT 3 — DIAGNOSTIC PAYOFF SUPPORT + CANARY +
   SENTINELS (117_f):** declaration/canary/sentinel fixtures committed
   pre-GPU @530a151 (18 identity-selected observations, 804 planned
