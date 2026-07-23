@@ -1,0 +1,31 @@
+{
+ "chat_template_sha256": "cd8e9439f0570856fd70470bf8889ebd8b5d1107207f67a5efb46e342330527f",
+ "conductor_tokenizer": "Qwen/Qwen2.5-3B-Instruct@aa8e72537993ba99e69dfaafa59ed015b17504d1",
+ "executable_commit_at_freeze": "b597551a7216a702d97a8e6ed7512761422748ac",
+ "executable_source_sha256": "688f7e06da6e9ca04b1714663b032efc178d2790ef8859c3275ddd52e276cee8",
+ "freeze": "stage0c-policy-v1",
+ "launch_profile_sha256": "0815c033365f9796eeda1caac2e7b2f30e5d1620560ff07f1e14d00adfb7e9ba",
+ "observation_sha256": {
+  "code_atomic:worker_dev:00000:641a0144:bound_var:private": "c5b8349fbe5efe366293b132e731ed8d4ebee0128c39a80f68dc27681eacb4bb",
+  "code_atomic:worker_dev:00000:641a0144:goal_first:private": "155f6540598b15cebc3863cda50ac0c21c6cc5de0fde149d44a8e709e1ac7fff",
+  "code_atomic:worker_dev:00000:641a0144:resource_first:private": "cee89d4cd5173408876eb1c0adf3ad82b1d8236d11fdb44742bf1d61651db291",
+  "fork_join:worker_dev:00000:5b6d01a9:bound_var:private": "f5b8fd9b7753c876ab63348ca378bd2199984a2c57dd37b2e27f9ef87161f4d4",
+  "fork_join:worker_dev:00000:5b6d01a9:goal_first:private": "a6d4f6182ac956d1d27042f38e0777a9051dc853c0ec426896248d4758c24496",
+  "fork_join:worker_dev:00000:5b6d01a9:resource_first:private": "f1fd04ce6576948cedbb63f33c1403d23f03f30cf2cf6b4ff7fcda26829fe8e7",
+  "lookup_atomic:worker_dev:00000:6cd84516:bound_var:private": "bc2d34bdc1fb6293d1b75c9b583a058a105103020326a25fecb405fa39b1a775",
+  "lookup_atomic:worker_dev:00000:6cd84516:goal_first:private": "aeb671d0b8014b694b0e57369eb1a986d211d4aaa6e5505bc03b6c257399bc48",
+  "lookup_atomic:worker_dev:00000:6cd84516:resource_first:private": "2191191761f616120c9ad54fc403f8be1e442df54605d85771c830cde0dd24f2",
+  "lookup_math:worker_dev:00000:1093f92d:bound_var:private": "18ce0111d281cc4a8f35add6f34a3700e0bb5db4d28be048b29d9be9b6eb80c2",
+  "lookup_math:worker_dev:00000:1093f92d:goal_first:private": "45264c096a3b268db445a13663c63e5cabbe1438da3a1b113ca865d76452abed",
+  "lookup_math:worker_dev:00000:1093f92d:resource_first:private": "451856685fff0dcb7bf7865df425ff4783341cfafa82c7d8e4475bcf7a3d6e16",
+  "math_atomic:worker_dev:00000:90b1f9dd:bound_var:private": "b5007b4d1ce2a10b7a425a6d1f37b471ad576919e97c8946d1e4a944b11a3cb1",
+  "math_atomic:worker_dev:00000:90b1f9dd:goal_first:private": "46587dfb3ec5b15bc4787a74117f281c3e7bf702f20ac7d1472df2056914e51b",
+  "math_atomic:worker_dev:00000:90b1f9dd:resource_first:private": "ccea0ab407bac382049685ff43a1af7a64cc9fcf63c4deb0d19ea79e8e7a2b22",
+  "math_code:worker_dev:00000:f0f757f8:bound_var:private": "aad04ee409a0ad7bfd8c8b94b9898d3dfd461d4f4f7f2db2f4c3ab974d65eaac",
+  "math_code:worker_dev:00000:f0f757f8:goal_first:private": "3db2912c938afb34a5f299892280bfa62c8a12d2547f0e7a4ca55c15f34806e7",
+  "math_code:worker_dev:00000:f0f757f8:resource_first:private": "a47e734ae11e2bdd27440a362c30a463a088e9a1d3a7b0b629b88529aef1652e"
+ },
+ "policy_prompt_review": "123_s_d16_stage_0_four_worker_unit_4_prompt_freeze_prereg_review (with 121_s, 122_f prereg, 124_f outcome)",
+ "policy_system_prompt_sha256": "fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070",
+ "support_declaration_sha256": "6df4c42b69f8480c9da01d60e664f618eec971d0f0cdd2aa90828cc7d39c4fff"
+}

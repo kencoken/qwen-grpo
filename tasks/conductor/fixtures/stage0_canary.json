@@ -1,0 +1,21 @@
+{
+ "aggregate_exclusion": "excluded from every aggregate smoke reward/variance/routing summary (106_s \u00a79.4)",
+ "canary": "stage0-w2-w3-disagreement-v1",
+ "case_id": "code_atomic:worker_dev:00001:debbe31e:goal_first:private:n1",
+ "cell_id": "code_atomic",
+ "expected": {
+  "worker_2_correct": false,
+  "worker_3_correct": true
+ },
+ "in_ordinal0_support": false,
+ "namespace": "worker_dev",
+ "observation_id": "code_atomic:worker_dev:00001:debbe31e:goal_first:private",
+ "ordinal": 1,
+ "provenance": {
+  "runs/104f-3b-screen/generic_3b-task_last-rev10-sel-r1/scores.jsonl": "66d51013c4c19432fb90fa56d83febab219d7690df3a95d3251425012ed65655",
+  "runs/99f-rev10/generic_1p5b-task_last-rev10-sel-r1/scores.jsonl": "b32f90b26e84975e0317d877e25b13bce3f2468324c79450fe58dfef68816f77"
+ },
+ "renderer_id": "goal_first",
+ "selection_rule": "first sorted code_atomic node-correctness disagreement between the retained rev10 worker-2 and worker-3 runs",
+ "visibility": "private"
+}
