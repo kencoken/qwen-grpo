@@ -560,6 +560,33 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   the commit carrying THIS addendum is the executable commit for
   Tranche A. Nothing else lands before launch; the screening/reveal
   checkout guard verifies against the P1 artifacts' recorded commit.
+- **2026-07-23 CE0 PREREGISTRATION (106_s §10.4, unit 5) — frozen
+  BEFORE the GPU command.** Executable commit = the commit carrying
+  this entry (worktree clean at run). Bound artifacts: launch profile
+  0815c033…, surface manifest 221a04d5…, support declaration
+  6df4c42b…, policy freeze 6cf44e2d…, uv.lock f5486ec4….
+  **Exact command:** `uv run python -m tasks.conductor.ce0 run --out
+  runs/ce0` (env manifest; full-command materialization timing via the
+  exact payoff_support CLI subprocess w/ nvidia-smi device polling;
+  cache-disabled live worst case = the 18 unique observations under
+  family-reference assignments; CPU 4^S enumeration pass; gate
+  report). **Predictions:** materialization 124 unique generations /
+  324 rows / in-process ~46-55s / full-command 90-240s / device peak
+  ≤6 GiB / surface ~3-4 MB; live worst case 18 workflows, 30 planned
+  steps, exactly 30 physical generations (no cross-instance dedup),
+  wall ≤60s, in-process peak ≤6 GiB, **17/18 terminals reached (the
+  math_code×goal_first reference fails at its Code node — the known
+  worker-2 mode)**; enumeration 324 builds <5s. **Gates (thresholds
+  frozen):** max observed peak reserved VRAM (worker phase, live
+  phase, recorded 14.43 GiB training phase) < 22 GiB; projected
+  Stage-2 seed (materialization + 300 updates at the recorded 8.51
+  s/update) ≤ overnight (12 h); no infrastructure failures represented
+  as reward (smoke: 0; abort path raises, trainer-callable-tested);
+  sane non-degenerate distribution already held by the recorded smoke
+  (§10.4 definition). Deployment decision rule: if pre-materialized
+  routing passes, modes 2/3 (co-residency, adapter toggling) are NOT
+  implemented. Results append below this entry; thresholds do not
+  move after launch.
 - **2026-07-23 106_s UNIT 4 COMPLETE — PROMPT FROZEN + STAGE-0C SMOKE
   (122_f/123_s/124_f):** demo probe ran under the preregistered
   bounded procedure (one repair round; specialist [3,2] failed twice =
