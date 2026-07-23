@@ -903,7 +903,7 @@ def test_surface_json_round_trip_for_control_kinds():
         return {c: {cl: {f"{cl}:resource_first:private": 1}
                     for cl in clusters} for c in candidates}
     one_call = oracle.validate_one_call_surface(
-        surface_for(oracle.ENDPOINT_IDS), "fork_join")
+        surface_for(oracle.WORKER_IDS), "fork_join")
     two_call = oracle.validate_two_call_surface(
         surface_for(oracle.enumerate_two_call_workflows()), "fork_join")
     for surface in (one_call, two_call):

@@ -346,7 +346,10 @@ class WorkerResult:
                     f"flags must be true/true")
 
 
-# §1.5/§1.8: frozen endpoint indices == opaque routing worker ids.
+# Endpoint-family indices/names. Since the 106_s four-worker pivot
+# these are NOT the routing action domain: worker ids live in
+# workerpool.WORKER_IDS and map onto families via WORKER_TO_ENDPOINT
+# (workers 2 and 3 share the code family).
 ENDPOINT_LOOKUP, ENDPOINT_MATH, ENDPOINT_CODE = 0, 1, 2
 ENDPOINT_IDS = (ENDPOINT_LOOKUP, ENDPOINT_MATH, ENDPOINT_CODE)
 ENDPOINT_NAMES = {0: "lookup", 1: "math", 2: "code"}
@@ -593,7 +596,11 @@ FIELD_POOL = (
 )
 
 # §1.13: namespaces are disjoint generation universes.
-NAMESPACES = ("construction", "qualification", "train", "dev", "test")
+NAMESPACES = ("construction", "qualification", "train", "dev", "test",
+              # D1 erratum (88_f): dedicated worker-development
+              # universe — adaptive inspection permitted, permanently
+              # barred from screens/estimates.
+              "worker_dev")
 
 # §1.4: renderer ids; `resource_first` is canonical.
 RENDERER_IDS = ("resource_first", "goal_first", "bound_var")

@@ -129,6 +129,9 @@ _DEMO_LOOKUP_RECORD = IntegerRecord(layout="keyed", payload=(
 _DEMO_MATH_RECORD = IntegerRecord(layout="operands", payload=(
     ("a", 83719), ("b", 43), ("c", 1), ("d", 6)))
 
+_DEMO_MATH_MOD_RECORD = IntegerRecord(layout="operands", payload=(
+    ("a", 138462175), ("b", 53), ("c", 21), ("m", 13)))
+
 _DEMO_CODE_LIST = IntegerList(payload=(6, 1, 6, 9, 4, 1, 8, 3, 9, 2, 7, 4))
 
 DEMONSTRATIONS: dict[str, list[dict[str, object]]] = {
@@ -153,6 +156,16 @@ DEMONSTRATIONS: dict[str, list[dict[str, object]]] = {
         "handle": None, "resource": None, "steps": {1: 84},
         "completion": "<artifact>step_1 * 8 + 12</artifact>",
         "value": 684,
+    }, {
+        # rev10 (99_f): matched-regime modular translation — the exact
+        # math_code Math subtask and operand regime whose paren-dropped
+        # mistranslation scored 0/30 in Tranche A (98_f). Used only by
+        # SYSTEM_MATH_REV10; rev9's text is byte-unchanged.
+        "subtask": "Evaluate `(a × b + c) mod m` exactly using the "
+                   "integers in the requested resource.",
+        "handle": "R-4V7", "resource": _DEMO_MATH_MOD_RECORD,
+        "completion": "<artifact>(a * b + c) % m</artifact>",
+        "value": 2,
     }],
     "code": [{
         "subtask": "Remove later occurrences of repeated values from the "
@@ -188,11 +201,15 @@ DEMONSTRATIONS: dict[str, list[dict[str, object]]] = {
 }
 
 
-def _demo_payload_text(endpoint: str) -> str:
-    demo = DEMONSTRATIONS[endpoint][0]
+def _demo_payload_text_for(endpoint: str, index: int) -> str:
+    demo = DEMONSTRATIONS[endpoint][index]
     resource = demo["resource"]
     assert isinstance(resource, (IntegerRecord, IntegerList))
     return resource.payload_text(str(demo["handle"]))
+
+
+def _demo_payload_text(endpoint: str) -> str:
+    return _demo_payload_text_for(endpoint, 0)
 
 
 def _demo_completion(endpoint: str) -> str:
@@ -255,6 +272,32 @@ correct response:
 Your entire reply must be exactly the artifact — no text before it, no \
 text after it."""
 
+# rev10 (99_f follow-up preregistration): ONE bounded Math amendment
+# targeting the 98_f diagnosis — the model drops the parentheses when
+# translating `(a × b + c) mod m` under the bound_var problem phrasing
+# (0/30 in Tranche A under task_last; the same string in all 30
+# failures). The amendment adds a matched-regime modular worked example
+# (the rev9 Code lesson applied to Math) plus a positive-only
+# parenthesis rule — no wrong exemplar, because the paren-less form IS
+# the model's prior and rev7 showed such strings become templates.
+# Lookup and Code texts are byte-identical to rev9.
+_MATH_FINAL = ("Your entire reply must be exactly the artifact — no "
+               "text before it, no text after it.")
+assert SYSTEM_MATH.endswith(_MATH_FINAL)
+SYSTEM_MATH_REV10 = SYSTEM_MATH[:-len(_MATH_FINAL)] + f"""\
+Third example — given this resource:
+
+{_demo_payload_text_for("math", 2)}
+
+the task "{DEMONSTRATIONS["math"][2]["subtask"]}" has exactly this \
+correct response:
+
+{DEMONSTRATIONS["math"][2]["completion"]}
+
+Keep the parentheses exactly as the task writes them: mod is written % \
+and applies to the whole parenthesized expression, so `(a × b + c) mod \
+m` becomes (a * b + c) % m. {_MATH_FINAL}"""
+
 SYSTEM_CODE = f"""\
 You are a sequence-processing worker. The sequence argument in your \
 expression is always the word resource — never a name like R-8C3; \
@@ -305,6 +348,87 @@ The sequence argument is always the word resource, never its name. Your \
 reply must contain <artifact> and </artifact> exactly once, with the \
 expression between them."""
 
+# rev11 (101_f follow-up preregistration): ONE bounded Code amendment
+# targeting the three residual modes characterized in 100_f (13/270,
+# all protocol-class): (1) invented at()-inside-stable_unique nesting —
+# shared by both models, a DSL type-clarity gap; (2) recomputing the
+# upstream Math step inline under goal_first instead of using step_k;
+# (3) envelope tag confusion. Rules are positive-only in the rev7/8
+# sense — no copyable wrong exemplar, since two of the modes are the
+# models' own inventions. rev9's existing text (including its
+# load-bearing Wrong: contrasts, per the code_local_v1 result) is the
+# byte-identical prefix; Lookup is rev9 and Math is the rev10 text.
+_CODE_FINAL = ("The sequence argument is always the word resource, "
+               "never its name. Your reply must contain <artifact> and "
+               "</artifact> exactly once, with the expression between "
+               "them.")
+assert SYSTEM_CODE.endswith(_CODE_FINAL)
+SYSTEM_CODE_REV11 = SYSTEM_CODE[:-len(_CODE_FINAL)] + """\
+Three exactness rules: at(seq, n) produces a single number and never \
+appears inside stable_unique or rotate_left — the sequence is always \
+resource, or stable_unique and rotate_left nested around resource. \
+When the task's number comes from an earlier step it is given as \
+step_k — use step_k exactly as written; never recompute it from the \
+Problem's formulas, and never add other steps' results to your \
+expression. The tags are always literally <artifact> and </artifact>, \
+never a function name. """ + _CODE_FINAL
+
+# 92_s §2.3 second Code prompt condition — model-neutral, derived only
+# from the retained rev1-9 evidence (no new GPU output was inspected):
+# - task-locality is the FIRST rule: the dominant alternative-renderer
+#   failure solved or composed the global Problem (78_s finding 3);
+#   rev3 carried the rule mid-prompt, rev4 cut it, rev9 never restored
+#   it explicitly;
+# - NO wrong exemplars: rev7/8 showed a concrete wrong string that
+#   flatters the model's prior becomes a template, and rev8's
+#   non-copyable phrasing still left re-invented guards — v1 states the
+#   positive rule only;
+# - the rev4 winning layout (critical rules first, worked examples,
+#   rules + envelope restated last) and the rev9 matched-regime
+#   step_1 = 10 demonstration are kept.
+# Lookup and Math texts are byte-identical to rev9 in this bundle.
+SYSTEM_CODE_LOCAL_V1 = f"""\
+You are a sequence-processing worker. Complete only the assigned Task — \
+the Problem is background context, and other numbers or operations in \
+it are not part of your answer. The sequence argument in your \
+expression is always the word resource — never a name like R-8C3 — and \
+it refers to the sequence shown under Resource: in this request. \
+Respond with exactly one <artifact>...</artifact> containing a single \
+expression with no arithmetic operators. The top-level call must be \
+count_gt(seq, n) or at(seq, n), where seq is resource or a nesting \
+formed only with stable_unique(seq) and rotate_left(seq, n), and n is \
+a nonnegative integer or step_k, written exactly as given. In \
+count_gt, at, and rotate_left, the FIRST argument is the sequence and \
+the SECOND is the number; stable_unique takes only the sequence. \
+stable_unique keeps the first occurrence of each value; rotate_left \
+rotates left; at is zero-based, and any step_k you are given is \
+already a valid zero-based index, even when it is large.
+
+Worked example — given this resource:
+
+{_demo_payload_text("code")}
+
+the task "{DEMONSTRATIONS["code"][0]["subtask"]}" has exactly this \
+correct response:
+
+{_demo_completion("code")}
+
+Second example — with the previous result step_1 = 10, the task \
+"{DEMONSTRATIONS["code"][1]["subtask"]}" has exactly this correct \
+response:
+
+{DEMONSTRATIONS["code"][1]["completion"]}
+
+Third example — the task "{DEMONSTRATIONS["code"][2]["subtask"]}" has \
+exactly this correct response:
+
+{DEMONSTRATIONS["code"][2]["completion"]}
+
+Answer the Task alone, using the word resource for the sequence and \
+step_k or integers exactly as given. Your reply must contain \
+<artifact> and </artifact> exactly once, with the expression between \
+them."""
+
 # Unchanged from rev0: the direct arms (B1/B3/B4) run on the policy model,
 # which the worker pool does not load; revising SYSTEM_DIRECT without
 # execution evidence would be a change without measurement. Revisit when
@@ -331,6 +455,31 @@ PROMPT_REVISIONS: dict[str, dict[str, str]] = {
         "lookup": SYSTEM_LOOKUP,
         "math": SYSTEM_MATH,
         "code": SYSTEM_CODE,
+    },
+    # 92_s §2.3: the second Code prompt condition; DRAFT until reviewed
+    # and hashed into the frozen preregistration. RETIRED by the 98_f
+    # Tranche A outcome (dominated by rev9 in every paired contrast).
+    "code_local_v1": {
+        "lookup": SYSTEM_LOOKUP,
+        "math": SYSTEM_MATH,
+        "code": SYSTEM_CODE_LOCAL_V1,
+    },
+    # 99_f follow-up: rev9 with ONE bounded Math amendment (matched-
+    # regime modular example + positive parenthesis rule) targeting the
+    # 98_f math_code × bound_var diagnosis. Lookup/Code byte-identical
+    # to rev9.
+    "rev10": {
+        "lookup": SYSTEM_LOOKUP,
+        "math": SYSTEM_MATH_REV10,
+        "code": SYSTEM_CODE,
+    },
+    # 101_f follow-up: rev10 with ONE bounded Code amendment (the three
+    # positive exactness rules) targeting the 100_f residual modes.
+    # Lookup byte-identical to rev9; Math byte-identical to rev10.
+    "rev11": {
+        "lookup": SYSTEM_LOOKUP,
+        "math": SYSTEM_MATH_REV10,
+        "code": SYSTEM_CODE_REV11,
     },
 }
 

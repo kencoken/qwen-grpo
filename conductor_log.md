@@ -534,3 +534,251 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
 ## Entries
 
 *(CE0, CE1 to be pre-registered here before any GPU spend.)*
+
+### 2026-07-22 — D1 ratified; 92_s frozen; Tranche A authorized
+
+- **D1 ratification (Ken):** the `worker_dev` namespace erratum `88_f`
+  (as amended per 89_s) is ratified; `worker_dev` commands are
+  authorized from this commit forward. Usage contract: adaptive
+  inspection permitted; permanently barred from construction,
+  qualification, train, dev and test; cap 30/cell is the stopping rule.
+- **92_s frozen (Ken):** the scope × model × prompt preregistration is
+  FROZEN with its Freeze Record (prompt shas incl. `code_local_v1`
+  `17a05a19…`, both contract digests, cohort `c0f53203…`, support
+  registry `84b4baa3…`, retained P0 artifact hashes, frozen cost gate,
+  `EXPERIMENT_DEVICE`). The executable commit for Tranche A is the
+  commit carrying this entry; screen/reveal verify it. Review chain:
+  92_s → 94_s/95_f → 96_s/97_f; reviewer committed to changed-lines
+  re-checks only.
+- **P0 record:** replays at `20dc20c` — original ×2 bit-identical
+  (0/90), reversed-within-chunk 0/90 (sensitivity = batch composition,
+  not position), singleton 2/90 reproducing 78_s microbatch-1 exactly;
+  raw artifacts retained in `runs/p0-rev9-replay/` (hashes in the
+  Freeze Record).
+- **Executable-commit addendum (2026-07-22):** the post-freeze rename
+  of the 91–97 cycle docs (`81b7ec6`, zero content change) moved HEAD;
+  the commit carrying THIS addendum is the executable commit for
+  Tranche A. Nothing else lands before launch; the screening/reveal
+  checkout guard verifies against the P1 artifacts' recorded commit.
+- **2026-07-23 CE0 PREREGISTRATION (106_s §10.4, unit 5) — frozen
+  BEFORE the GPU command.** Executable commit = the commit carrying
+  this entry (worktree clean at run). Bound artifacts: launch profile
+  0815c033…, surface manifest 221a04d5…, support declaration
+  6df4c42b…, policy freeze 6cf44e2d…, uv.lock f5486ec4….
+  **Exact command:** `uv run python -m tasks.conductor.ce0 run --out
+  runs/ce0` (env manifest; full-command materialization timing via the
+  exact payoff_support CLI subprocess w/ nvidia-smi device polling;
+  cache-disabled live worst case = the 18 unique observations under
+  family-reference assignments; CPU 4^S enumeration pass; gate
+  report). **Predictions:** materialization 124 unique generations /
+  324 rows / in-process ~46-55s / full-command 90-240s / device peak
+  ≤6 GiB / surface ~3-4 MB; live worst case 18 workflows, 30 planned
+  steps, exactly 30 physical generations (no cross-instance dedup),
+  wall ≤60s, in-process peak ≤6 GiB, **17/18 terminals reached (the
+  math_code×goal_first reference fails at its Code node — the known
+  worker-2 mode)**; enumeration 324 builds <5s. **Gates (thresholds
+  frozen):** max observed peak reserved VRAM (worker phase, live
+  phase, recorded 14.43 GiB training phase) < 22 GiB; projected
+  Stage-2 seed (materialization + 300 updates at the recorded 8.51
+  s/update) ≤ overnight (12 h); no infrastructure failures represented
+  as reward (smoke: 0; abort path raises, trainer-callable-tested);
+  sane non-degenerate distribution already held by the recorded smoke
+  (§10.4 definition). Deployment decision rule: if pre-materialized
+  routing passes, modes 2/3 (co-residency, adapter toggling) are NOT
+  implemented. Results append below this entry; thresholds do not
+  move after launch.
+- **2026-07-23 CE0 RESULTS — GO (runs/ce0/ce0_results.json,
+  executable commit 55a680f, clean tree).** Every prediction hit:
+  materialization 124 unique generations / 324 rows, in-process 46.7s,
+  full-command 51.1s (startup+loads only 4.4s), device peak 3.77 GiB,
+  surface 3.6 MB; live worst case 18 workflows / 30 planned steps /
+  EXACTLY 30 physical generations (no cross-instance dedup), wall
+  9.5s (0.315 s/generation), peak 1.2 GiB, 17/18 terminals — the
+  predicted math_code×goal_first reference miss; enumeration 324
+  builds in <0.1s. Gates: max observed peak 14.43 GiB < 22 ✓;
+  projected seed: pre-materialized FIRST SEED 43.4 min / additional
+  42.6 min (live mode 84.8 min) ≤ overnight ✓; no infra failures as
+  reward ✓; sane distribution held by the recorded smoke ✓. CE0 GO.
+  Per the frozen rule, modes 2/3 (co-residency, adapter toggling) are
+  NOT implemented — pre-materialized routing is the Stage-2 path.
+- **2026-07-23 STAGE 0 CLOSED — GO with record-only erratum (128_s;
+  corrections in 127_f).** Erratum highlights: 43.4 min prices the
+  diagnostic surface (reference-scale projection ~78 min
+  materialization / ~2 h seed / ≤9.1 h pessimistic, gate still
+  passes; real estimate recomputes at Stage-2 freeze); "live worst
+  case" renamed reference-route live benchmark (worker 3 exercised by
+  materialization — 31 distinct requests per worker — not by that
+  benchmark); 17/18 = terminals reached; computed vs carried gates
+  distinguished; full-command BEAT its prediction and loads sat
+  inside the materialization timer; materialization manifest
+  1e52c399… content-addressed; math_code difficulty-band decision
+  added to Stage-1 prerequisites. Reviewer docs 108/110/113/115
+  renamed _f→_s (misprefixed; originals cited by name in historical
+  docs and frozen source, one-to-one mapping). Stage-1/2 revision
+  from the measured evidence is the next work item.
+- **2026-07-23 CLOSURE RECORD REORGANIZED (129_f).** On Ken's review,
+  the 128_s corrections were moved out of 127_f into the paired
+  completion record 129_f_stage_0_completion.md (forward revert, no
+  history rewrite): 127_f is restored to the exact bytes 128_s
+  reviewed plus one disclosed pointer block, and 129_f carries the six
+  dispositions, the naming trail and the closure statement. The
+  "corrections in 127_f" phrasing in the entry above is superseded by
+  129_f. The authoritative closure set: 127_f + 128_s + 129_f.
+- **2026-07-23 106_s UNIT 4 COMPLETE — PROMPT FROZEN + STAGE-0C SMOKE
+  (122_f/123_s/124_f):** demo probe ran under the preregistered
+  bounded procedure (one repair round; specialist [3,2] failed twice =
+  worker 3's task-scope mode on count-first nodes, verbatim outputs +
+  corrected accounting 10 requests/14 completions in 124_f); 123_s
+  approved amendment [3,2,1]/[2,3] (both routes pre-verified),
+  narrowed exchangeability to the matched pair, disclosed the
+  capability cue, neutral prompt wording, source-digest freeze
+  binding. Cache-backed verification 5/5 with 0 new generations;
+  format probe 144/144 valid + right length (floor 0.80); PROMPT
+  FROZEN (fixture 6cf44e2d…, profile 0815c033…). Reward-bearing smoke
+  COMPLETE: 18 updates/153s/14.43 GiB, parse 99.65%, rewards 1/148/139
+  (48.3% success vs ~19.8% uniform; per 125_s the demonstration
+  contribution is NOT identified — initialization and/or rapid early
+  adaptation; halves 38.9%→57.6%),
+  zero-variance 28/36, mixed groups 7, all four workers selected (w2
+  49 / w3 54 at Code positions), canary exact, zero infra aborts,
+  schedule enforced, model discarded. All §10.4 sanity conditions
+  hold. Stage-2 demo-treatment decision registered as deferred. 125_s wrap-up
+  review CLOSED record-only (126_f): partial-source-digest scope note
+  + environment/run content addresses (all four artifact hashes match
+  the reviewer's), frozen-source errata recorded unedited,
+  attribution corrected, unidirectional scale contrast carried to the
+  handoff. NEXT: unit 5 (CE0 prereg w/ complete source/environment
+  manifest + Stage-0 go/no-go handoff).
+- **2026-07-23 106_s UNIT 4 — STAGE-0C TRAINER INTEGRATION (120_f):**
+  single trainer-facing conductor reward (0/0.5/1; NO format_reward;
+  missing surface row = infra abort) with positional->semantic
+  inversion; frozen 36-group schedule (declaration order x2,
+  shuffle_dataset=False, 18 updates = one epoch); Conductor policy
+  prompt DRAFT (opaque ids, leakage-tested) + four out-of-domain demos
+  — demo drafting took 4 disclosed GPU probes and live-demonstrated
+  the D16 modes (w2 handle substitution on Q- handles / non-canonical
+  phrasing; w3 invented at()-nesting), final pair executes on BOTH
+  Code workers; named launch profile stage0c-smoke-v1 (sha b05f92ee…)
+  pinning surface manifest 221a04d5…, prompt sha, pool fingerprint,
+  every scientific setting explicit (train.py untouched), model
+  discarded, eval disabled. Reward-bearing smoke GATED on the §10.2
+  prompt review (CLI refuses while policy_prompt_review is null);
+  pre-smoke canary + surface preflights wired. 668 tests; agreement
+  unchanged.
+- **2026-07-22 106_s UNIT 3 — DIAGNOSTIC PAYOFF SUPPORT + CANARY +
+  SENTINELS (117_f):** declaration/canary/sentinel fixtures committed
+  pre-GPU @530a151 (18 identity-selected observations, 804 planned
+  steps, wv/wp-bound). Materialized runs/stage0-support: 324 payoff
+  rows complete + verified fail-closed; 560 executed step records
+  (dependency blocking −244), 124 actual singleton generations
+  (in-flight dedup; accounting corrected at the pool after a
+  first-run mislabel, disclosed in 117_f), wall 47.5s. Canary: w2 0.5
+  vs w3 1.0 — model-scale selection reaches the reward path.
+  Sentinels: 6 retained 99_f/104_f requests reproduced bit-for-bit by
+  both workers, both orders. Surface: 24/324 winners; families exact;
+  BIDIRECTIONAL scale stakes inside the support (math_code×goal_first
+  requires worker 3; fork_join×bound_var/goal_first require worker 2;
+  reference routing 17/18). 641 tests; agreement unchanged.
+- **2026-07-22 106_s UNIT 2 — FOUR-WORKER RUNTIME + RECORDED SMOKE
+  (112_f):** v2 profile embeds the ordered WorkerSpecs (re-derived and
+  compared against the frozen registry; microbatch frozen at 1;
+  task_last required); FourWorkerPool shares physical objects by
+  derived weights key, verifies registered prompt SHAs at construction
+  and NF4-unpacked parameter counts at load; FourWorkerRuntime cache
+  key = wv + slw (selected-logical-worker execution fingerprint) +
+  request in the new worker_completions table (§8.5: no v1 field
+  carries the new identity); PoolTraceWriter = trace schema v2 binding
+  pool fingerprint + logical-to-physical mapping. Smoke re-enabled on
+  the four-worker pool and recorded: 19 workflows (reference + :w3 +
+  :wf), pass 1 33 calls wall 10.5s, worker 3 6/6 success on the real
+  3B checkpoint, wrong-family item typed 0.5 no abort, pass 2 33/33
+  cache-served byte-identical, peak reserved VRAM 3.18 GiB. 615 tests;
+  agreement 16,665/16,665 unchanged.
+- **2026-07-22 106_s FROZEN — STAGE 0 FOUR-WORKER ORCHESTRATION
+  PIVOT (Ken sign-off, all five §0 decisions):** the universal-Code-
+  worker search stops; Stage 0 finishes around a flat four-worker /
+  two-checkpoint pool (lookup_1p5b, math_1p5b, code_1p5b, code_3b; one
+  rev10 bundle, task_last, NF4, singleton-v1), motivated by the
+  verified 235/22/13/0 rev10 overlap (union 270/270, selection
+  evidence only). 4^S action space (4/16/64), Coder checkpoints
+  retired, universal-worker acceptance requirement retired (§6.4),
+  cascade + router analysis deferred to Stage 1, pre-materialized
+  outcomes the preferred Stage-0C path. Freeze Record appended
+  (approved draft @08ae2a1 sha 73f30391…; identity hashes recorded).
+  Implementation proceeds in the §13 review units: (1) registry +
+  schema erratum + CPU fixtures, (2) 0B runtime, (3) evaluation
+  support, (4) 0C integration, (5) CE0 + handoff.
+- **2026-07-22 3B SCREEN OUTCOME — ALL FOUR ARMS MISS (105_f):**
+  generic_3b 878 (rev10) / 869 (rev11); coder_3b 741 / 752. Guard held
+  everywhere (4×630 Lookup/Math records byte-identical to 99_f). Scale
+  is non-monotonic: generic_3b fixed ALL 13 characterized 1.5B
+  residual cases under both prompts but introduced global composition
+  (solves the whole Problem in one node, fork_join goal_first 15/30)
+  and the first legal-but-wrong-value Code outputs in the D16 record.
+  Instruction-capacity hypothesis refuted (rev11@3B < rev10@3B; handle
+  substitution reappears at scale). Coder prior = anti-protocol prior:
+  ~150 handle-substitution failures per coder_3b arm; every coder
+  variant loses to its generic sibling at both scales. Admission
+  incident disclosed: coder_3b-rev10 attempt 1 refused by the frozen
+  cost gate (P1 #1 wall included the one-time checkpoint download);
+  clean re-attempt under the unchanged gate admitted at ~300s
+  projected (P0-precedent, flagged for ratification). Best known
+  remains generic_1p5b/task_last/rev10 at 887/900. All dominant modes
+  are Problem-visibility failures → local_only is the evidenced next
+  probe; orchestration pivot case now "considerably stronger" (103_s
+  criterion). Next decision is Ken + reviewer's.
+- **2026-07-22 103_s REVIEW + 104_f 3B SCREEN PREREG:** reviewer
+  verified all rev10/rev11 figures and added the union analysis — no
+  Code case is missed by all three 1.5B policies (A∪B∪C = 270/270
+  oracle; cell×renderer routing perfect, held-out 135/135, but
+  renderer-conditioned). Two 102_f claims corrected by addendum:
+  conservation-of-failures is a hypothesis (three rules changed
+  jointly), and the recency mechanism is wrong (the final
+  handle-substitution sentence stayed literally last) — the defensible
+  framing is prompt interference/instruction load. 104_f preregisters
+  the 103_s course: {generic_3b, coder_3b} × task_last × {rev10,
+  rev11}, tranche F3, generic arms first (rev11-at-3B unconditional as
+  the instruction-capacity test), coder arms only if both generic arms
+  miss; frozen gates unamended; 630 Lookup/Math records byte-identity
+  guard vs the 99_f run (F3 support digests are byte-identical to the
+  1.5B counterparts — one shared Qwen2.5 chat template, so the screen
+  swaps weights only). Prompt editing on the current worker_dev
+  population is closed; the complementary 1.5B policies are preserved
+  for a separate orchestration prereg.
+- **2026-07-22 rev11 FOLLOW-UP OUTCOME (101_f/102_f):** both arms
+  admitted; both MISS; stop rule applied. rev11 fixed 10/13 targeted
+  cases but induced 19 regressions (handle substitution returned —
+  rule-dilution reproducing the rev3/rev4 layout sensitivity): net
+  878/900 vs rev10's 887/900. Conditional coder arm 844/900 (fork_join
+  goal_first 1/30 — composition mode) closes the 1.5B model switch on
+  full evidence. Conservation-of-failures at 1.5B demonstrated = the
+  properly-measured model-limit signature. Best known remains
+  generic/task_last/rev10 at 887/900; fails both the 30/30 target and
+  the §4.2 floor → next step is a new decision (102_f: 3B escalation
+  under task_last+rev10 is the evidenced option).
+- **2026-07-22 rev10 FOLLOW-UP OUTCOME (99_f/100_f):** ADMITTED;
+  the Math parenthesis fix landed completely — math_code × bound_var
+  0/30 → 30/30, Math perfect 360/360, zero regressions, and all 540
+  Lookup/Code records byte-identical to the Tranche A sentinel (the
+  amendment provably touched Math only). Target not reached (Code
+  residual 13/270 unchanged, all protocol-class, three characterized
+  modes) → one-revision stop rule applied. task_last is now viable
+  (Lookup+Math perfect under it); next decision: a Code-targeted
+  preregistration on the anchor generic_1p5b/task_last/rev10.
+- **2026-07-22 TRANCHE A OUTCOME — TERMINAL STOP (98_f):** all eight
+  arms ADMITTED (singleton-v1 bit-stable everywhere, within the cost
+  gate); no clean prefix anywhere; both contract sentinels executed;
+  both contracts `proven_non_target` on full validated Lookup/Math
+  evidence (current: Lookup/Math imperfect on fresh instances;
+  task_last: Lookup perfect but Math 0/30 on math_code × bound_var);
+  `selected: None`; Tranche B never opened per §5/§11. Key findings:
+  task_last dominates current in every paired contrast; rev9 dominates
+  code_local_v1 in every paired contrast (retire it); best arm
+  generic_1p5b-task_last-rev9 at 285/300 blocked by exactly one
+  localized Math interaction. Continuation requires a new
+  preregistration (98_f records the decision inputs).
+- **Next (superseded by the terminal stop):** Tranche A in the frozen `arm_order` — eight candidate P1
+  triplets (three fresh processes each), `screen`, launched full runs
+  under append-only `selection-r1` receipts, `reveal`. The worktree
+  stays clean; all outputs land under `runs/` until the experiment
+  closes.
