@@ -61,6 +61,19 @@ SUPPORT_ORDINAL = 0            # first latent by frozen generator ordinal
 SUPPORT_RENDERERS = ("resource_first", "goal_first", "bound_var")
 SUPPORT_VISIBILITY = "private"
 
+SURFACE_SCHEMA_VERSION = 1
+_MANIFEST_KEYS = frozenset({
+    "surface_schema_version", "support", "declaration_sha256",
+    "worker_visible_fingerprint", "runtime_profile_fingerprint",
+    "worker_pool_fingerprint", "planned_step_executions",
+    "executed_step_records", "uncached_step_records",
+    "unique_singleton_generations", "cache_hits", "payoff_rows",
+    "wall_seconds", "payoffs_sha256", "trace_manifest_sha256",
+    "trace_steps_sha256",
+})
+_ROW_KEYS = frozenset({"observation_id", "assignment", "payoff",
+                       "terminal_value", "step_statuses"})
+
 FIXTURES = Path(__file__).parent / "fixtures"
 DECLARATION_PATH = FIXTURES / "stage0_support.json"
 CANARY_PATH = FIXTURES / "stage0_canary.json"
@@ -173,6 +186,41 @@ def build_support_declaration(pool: Any) -> dict[str, Any]:
     }
 
 
+def _verify_declaration_consistency(declaration: Mapping[str, Any],
+                                    observations: list[dict[str, Any]]
+                                    ) -> None:
+    """118_s F3: verify the COMPLETE regenerated support description
+    against the declaration — identities, cells, renderers, arities,
+    assignment counts and the frozen selection constants — not only
+    observation ids."""
+    regenerated = [
+        {"observation_id": obs["observation_id"],
+         "cell_id": obs["cell_id"],
+         "renderer_id": obs["renderer_id"],
+         "num_nodes": obs["num_nodes"],
+         "assignments": len(oracle.enumerate_assignments(
+             obs["num_nodes"]))}
+        for obs in observations]
+    checks = {
+        "observations": regenerated,
+        "namespace": SUPPORT_NAMESPACE,
+        "ordinal": SUPPORT_ORDINAL,
+        "renderers": list(SUPPORT_RENDERERS),
+        "visibility": SUPPORT_VISIBILITY,
+        "planned_step_executions": sum(
+            obs["assignments"] * obs["num_nodes"]
+            for obs in regenerated),
+        "worker_ids": list(WORKER_IDS),
+        "worker_pool_fingerprint": STAGE0_POOL_FINGERPRINT,
+    }
+    for key, expected in checks.items():
+        if declaration.get(key) != expected:
+            raise InfrastructureError(
+                f"declaration field {key!r} does not match the "
+                "regenerated support description; the generator or the "
+                "declaration moved")
+
+
 def load_declaration() -> dict[str, Any]:
     if not DECLARATION_PATH.exists():
         raise InfrastructureError(
@@ -199,6 +247,14 @@ def materialize_support(rt: Any, out_dir: str | Path) -> dict[str, Any]:
     if rt.pool_fingerprint != declaration["worker_pool_fingerprint"]:
         raise InfrastructureError("runtime pool does not match the "
                                   "declared pool fingerprint")
+    # 118_s F3: visibility is a Conductor-side condition outside the
+    # worker-visible fingerprint, so it must be checked explicitly —
+    # a "visible" runtime must not materialize the private support.
+    if rt.profile["visibility_condition"] != declaration["visibility"]:
+        raise InfrastructureError(
+            f"runtime visibility "
+            f"{rt.profile['visibility_condition']!r} does not match the "
+            f"declared {declaration['visibility']!r} support")
     out_dir = Path(out_dir)
     payoff_path = out_dir / "payoffs.jsonl"
     manifest_path = out_dir / "manifest.json"
@@ -209,13 +265,7 @@ def materialize_support(rt: Any, out_dir: str | Path) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     observations = support_observations()
-    declared_ids = [obs["observation_id"]
-                    for obs in declaration["observations"]]
-    actual_ids = [obs["observation_id"] for obs in observations]
-    if declared_ids != actual_ids:
-        raise InfrastructureError(
-            "regenerated observation identities differ from the "
-            "committed declaration; the generator or declaration moved")
+    _verify_declaration_consistency(declaration, observations)
 
     started = time.monotonic()
     generations_before = getattr(rt.pool, "singleton_generations", 0)
@@ -255,7 +305,9 @@ def materialize_support(rt: Any, out_dir: str | Path) -> dict[str, Any]:
     with payoff_path.open("x", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
+    trace_dir = out_dir / "traces" / "traces"
     manifest = {
+        "surface_schema_version": SURFACE_SCHEMA_VERSION,
         "support": declaration["support"],
         "declaration_sha256": _sha_file(DECLARATION_PATH),
         "worker_visible_fingerprint": rt.worker_visible_fingerprint,
@@ -274,6 +326,10 @@ def materialize_support(rt: Any, out_dir: str | Path) -> dict[str, Any]:
         "cache_hits": cache_hits,
         "payoff_rows": len(rows),
         "wall_seconds": round(wall, 1),
+        # 118_s F2: the surface binds its own artifacts by content.
+        "payoffs_sha256": _sha_file(payoff_path),
+        "trace_manifest_sha256": _sha_file(trace_dir / "manifest.json"),
+        "trace_steps_sha256": _sha_file(trace_dir / "steps.jsonl"),
     }
     manifest_path.write_text(json.dumps(manifest, indent=1,
                                         sort_keys=True) + "\n",
@@ -281,33 +337,109 @@ def materialize_support(rt: Any, out_dir: str | Path) -> dict[str, Any]:
     return manifest
 
 
+def _exact_int(value: Any) -> bool:
+    return type(value) is int
+
+
 def load_support_surface(out_dir: str | Path
                          ) -> dict[tuple[str, tuple[int, ...]], float]:
-    """Fail-closed loader (106_s §9.5): the surface must be complete
-    over every declared (observation, assignment) pair, bound to the
-    committed declaration bytes and the declared execution identity —
-    a missing, duplicated, foreign or wrong-profile row aborts."""
+    """Fail-closed loader (106_s §9.5 as hardened by 118_s): the
+    surface must be complete over every declared (observation,
+    assignment) pair; every payoff is INDEPENDENTLY re-scored from the
+    stored terminal value against the regenerated gold (a persisted
+    payoff is never trusted); the manifest has an exact versioned
+    schema binding the payoff and trace artifacts by content hash; the
+    trace must be complete and carry the same execution identity. A
+    missing, duplicated, foreign, mistyped, mis-scored or
+    wrong-provenance row aborts."""
     out_dir = Path(out_dir)
     declaration = load_declaration()
+    observations = support_observations()
+    _verify_declaration_consistency(declaration, observations)
+    golds = {obs["observation_id"]: obs["instance"]["gold_answer"]
+             for obs in observations}
+
     manifest = json.loads((out_dir / "manifest.json").read_text(
         encoding="utf-8"))
+    if set(manifest) != _MANIFEST_KEYS:
+        raise InfrastructureError(
+            f"surface manifest keys {sorted(manifest)} != the exact "
+            f"schema {sorted(_MANIFEST_KEYS)}")
+    if manifest["surface_schema_version"] != SURFACE_SCHEMA_VERSION:
+        raise InfrastructureError(
+            f"surface schema {manifest['surface_schema_version']!r} is "
+            f"not {SURFACE_SCHEMA_VERSION}")
     if manifest["declaration_sha256"] != _sha_file(DECLARATION_PATH):
         raise InfrastructureError(
             "surface was materialized against a different support "
             "declaration; regenerate rather than reinterpret")
-    if manifest["worker_visible_fingerprint"] != \
-            declaration["worker_visible_fingerprint"]:
+    for key in ("worker_visible_fingerprint", "worker_pool_fingerprint"):
+        if manifest[key] != declaration[key]:
+            raise InfrastructureError(
+                f"surface manifest {key} does not match the declaration")
+    if manifest["payoffs_sha256"] != _sha_file(out_dir / "payoffs.jsonl"):
         raise InfrastructureError(
-            "surface manifest carries a different execution identity "
-            "than the declaration")
+            "payoffs.jsonl does not match the manifest content hash")
+    trace_dir = out_dir / "traces" / "traces"
+    for name, claimed in (("manifest.json",
+                           manifest["trace_manifest_sha256"]),
+                          ("steps.jsonl", manifest["trace_steps_sha256"])):
+        if _sha_file(trace_dir / name) != claimed:
+            raise InfrastructureError(
+                f"trace {name} does not match the manifest content hash")
+    trace_manifest = json.loads(
+        (trace_dir / "manifest.json").read_text(encoding="utf-8"))
+    if not trace_manifest.get("closed") \
+            or trace_manifest.get("status") != "complete":
+        raise InfrastructureError(
+            "surface trace is not a complete closed run")
+    for surface_key, trace_key in (
+            ("worker_visible_fingerprint", "worker_visible_fingerprint"),
+            ("worker_pool_fingerprint", "worker_pool_fingerprint"),
+            ("runtime_profile_fingerprint",
+             "runtime_profile_fingerprint")):
+        if manifest[surface_key] != trace_manifest[trace_key]:
+            raise InfrastructureError(
+                f"trace {trace_key} does not match the surface manifest")
+    # Accounting invariants over the recorded counts.
+    if trace_manifest["steps_written"] != \
+            declaration["planned_step_executions"]:
+        raise InfrastructureError(
+            f"trace holds {trace_manifest['steps_written']} step rows; "
+            f"the declared plan is "
+            f"{declaration['planned_step_executions']}")
+    if not (0 < manifest["unique_singleton_generations"]
+            <= manifest["uncached_step_records"]
+            <= manifest["executed_step_records"]
+            <= declaration["planned_step_executions"]):
+        raise InfrastructureError(
+            "surface accounting invariants do not hold")
+    if manifest["uncached_step_records"] + manifest["cache_hits"] != \
+            manifest["executed_step_records"]:
+        raise InfrastructureError(
+            "cache accounting does not reconcile with executed records")
+
     expected: set[tuple[str, tuple[int, ...]]] = set()
     for obs in declaration["observations"]:
         for assignment in oracle.enumerate_assignments(obs["num_nodes"]):
             expected.add((obs["observation_id"], assignment))
+    if manifest["payoff_rows"] != len(expected):
+        raise InfrastructureError(
+            f"manifest declares {manifest['payoff_rows']} payoff rows; "
+            f"the declared support requires {len(expected)}")
     surface: dict[tuple[str, tuple[int, ...]], float] = {}
     with (out_dir / "payoffs.jsonl").open(encoding="utf-8") as handle:
         for line in handle:
             row = json.loads(line)
+            if not isinstance(row, dict) or set(row) != _ROW_KEYS:
+                raise InfrastructureError(
+                    f"payoff row keys must be exactly {sorted(_ROW_KEYS)}")
+            if not isinstance(row["observation_id"], str) \
+                    or not isinstance(row["assignment"], list) \
+                    or not all(_exact_int(w) for w in row["assignment"]):
+                raise InfrastructureError(
+                    "payoff row identity fields are mistyped (bools and "
+                    "floats alias integer ids)")
             key = (row["observation_id"], tuple(row["assignment"]))
             if key not in expected:
                 raise InfrastructureError(
@@ -315,11 +447,20 @@ def load_support_surface(out_dir: str | Path
             if key in surface:
                 raise InfrastructureError(
                     f"duplicate payoff row {key!r}")
-            if row["payoff"] not in (0.5, 1.0):
+            terminal = row["terminal_value"]
+            if terminal is not None and not _exact_int(terminal):
                 raise InfrastructureError(
-                    f"payoff {row['payoff']!r} outside the world-outcome "
-                    "ladder for a schema-valid assignment")
-            surface[key] = row["payoff"]
+                    f"terminal_value {terminal!r} is not an exact int")
+            # 118_s F1: never trust a persisted payoff — re-score it
+            # from the stored terminal outcome against the regenerated
+            # gold answer.
+            rescored = executor.score_terminal(
+                terminal, golds[row["observation_id"]])
+            if row["payoff"] != rescored:
+                raise InfrastructureError(
+                    f"row {key!r}: persisted payoff {row['payoff']!r} "
+                    f"!= re-scored {rescored} from its terminal value")
+            surface[key] = rescored
     missing = expected - set(surface)
     if missing:
         raise InfrastructureError(
@@ -360,13 +501,23 @@ def run_canary(rt: Any) -> dict[str, Any]:
         results, _ = rt.execute_batch([item])
         rewards[worker] = executor.score_terminal(
             results[0].terminal, inst["gold_answer"])
+    # 118_s smaller finding: require exact agreement with the
+    # registered direction, not merely a difference — a reversed
+    # outcome would be a different (undiagnosed) phenomenon.
+    expected_rewards = {
+        worker: 1.0 if canary["expected"][f"worker_{worker}_correct"]
+        else 0.5
+        for worker in (2, 3)}
     outcome = {"rewards": {str(w): r for w, r in rewards.items()},
+               "expected_rewards": {str(w): r for w, r
+                                    in expected_rewards.items()},
                "differ": rewards[2] != rewards[3],
                "expected": canary["expected"]}
-    if not outcome["differ"]:
+    if rewards != expected_rewards:
         raise InfrastructureError(
-            f"canary rewards {rewards} do not differ; model-scale "
-            "selection is not reaching the reward path")
+            f"canary rewards {rewards} do not match the registered "
+            f"direction {expected_rewards}; model-scale selection is "
+            "not reproducing the recorded disagreement")
     return outcome
 
 

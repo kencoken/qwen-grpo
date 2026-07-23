@@ -118,32 +118,39 @@ def test_materialize_refuses_a_mismatched_runtime(tmp_path):
 
 
 @pytest.mark.parametrize("corrupt,match", [
+    # Content-hash-consistent corruptions (the _tamper helper rehashes
+    # payoffs.jsonl so each downstream check is isolated); an
+    # un-rehashed edit is caught earlier by the 118_s content binding.
     ("drop", "incomplete"),
     ("duplicate", "duplicate"),
     ("foreign", "not in the declared support"),
-    ("payoff", "world-outcome ladder"),
-    ("declaration", "different support declaration"),
+    ("payoff", "re-scored"),
+    ("unhashed", "manifest content hash"),
+    ("declaration", "regenerated support description"),
 ])
 def test_loader_fails_closed(tmp_path, fake_declaration, corrupt, match):
     rt, declaration = fake_declaration
     out = tmp_path / "surface"
     materialize_support(rt, out)
-    payoffs = (out / "payoffs.jsonl").read_text().splitlines()
     if corrupt == "drop":
-        (out / "payoffs.jsonl").write_text("\n".join(payoffs[:-1]) + "\n")
+        _tamper(out, mutate_row=lambda rows: rows.pop())
     elif corrupt == "duplicate":
-        (out / "payoffs.jsonl").write_text(
-            "\n".join(payoffs + [payoffs[0]]) + "\n")
+        _tamper(out, mutate_row=lambda rows: rows.append(rows[0]))
     elif corrupt == "foreign":
-        row = json.loads(payoffs[0])
-        row["observation_id"] = "not_a_cell:worker_dev:00099:x:rf:private"
-        (out / "payoffs.jsonl").write_text(
-            "\n".join(payoffs + [json.dumps(row)]) + "\n")
+        def foreign(rows):
+            row = dict(rows[0])
+            row["observation_id"] = \
+                "not_a_cell:worker_dev:00099:x:rf:private"
+            rows.append(row)
+        _tamper(out, mutate_row=foreign)
     elif corrupt == "payoff":
-        row = json.loads(payoffs[0])
-        row["payoff"] = 0.0
-        (out / "payoffs.jsonl").write_text(
-            "\n".join([json.dumps(row)] + payoffs[1:]) + "\n")
+        def zero(rows):
+            rows[0]["payoff"] = 0.0
+        _tamper(out, mutate_row=zero)
+    elif corrupt == "unhashed":
+        def flip(rows):
+            rows[0]["payoff"] = 0.0
+        _tamper(out, mutate_row=flip, rehash=False)
     elif corrupt == "declaration":
         path = payoff_support.DECLARATION_PATH
         declaration["planned_step_executions"] = 805
@@ -201,3 +208,147 @@ def test_sentinels_refuse_a_pool_that_renders_differently(tmp_path):
     with pytest.raises(InfrastructureError, match="order"):
         run_sentinels(rt.pool, "24")
     rt.close()
+
+
+# =============================================================================
+# 118_s findings: independent re-scoring, provenance binding, visibility.
+# =============================================================================
+
+def _tamper(out, mutate_row=None, mutate_manifest=None, rehash=True):
+    """Apply a mutation and (optionally) keep the content hashes
+    consistent, isolating the check under test."""
+    payoff_path = out / "payoffs.jsonl"
+    if mutate_row is not None:
+        rows = [json.loads(l) for l in payoff_path.read_text().splitlines()]
+        mutate_row(rows)
+        payoff_path.write_text(
+            "\n".join(json.dumps(r, sort_keys=True) for r in rows) + "\n")
+    manifest = json.loads((out / "manifest.json").read_text())
+    if rehash:
+        import hashlib
+        manifest["payoffs_sha256"] = hashlib.sha256(
+            payoff_path.read_bytes()).hexdigest()
+    if mutate_manifest is not None:
+        mutate_manifest(manifest)
+    (out / "manifest.json").write_text(
+        json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+
+
+def test_loader_rescores_payoffs_from_terminal_values(
+        tmp_path, fake_declaration):
+    """118_s F1: the reviewer's reproduction — flipping a genuine 0.5
+    row to payoff 1.0 must abort, because the stored terminal outcome
+    re-scores to 0.5 against the regenerated gold."""
+    rt, _ = fake_declaration
+    out = tmp_path / "surface"
+    materialize_support(rt, out)
+
+    def flip(rows):
+        row = next(r for r in rows if r["payoff"] == 0.5)
+        row["payoff"] = 1.0
+    _tamper(out, mutate_row=flip)
+    with pytest.raises(InfrastructureError, match="re-scored"):
+        load_support_surface(out)
+    rt.close()
+
+
+@pytest.mark.parametrize("mutate_manifest,match", [
+    (lambda m: m.update(worker_pool_fingerprint="wp-0000000000000000"),
+     "does not match the declaration"),
+    (lambda m: m.update(runtime_profile_fingerprint="rtp-000000000000"),
+     "does not match the surface manifest"),
+    (lambda m: m.update(executed_step_records=10_000),
+     "accounting"),
+    (lambda m: m.update(payoff_rows=999), "payoff rows"),
+    (lambda m: m.update(surface_schema_version=99), "schema"),
+    (lambda m: m.update(invented_field=1), "keys"),
+])
+def test_loader_verifies_manifest_provenance(
+        tmp_path, fake_declaration, mutate_manifest, match):
+    """118_s F2: invented fingerprints, contradictory counts and
+    off-schema manifests all abort."""
+    rt, _ = fake_declaration
+    out = tmp_path / "surface"
+    materialize_support(rt, out)
+    _tamper(out, mutate_manifest=mutate_manifest)
+    with pytest.raises(InfrastructureError, match=match):
+        load_support_surface(out)
+    rt.close()
+
+
+def test_loader_verifies_trace_artifacts(tmp_path, fake_declaration):
+    """118_s F2: a tampered or incomplete trace invalidates the
+    surface — a fabricated directory with no real trace cannot pass."""
+    rt, _ = fake_declaration
+    out = tmp_path / "surface"
+    materialize_support(rt, out)
+    steps = out / "traces" / "traces" / "steps.jsonl"
+    lines = steps.read_text().splitlines()
+    steps.write_text("\n".join(lines[:-1]) + "\n")
+    with pytest.raises(InfrastructureError, match="trace steps.jsonl"):
+        load_support_surface(out)
+    rt.close()
+
+
+def test_loader_rejects_mistyped_rows(tmp_path, fake_declaration):
+    rt, _ = fake_declaration
+    out = tmp_path / "surface"
+    materialize_support(rt, out)
+
+    def booleanize(rows):
+        rows[0]["assignment"] = [bool(w) for w in rows[0]["assignment"]]
+    _tamper(out, mutate_row=booleanize)
+    with pytest.raises(InfrastructureError, match="mistyped"):
+        load_support_surface(out)
+    rt.close()
+
+
+def test_visible_runtime_cannot_materialize_the_private_support(
+        tmp_path, fake_declaration, monkeypatch):
+    """118_s F3: visibility sits outside the worker-visible
+    fingerprint, so it is checked explicitly against the declaration."""
+    _, declaration = fake_declaration
+    profile = profile_with(cache_path=str(tmp_path / "v.sqlite"),
+                           device="cpu",
+                           visibility_condition="visible")
+    pool = FakeFourPool(profile, {w: _union_completions()
+                                  for w in range(4)})
+    rt = FourWorkerRuntime(
+        profile, pool, WorkerCompletionCache(profile["cache_path"]))
+    with pytest.raises(InfrastructureError, match="visibility"):
+        materialize_support(rt, tmp_path / "surface-visible")
+    rt.close()
+
+
+def test_canary_requires_the_exact_registered_direction(
+        tmp_path, monkeypatch):
+    """118_s smaller finding: a reversed disagreement must fail."""
+    from tasks.conductor.payoff_support import run_canary
+    canary = json.loads(payoff_support.CANARY_PATH.read_text())
+    latent = program.generate_latent(
+        canary["cell_id"], canary["namespace"], canary["ordinal"],
+        DEFAULT_PROFILE).latent
+    _, worker_call = perfect_worker(latent)
+
+    def completion_for(request: bytes):
+        return worker_call(None, request.decode().split("\x00", 1)[1])
+
+    # Fake pool matching the registered direction: w2 wrong, w3 right.
+    profile = profile_with(cache_path=str(tmp_path / "c.sqlite"),
+                           device="cpu")
+    pool = FakeFourPool(profile, {2: "no artifact", 3: completion_for})
+    rt = FourWorkerRuntime(
+        profile, pool, WorkerCompletionCache(profile["cache_path"]))
+    outcome = run_canary(rt)
+    assert outcome["rewards"] == {"2": 0.5, "3": 1.0}
+    rt.close()
+
+    # Reversed direction: differs, but must FAIL the exact check.
+    profile2 = profile_with(cache_path=str(tmp_path / "c2.sqlite"),
+                            device="cpu")
+    pool2 = FakeFourPool(profile2, {2: completion_for, 3: "no artifact"})
+    rt2 = FourWorkerRuntime(
+        profile2, pool2, WorkerCompletionCache(profile2["cache_path"]))
+    with pytest.raises(InfrastructureError, match="registered direction"):
+        run_canary(rt2)
+    rt2.close()
