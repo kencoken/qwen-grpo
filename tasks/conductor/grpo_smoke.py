@@ -125,9 +125,12 @@ STAGE0C_LAUNCH_PROFILE: dict[str, Any] = {
     "smoke": {"updates": 18, "prompt_groups": 36},
     "wandb_project": "qwen-grpo-conductor",
     "eval": {"n_eval": 0, "strategy": "no"},
-    # Set to the review record's name at freeze; the reward-bearing
-    # smoke refuses while null (106_s §10.2).
-    "policy_prompt_review": None,
+    # The §10.2 review record: the 121_s/123_s prompt-freeze reviews
+    # with the 122_f preregistration and its 124_f outcome. Set at
+    # freeze (2026-07-23) after the passing reward-blind format probe.
+    "policy_prompt_review":
+        "123_s_d16_stage_0_four_worker_unit_4_prompt_freeze_prereg_"
+        "review (with 121_s, 122_f prereg, 124_f outcome)",
 }
 
 

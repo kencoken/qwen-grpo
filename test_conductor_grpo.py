@@ -227,6 +227,15 @@ def test_reward_bearing_smoke_requires_the_freeze(monkeypatch, tmp_path):
         grpo_smoke.run_smoke()
 
 
+def test_freeze_fixture_verifies_and_names_the_review():
+    """Post-freeze: the committed fixture matches the live bytes and
+    names the §10.2 review record; any byte drift refuses."""
+    frozen = grpo_smoke.verify_freeze()
+    assert frozen["policy_prompt_review"] == \
+        grpo_smoke.STAGE0C_LAUNCH_PROFILE["policy_prompt_review"]
+    assert len(frozen["observation_sha256"]) == 18
+
+
 def test_surface_pin_is_hermetic(monkeypatch, tmp_path):
     """121_s: the pin check must not depend on the untracked artifact.
     Absence refuses with its own message; a mismatching manifest
