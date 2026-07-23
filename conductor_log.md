@@ -560,6 +560,24 @@ canonical population + execution manifest (Stage-1A `calibrate.py`).
   the commit carrying THIS addendum is the executable commit for
   Tranche A. Nothing else lands before launch; the screening/reveal
   checkout guard verifies against the P1 artifacts' recorded commit.
+- **2026-07-23 106_s UNIT 4 COMPLETE — PROMPT FROZEN + STAGE-0C SMOKE
+  (122_f/123_s/124_f):** demo probe ran under the preregistered
+  bounded procedure (one repair round; specialist [3,2] failed twice =
+  worker 3's task-scope mode on count-first nodes, verbatim outputs +
+  corrected accounting 10 requests/14 completions in 124_f); 123_s
+  approved amendment [3,2,1]/[2,3] (both routes pre-verified),
+  narrowed exchangeability to the matched pair, disclosed the
+  capability cue, neutral prompt wording, source-digest freeze
+  binding. Cache-backed verification 5/5 with 0 new generations;
+  format probe 144/144 valid + right length (floor 0.80); PROMPT
+  FROZEN (fixture 6cf44e2d…, profile 0815c033…). Reward-bearing smoke
+  COMPLETE: 18 updates/153s/14.43 GiB, parse 99.65%, rewards 1/148/139
+  (48.3% success vs ~19.8% uniform — demonstration prior confirmed),
+  zero-variance 28/36, mixed groups 7, all four workers selected (w2
+  49 / w3 54 at Code positions), canary exact, zero infra aborts,
+  schedule enforced, model discarded. All §10.4 sanity conditions
+  hold. Stage-2 demo-treatment decision registered as deferred. NEXT:
+  unit 5 (CE0 worst-case benchmark + Stage-0 go/no-go handoff).
 - **2026-07-23 106_s UNIT 4 — STAGE-0C TRAINER INTEGRATION (120_f):**
   single trainer-facing conductor reward (0/0.5/1; NO format_reward;
   missing surface row = infra abort) with positional->semantic

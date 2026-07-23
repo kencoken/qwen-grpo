@@ -99,7 +99,47 @@ comparison and a one-seed no-demonstration pilot preferred) is
 explicitly deferred to the Stage-2 prompt freeze — recorded here so it
 is chosen, not silently settled by the Stage-0 prompt.
 
-## GPU results (appended)
+## GPU results (appended 2026-07-23)
 
-*(cache-backed final demo verification, format probe, freeze record,
-canary and smoke summary land here as each completes)*
+**Item 9 — cache-backed final demo verification:** all five approved
+executions pass (`[0]`→27, `[0,1]`→28, `[3,2,1]`→19, swapped
+`[2,3,1]`→19, `[2,3]`→6) with **0 new singleton generations** — fully
+served by the probe cache, as the review predicted.
+
+**Item 10 — reward-blind format probe:** 144/144 completions valid
+schema AND correct action length in every topology (atomic 72/72,
+two_step 48/48, fork 24/24 — all 1.00 against the 0.80 floor). The
+action-length confound is empirically absent; no schema repair used.
+
+**Item 11 — freeze:** `stage0c_policy_freeze.json` (sha `6cf44e2d…`)
+records the literal digests — system prompt `fe9bba0d…`, 18 rendered
+observation hashes, pinned chat template, launch profile `0815c033…`,
+support declaration, executable-source digest — and names the review
+record. Committed at `65a5fbe`.
+
+**Item 12 — canary + the single reward-bearing smoke**
+(`runs/stage0c-smoke-0815c033-221a04d5`, W&B run 3satfxr9):
+
+```text
+status complete; 18 updates, 288 completions in 36 ordered groups
+(schedule enforced online); wall 153.2s; peak reserved VRAM 14.43 GiB
+(post-canary reset — workers absent during GRPO)
+canary: w2 0.5 / w3 1.0 (exact registered direction)
+action parse rate 0.9965 (287/288; the one malformed action was
+  {"worker_ids": [3, 4]} — id 4 out of range, reward 0.0)
+reward frequencies: 0.0 x1, 0.5 x148, 1.0 x139  (48.3% success)
+zero-variance groups 28/36 (0.778); groups with 1.0 AND lower: 7
+worker selections: 0:214, 1:121, 2:74, 3:69; entropy 1.84 bits
+at the Code position specifically: w0:25, w1:15, w2:49, w3:54
+per-topology mean reward: atomic 0.767, two_step 0.760, fork 0.615
+surface lookups 287 (= valid actions); zero infrastructure aborts
+```
+
+Every §10.4 "sane, non-degenerate" condition holds: all four ids in
+schema-valid actions; workers 2 AND 3 each at Code positions; 1.0
+outcomes present; mixed-reward groups present. Sampled success (48.3%)
+is far above the ~19.8% uniform-action expectation — the demonstrations
+supply a substantial routing prior exactly as 123_s §5 anticipated,
+which is the disclosed demonstration-bootstrapped framing; the
+few-shot-vs-no-few-shot measurement remains the registered Stage-2
+decision. The trained adapter and optimizer state are discarded.
