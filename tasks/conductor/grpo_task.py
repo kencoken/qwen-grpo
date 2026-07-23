@@ -55,8 +55,7 @@ def build_smoke_rows() -> list[dict[str, Any]]:
                   "access": s["access"]}
                  for s in program.workflow_steps(latent)]
         rows.append({
-            "prompt": policy_messages(obs["instance"]["public_prompt"],
-                                      steps),
+            "prompt": policy_messages(obs["instance"], steps),
             "observation_id": observation_id,
             "cell_id": obs["cell_id"],
             "num_steps": len(steps),
@@ -91,10 +90,16 @@ def _completion_text(completion: Any) -> str:
 
 def make_conductor_reward(
         surface: Mapping[tuple[str, tuple[int, ...]], float],
-        trace_path: str | Path | None = None) -> Callable[..., list[float]]:
+        trace_path: str | Path | None = None,
+        schedule: list[str] | None = None,
+        group_size: int = 8) -> Callable[..., list[float]]:
     """The single trainer-facing reward callable (precomputed_surface
     mode). Every schema-valid action must find its outcome row —
-    a miss aborts the run (106_s §10.3)."""
+    a miss aborts the run (106_s §10.3). When a `schedule` is given,
+    every completion is bound to its schedule index and the arriving
+    observation must match the frozen order — a resampled or reordered
+    batch aborts (121_s)."""
+    state = {"written": 0, "lookups": 0}
 
     def conductor_reward(completions: list[Any], *,
                          observation_id: list[str],
@@ -105,6 +110,17 @@ def make_conductor_reward(
         rows = []
         for completion, obs_id, positions_json, steps in zip(
                 completions, observation_id, positions, num_steps):
+            index = state["written"] + len(rows)
+            schedule_index = index // group_size
+            if schedule is not None:
+                if schedule_index >= len(schedule) \
+                        or schedule[schedule_index] != obs_id:
+                    raise InfrastructureError(
+                        f"completion {index} carries observation "
+                        f"{obs_id!r} but schedule position "
+                        f"{schedule_index} is frozen as "
+                        f"{schedule[schedule_index] if schedule_index < len(schedule) else None!r}"
+                        " — the frozen order was not followed")
             text = _completion_text(completion)
             node_positions = json.loads(positions_json)
             try:
@@ -112,6 +128,7 @@ def make_conductor_reward(
             except ActionSchemaError as error:
                 rewards.append(0.0)
                 rows.append({"observation_id": obs_id,
+                             "schedule_index": schedule_index,
                              "completion": text,
                              "action": None,
                              "schema_error": str(error),
@@ -127,8 +144,10 @@ def make_conductor_reward(
                     "a partial or stale surface is an infrastructure "
                     "abort, never a reward (106_s §10.3)")
             payoff = surface[key]
+            state["lookups"] += 1
             rewards.append(payoff)
             rows.append({"observation_id": obs_id,
+                         "schedule_index": schedule_index,
                          "completion": text,
                          "action": positional,
                          "schema_error": None,
@@ -138,19 +157,70 @@ def make_conductor_reward(
             with Path(trace_path).open("a", encoding="utf-8") as handle:
                 for row in rows:
                     handle.write(json.dumps(row, sort_keys=True) + "\n")
+        state["written"] += len(rows)
+        # 121_s: the four online metrics, logged live when W&B is up.
+        try:
+            import wandb
+            if wandb.run is not None:
+                valid = [r for r in rows if r["schema_error"] is None]
+                import math
+                counts = {w: 0 for w in (0, 1, 2, 3)}
+                for r in valid:
+                    for w in r["action"]:
+                        counts[w] += 1
+                total = sum(counts.values()) or 1
+                entropy = -sum((n / total) * math.log2(n / total)
+                               for n in counts.values() if n)
+                groups = [rows[i:i + group_size]
+                          for i in range(0, len(rows), group_size)]
+                wandb.log({
+                    "conductor/parse_rate": len(valid) / len(rows),
+                    "conductor/reward_0.0": sum(
+                        r["reward"] == 0.0 for r in rows) / len(rows),
+                    "conductor/reward_0.5": sum(
+                        r["reward"] == 0.5 for r in rows) / len(rows),
+                    "conductor/reward_1.0": sum(
+                        r["reward"] == 1.0 for r in rows) / len(rows),
+                    "conductor/zero_variance_group_fraction": sum(
+                        len({r["reward"] for r in g}) == 1
+                        for g in groups) / max(len(groups), 1),
+                    "conductor/selection_entropy_bits": entropy,
+                }, commit=False)
+        except ImportError:
+            pass
         return rewards
 
     conductor_reward.__name__ = "conductor_reward"
+    conductor_reward.state = state
     return conductor_reward
 
 
-def summarize_action_trace(trace_path: str | Path) -> dict[str, Any]:
+def summarize_action_trace(trace_path: str | Path,
+                           expected_schedule: list[str] | None = None,
+                           group_size: int = 8) -> dict[str, Any]:
     """§10.3 recorded figures, derived from the persisted trace after
-    the run (the live dashboard stays minimal)."""
+    the run. With an expected schedule the trace must be COMPLETE and
+    ordered: exactly len(schedule)*group_size completions in
+    len(schedule) groups of group_size, each group's rows carrying the
+    frozen observation and schedule index (121_s) — a partial trace is
+    never summarized as a run."""
     rows = [json.loads(line)
             for line in Path(trace_path).read_text().splitlines()]
+    if expected_schedule is not None:
+        expected_rows = len(expected_schedule) * group_size
+        if len(rows) != expected_rows:
+            raise InfrastructureError(
+                f"trace holds {len(rows)} completions; the frozen "
+                f"schedule requires exactly {expected_rows}")
+        for index, row in enumerate(rows):
+            schedule_index = index // group_size
+            if row.get("schedule_index") != schedule_index or \
+                    row["observation_id"] != \
+                    expected_schedule[schedule_index]:
+                raise InfrastructureError(
+                    f"trace row {index} does not match the frozen "
+                    f"schedule at group {schedule_index}")
     by_group: dict[int, list[dict]] = {}
-    group_size = 8
     for index, row in enumerate(rows):
         by_group.setdefault(index // group_size, []).append(row)
     valid = [row for row in rows if row["schema_error"] is None]

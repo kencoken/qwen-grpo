@@ -1,32 +1,32 @@
-"""Stage-0C named launch profile and policy-dependent smoke — 106_s
-§§10.1, 10.3 (unit 4).
+"""Stage-0C named launch profile, prompt-freeze machinery and
+policy-dependent smoke — 106_s §§10.1–10.3 as corrected by 121_s.
 
-The launch profile is the checked-in scientific configuration: every
-setting below is explicit and validated — no repository default fills a
-scientific setting, which is why this entry constructs its own
-GRPOConfig rather than routing through train.py's CLI defaults. The
-smoke runs the frozen schedule (18 updates, 36 prompt groups, each §9.4
-observation exactly twice in declaration order; dataset order is the
-schedule and trainer shuffling is disabled), with the real routing
-parser and the sampled action determining reward. The trained model and
-optimizer state are DISCARDED — this is an integration diagnostic; it
-allocates no train/dev/test, construction or qualification namespace,
-and nothing chosen from its output enters a later scientific run.
+The launch profile is authoritative over execution (121_s finding 3):
+`loss_type` is passed explicitly, only `precomputed_surface` is
+supported (anything else fails closed), the surface/pool pins are read
+from the validated profile, and the tokenizer is revision-pinned via
+an explicit `processing_class`. This entry constructs its own
+`GRPOConfig` — no repository default fills a scientific setting.
 
-Preconditions enforced at launch: the pinned support surface verifies
-through the fail-closed loader; the registered w2/w3 canary passes in
-its exact direction (workers absent afterwards — pre-materialized
-routing needs no resident worker, 106_s §10.4 mode 1).
+Freeze discipline (121_s lock sequence): the demo-check executes the
+four EXACT preregistered demonstration workflows through the real
+runtime (both Code workers on every Code node, budget counted in
+unique rendered request bytes); the reward-blind format probe samples
+one group of eight per unique observation with the smoke tokenizer/
+temperature/cap/seed, never loads the payoff surface, and reports only
+schema validity and action-length rates by topology (>=80% per-topology
+validity as the catastrophic-stop rule); a passing probe is followed
+immediately by `freeze`, which records LITERAL digests (system prompt,
+all 18 rendered observations, pinned chat-template bytes, launch
+profile, executable commit) into a committed fixture. The
+reward-bearing smoke refuses to run until the freeze fixture verifies
+and `policy_prompt_review` names the review record.
 
-GATE (106_s §10.2): the Conductor system prompt and demonstrations must
-be reviewed and fingerprinted BEFORE the reward-bearing smoke runs; the
-CLI refuses until the profile marks the prompt review recorded. Once
-any smoke output is inspected, the prompt bytes are frozen — a later
-change is a new launch profile.
-
-Run:  uv run python -m tasks.conductor.grpo_smoke check   (CPU gates)
+Run:  uv run python -m tasks.conductor.grpo_smoke check        (CPU)
       uv run python -m tasks.conductor.grpo_smoke demo-check   (GPU)
-      uv run python -m tasks.conductor.grpo_smoke run     (GPU smoke)
+      uv run python -m tasks.conductor.grpo_smoke format-probe (GPU)
+      uv run python -m tasks.conductor.grpo_smoke freeze       (CPU)
+      uv run python -m tasks.conductor.grpo_smoke run          (GPU)
 """
 
 from __future__ import annotations
@@ -39,23 +39,24 @@ import time
 from pathlib import Path
 from typing import Any
 
+from . import parser
+from .executor import WorkflowItem
 from .grpo_task import (
     build_smoke_rows, make_conductor_reward, smoke_schedule,
     summarize_action_trace,
 )
 from .payoff_support import (
-    DECLARATION_PATH, canonical_support_profile, load_support_surface,
-    run_canary,
+    DECLARATION_PATH, FIXTURES, canonical_support_profile,
+    load_support_surface, run_canary,
 )
-from .policy import DEMO_CODE_CHECKS, SYSTEM_CONDUCTOR, policy_prompt_sha256
+from .policy import (
+    CONDUCTOR_DEMOS, demo_registry, policy_prompt_sha256,
+)
 from .types import InfrastructureError
 from .workerpool import STAGE0_POOL_FINGERPRINT
 
-# The unit-3 surface this smoke trains against (118_s: unit 4 pins the
-# surface-manifest hash; the loader re-verifies everything else).
 SURFACE_DIR = Path("runs/stage0-support")
-SURFACE_MANIFEST_SHA256 = \
-    "221a04d53403f14c537a3d43336eb6630ca6fe5682f5e3f8aa66f78ace679c23"
+FREEZE_PATH = FIXTURES / "stage0c_policy_freeze.json"
 
 STAGE0C_LAUNCH_PROFILE: dict[str, Any] = {
     "profile_name": "stage0c-smoke-v1",
@@ -79,7 +80,7 @@ STAGE0C_LAUNCH_PROFILE: dict[str, Any] = {
         "learning_rate": "1e-5",
         "warmup_steps": 10,
         "scheduler": "constant_with_warmup",
-        "loss": "dapo",           # the repository's current GRPO loss
+        "loss": "dapo",           # passed explicitly to GRPOConfig (121_s)
         "optim": "adamw_torch",
         "bf16": True,
         "seed": 0,
@@ -89,16 +90,18 @@ STAGE0C_LAUNCH_PROFILE: dict[str, Any] = {
     "worker_max_new_tokens": 256,
     "worker_generation_batch": 1,
     "workflow_max_steps": 3,
+    # 121_s finding 3: only precomputed_surface is supported by this
+    # smoke; any other declared mode fails validation closed.
     "worker_outcome_mode": "precomputed_surface",
     "worker_pool_fingerprint": STAGE0_POOL_FINGERPRINT,
-    "surface_manifest_sha256": SURFACE_MANIFEST_SHA256,
+    "surface_manifest_sha256":
+        "221a04d53403f14c537a3d43336eb6630ca6fe5682f5e3f8aa66f78ace679c23",
     "policy_system_prompt_sha256": policy_prompt_sha256(),
     "smoke": {"updates": 18, "prompt_groups": 36},
     "wandb_project": "qwen-grpo-conductor",
     "eval": {"n_eval": 0, "strategy": "no"},
-    # §10.2 gate: flipped to the reviewing document's name once the
-    # prompt bytes are reviewed and fingerprinted. The reward-bearing
-    # smoke refuses to run while this is null.
+    # Set to the review record's name at freeze; the reward-bearing
+    # smoke refuses while null (106_s §10.2).
     "policy_prompt_review": None,
 }
 
@@ -128,48 +131,282 @@ def validate_launch_profile() -> None:
     if set(Counter(schedule).values()) != {2}:
         raise InfrastructureError(
             "every observation must appear exactly twice in the schedule")
-    if profile["worker_outcome_mode"] not in ("precomputed_surface",
-                                              "live_singleton"):
-        raise InfrastructureError("unknown worker_outcome_mode")
+    if profile["worker_outcome_mode"] != "precomputed_surface":
+        raise InfrastructureError(
+            f"worker_outcome_mode "
+            f"{profile['worker_outcome_mode']!r} is not supported by "
+            "this smoke: only precomputed_surface executes; declaring "
+            "an unimplemented mode is fabricated provenance (121_s)")
 
 
 def verify_surface_pin() -> dict:
+    """The validated profile is the single authority for the pin
+    (121_s finding 3)."""
+    validate_launch_profile()
+    pin = STAGE0C_LAUNCH_PROFILE["surface_manifest_sha256"]
     manifest_path = SURFACE_DIR / "manifest.json"
+    if not manifest_path.exists():
+        raise InfrastructureError(
+            f"pinned surface {manifest_path} is absent; materialize it "
+            "with payoff_support before the smoke")
     actual = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
-    if actual != SURFACE_MANIFEST_SHA256:
+    if actual != pin:
         raise InfrastructureError(
             f"surface manifest hash {actual[:16]}… does not match the "
-            f"launch-profile pin {SURFACE_MANIFEST_SHA256[:16]}…")
+            f"launch-profile pin {pin[:16]}…")
     return load_support_surface(SURFACE_DIR)
 
+
+# --- demo-check: the exact preregistered workflows (121_s) -------------------
+
+def demo_check_variants() -> list[tuple[str, dict, list[int]]]:
+    """Every execution the check performs: each demo with its assigned
+    ids, plus — for Code-bearing demos — the Code-swapped variant, so
+    both Code workers execute every Code node in full context."""
+    variants = []
+    for demo in CONDUCTOR_DEMOS:
+        variants.append((f"{demo['name']}:assigned", demo,
+                         list(demo["worker_ids"])))
+        if any(w in (2, 3) for w in demo["worker_ids"]):
+            swapped = [{2: 3, 3: 2}.get(w, w)
+                       for w in demo["worker_ids"]]
+            variants.append((f"{demo['name']}:code-swapped", demo,
+                             swapped))
+    return variants
+
+
+def run_demo_check() -> int:
+    from .pool_runtime import build_pool_runtime
+    profile = canonical_support_profile()
+    profile["cache_path"] = "runs/stage0c-demo-check/cache.sqlite"
+    rt = build_pool_runtime(profile)
+    unique_requests: set[str] = set()
+    failures = []
+    try:
+        for label, demo, worker_ids in demo_check_variants():
+            registry = demo_registry(demo)
+            action = parser.routing_to_workflow(
+                worker_ids, [dict(step) for step in demo["steps"]])
+            item = WorkflowItem(
+                item_id=f"demo:{label}", action=action,
+                public_prompt=demo["problem"], registry=registry,
+                request_contract=rt.profile["request_contract"])
+            results, telemetry = rt.execute_batch([item])
+            unique_requests.update(record.request_sha256
+                                   for _, record in telemetry)
+            terminal = results[0].terminal
+            ok = terminal == demo["gold"]
+            print(f"{label}: ids {worker_ids} -> terminal {terminal} "
+                  f"(gold {demo['gold']}) {'OK' if ok else 'FAIL'}")
+            if not ok:
+                for step in results[0].steps:
+                    status = (step.result.status if step.result
+                              else f"world:{step.world_failure}")
+                    print(f"    step {step.position} w{step.worker_id}: "
+                          f"{status} {step.completion!r}"[:170])
+                failures.append(label)
+    finally:
+        rt.close()
+    print(f"budget: {len(unique_requests)} unique rendered requests")
+    if failures:
+        print(f"FAIL: {failures}")
+        return 1
+    print("demo-check OK: all preregistered workflows execute, both "
+          "Code workers on every Code node")
+    return 0
+
+
+# --- reward-blind format probe (121_s) ---------------------------------------
+
+TOPOLOGY_BY_CELL = {"lookup_atomic": "atomic", "math_atomic": "atomic",
+                    "code_atomic": "atomic", "lookup_math": "two_step",
+                    "math_code": "two_step", "fork_join": "fork"}
+FORMAT_PROBE_VALIDITY_FLOOR = 0.80  # the existing per-topology threshold
+
+
+def run_format_probe() -> int:
+    """One group of eight sampled completions per unique observation,
+    smoke tokenizer/temperature/cap/seed. NEVER loads the payoff
+    surface; reports ONLY schema validity and action-length rates by
+    topology. >=80% per-topology validity is the catastrophic-stop
+    rule; worker choices are neither inspected nor reported."""
+    import torch
+    from transformers import (AutoModelForCausalLM, AutoTokenizer,
+                              BitsAndBytesConfig)
+
+    validate_launch_profile()
+    profile = STAGE0C_LAUNCH_PROFILE
+    model_cfg = profile["conductor_model"]
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_cfg["model_id"], revision=model_cfg["revision"])
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
+    model = AutoModelForCausalLM.from_pretrained(
+        model_cfg["model_id"], revision=model_cfg["revision"],
+        dtype=torch.bfloat16,
+        quantization_config=BitsAndBytesConfig(
+            load_in_4bit=True, bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=torch.bfloat16),
+        device_map="cuda").eval()
+    torch.manual_seed(profile["grpo"]["seed"])
+
+    rows = build_smoke_rows()
+    unique: dict[str, dict] = {}
+    for row in rows:
+        unique.setdefault(row["observation_id"], row)
+    stats: dict[str, dict[str, int]] = {}
+    for observation_id, row in unique.items():
+        topology = TOPOLOGY_BY_CELL[row["cell_id"]]
+        bucket = stats.setdefault(topology, {"n": 0, "valid": 0,
+                                             "right_length": 0})
+        text = tokenizer.apply_chat_template(
+            row["prompt"], tokenize=False, add_generation_prompt=True)
+        batch = tokenizer([text] * profile["grpo"]["group_size"],
+                          return_tensors="pt", padding=True,
+                          add_special_tokens=False).to(model.device)
+        with torch.no_grad():
+            out = model.generate(
+                **batch,
+                max_new_tokens=profile["policy_max_new_tokens"],
+                do_sample=True,
+                temperature=float(profile["grpo"]["temperature"]),
+                pad_token_id=tokenizer.pad_token_id)
+        completions = tokenizer.batch_decode(
+            out[:, batch["input_ids"].shape[1]:],
+            skip_special_tokens=True)
+        for completion in completions:
+            bucket["n"] += 1
+            try:
+                parser.parse_routing_action(completion,
+                                            row["num_steps"])
+                bucket["valid"] += 1
+                bucket["right_length"] += 1
+            except parser.ActionSchemaError:
+                try:
+                    obj = json.loads(completion.strip())
+                    ids = obj.get("worker_ids")
+                    if isinstance(ids, list) \
+                            and len(ids) == row["num_steps"]:
+                        bucket["right_length"] += 1
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+    report = {
+        topology: {
+            "completions": bucket["n"],
+            "valid_rate": round(bucket["valid"] / bucket["n"], 4),
+            "right_length_rate": round(
+                bucket["right_length"] / bucket["n"], 4),
+        } for topology, bucket in sorted(stats.items())}
+    print(json.dumps(report, indent=1, sort_keys=True))
+    failed = {topology: values["valid_rate"]
+              for topology, values in report.items()
+              if values["valid_rate"] < FORMAT_PROBE_VALIDITY_FLOOR}
+    if failed:
+        print(f"CATASTROPHIC STOP: per-topology validity below "
+              f"{FORMAT_PROBE_VALIDITY_FLOOR:.0%}: {failed} — at most "
+              "one schema-only repair is permitted (121_s)")
+        return 1
+    print("format probe OK — freeze immediately (121_s)")
+    return 0
+
+
+# --- freeze: literal digests over the model-visible bundle -------------------
+
+def compute_freeze_record(review_record: str | None = None
+                          ) -> dict[str, Any]:
+    from transformers import AutoTokenizer
+    validate_launch_profile()
+    model_cfg = STAGE0C_LAUNCH_PROFILE["conductor_model"]
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_cfg["model_id"], revision=model_cfg["revision"])
+    rows = build_smoke_rows()
+    unique: dict[str, str] = {}
+    for row in rows:
+        unique.setdefault(row["observation_id"],
+                          row["prompt"][1]["content"])
+    import subprocess
+    commit = subprocess.run(["git", "rev-parse", "HEAD"],
+                            capture_output=True, text=True,
+                            check=True).stdout.strip()
+    return {
+        "freeze": "stage0c-policy-v1",
+        "policy_system_prompt_sha256": policy_prompt_sha256(),
+        "observation_sha256": {
+            observation_id: hashlib.sha256(
+                content.encode("utf-8")).hexdigest()
+            for observation_id, content in sorted(unique.items())},
+        "chat_template_sha256": hashlib.sha256(
+            tokenizer.chat_template.encode("utf-8")).hexdigest(),
+        "conductor_tokenizer":
+            f"{model_cfg['model_id']}@{model_cfg['revision']}",
+        "launch_profile_sha256": launch_profile_sha256(),
+        "support_declaration_sha256": hashlib.sha256(
+            DECLARATION_PATH.read_bytes()).hexdigest(),
+        "executable_commit": commit,
+        "policy_prompt_review": review_record,
+    }
+
+
+def verify_freeze() -> dict[str, Any]:
+    """Regenerate every digest and compare against the committed
+    literal record — the freeze is bytes, not source introspection."""
+    if not FREEZE_PATH.exists():
+        raise InfrastructureError(
+            "policy freeze fixture is absent; the prompt bundle is not "
+            "frozen (121_s lock sequence)")
+    frozen = json.loads(FREEZE_PATH.read_text(encoding="utf-8"))
+    current = compute_freeze_record(frozen.get("policy_prompt_review"))
+    for key in ("policy_system_prompt_sha256", "observation_sha256",
+                "chat_template_sha256", "conductor_tokenizer",
+                "launch_profile_sha256", "support_declaration_sha256"):
+        if frozen.get(key) != current[key]:
+            raise InfrastructureError(
+                f"frozen policy bundle field {key!r} does not match the "
+                "current bytes — the prompt bundle moved after freeze; "
+                "a change is a new launch profile (106_s §10.2)")
+    if not frozen.get("policy_prompt_review"):
+        raise InfrastructureError(
+            "freeze fixture does not name the §10.2 review record")
+    return frozen
+
+
+# --- the reward-bearing smoke ------------------------------------------------
 
 def run_smoke() -> int:
     import os
     validate_launch_profile()
     profile = STAGE0C_LAUNCH_PROFILE
-    if not profile["policy_prompt_review"]:
+    frozen = verify_freeze()
+    if not profile["policy_prompt_review"] or \
+            profile["policy_prompt_review"] != \
+            frozen["policy_prompt_review"]:
         raise InfrastructureError(
-            "the Conductor prompt bytes have not been reviewed and "
-            "fingerprinted (106_s §10.2); the reward-bearing smoke is "
-            "gated until policy_prompt_review names the review record")
+            "launch profile policy_prompt_review does not name the "
+            "frozen review record (106_s §10.2)")
     surface = verify_surface_pin()
+    schedule = smoke_schedule()
 
-    # §10.3 pre-smoke canary: model-scale selection must reach the
-    # reward path before any policy sampling. Workers are released
-    # afterwards — pre-materialized routing keeps them absent.
+    # §10.3 pre-smoke canary; workers are released afterwards and the
+    # CUDA peak counter is reset so GRPO VRAM excludes them (121_s).
+    from .pool_runtime import build_pool_runtime
     canary_profile = canonical_support_profile()
     canary_profile["cache_path"] = "runs/stage0c-canary/cache.sqlite"
-    from .pool_runtime import build_pool_runtime
     rt = build_pool_runtime(canary_profile)
     try:
         canary = run_canary(rt)
     finally:
         rt.close()
-    print(f"canary: {canary['rewards']} (expected direction confirmed)")
+    import torch
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+    print(f"canary: {canary['rewards']} (registered direction)")
 
     profile_sha = launch_profile_sha256()
     run_name = (f"stage0c-smoke-{profile_sha[:8]}"
-                f"-{SURFACE_MANIFEST_SHA256[:8]}")
+                f"-{profile['surface_manifest_sha256'][:8]}")
     run_dir = Path("runs") / run_name
     if run_dir.exists():
         raise InfrastructureError(
@@ -178,19 +415,25 @@ def run_smoke() -> int:
     run_dir.mkdir(parents=True)
     trace_path = run_dir / "actions.jsonl"
     (run_dir / "launch_profile.json").write_text(
-        json.dumps(STAGE0C_LAUNCH_PROFILE, indent=1, sort_keys=True)
-        + "\n")
+        json.dumps(profile, indent=1, sort_keys=True) + "\n")
+    (run_dir / "freeze_record.json").write_text(
+        json.dumps(frozen, indent=1, sort_keys=True) + "\n")
 
-    import torch
     from datasets import Dataset
     from peft import LoraConfig
-    from transformers import BitsAndBytesConfig
+    from transformers import AutoTokenizer, BitsAndBytesConfig
     from trl import GRPOConfig, GRPOTrainer
 
     os.environ["WANDB_PROJECT"] = profile["wandb_project"]
     grpo = profile["grpo"]
     dataset = Dataset.from_list(build_smoke_rows())
-    reward = make_conductor_reward(surface, trace_path=trace_path)
+    reward = make_conductor_reward(surface, trace_path=trace_path,
+                                   schedule=schedule,
+                                   group_size=grpo["group_size"])
+    model_cfg = profile["conductor_model"]
+    # 121_s finding 3: the tokenizer is revision-pinned explicitly.
+    processing_class = AutoTokenizer.from_pretrained(
+        model_cfg["model_id"], revision=model_cfg["revision"])
 
     args = GRPOConfig(
         output_dir=str(run_dir),
@@ -206,9 +449,8 @@ def run_smoke() -> int:
         warmup_steps=grpo["warmup_steps"],
         beta=float(grpo["beta"]),
         max_steps=grpo["max_steps"],
-        # §10.1: the frozen schedule IS the dataset order.
-        shuffle_dataset=False,
-        # §10.1: periodic evaluation disabled; no dev/test namespace.
+        loss_type=grpo["loss"],   # explicit, not TRL's default (121_s)
+        shuffle_dataset=False,    # the frozen schedule IS the order
         eval_strategy="no",
         gradient_checkpointing=profile["gradient_checkpointing"],
         gradient_checkpointing_kwargs={"use_reentrant": False},
@@ -216,7 +458,7 @@ def run_smoke() -> int:
         model_init_kwargs={
             "torch_dtype": torch.bfloat16,
             "attn_implementation": "sdpa",
-            "revision": profile["conductor_model"]["revision"],
+            "revision": model_cfg["revision"],
             "quantization_config": BitsAndBytesConfig(
                 load_in_4bit=True, bnb_4bit_quant_type="nf4",
                 bnb_4bit_use_double_quant=True,
@@ -236,73 +478,45 @@ def run_smoke() -> int:
         task_type="CAUSAL_LM")
 
     started = time.monotonic()
-    trainer = GRPOTrainer(
-        model=profile["conductor_model"]["model_id"], args=args,
-        train_dataset=dataset,
-        # §10.1: exactly ONE scalar task reward — no format_reward.
-        reward_funcs=[reward],
-        peft_config=peft_config)
-    trainer.train()
-    wall = time.monotonic() - started
-    peak = (torch.cuda.max_memory_reserved()
-            if torch.cuda.is_available() else 0)
-
-    summary = summarize_action_trace(trace_path)
-    summary.update({
-        "wall_seconds": round(wall, 1),
-        "peak_reserved_vram_gib": round(peak / 2 ** 30, 2),
-        "launch_profile_sha256": profile_sha,
-        "surface_manifest_sha256": SURFACE_MANIFEST_SHA256,
-        "canary": canary,
-        "declaration_sha256": hashlib.sha256(
-            DECLARATION_PATH.read_bytes()).hexdigest(),
-    })
-    (run_dir / "summary.json").write_text(
-        json.dumps(summary, indent=1, sort_keys=True) + "\n")
-    print(json.dumps(summary, indent=1, sort_keys=True))
-    return 0
-
-
-def run_demo_check() -> int:
-    """Non-reward-bearing §10.2 check: the matched Code-like demo steps
-    execute successfully through BOTH real Code workers."""
-    from . import contract, render
-    from .pool_runtime import FourWorkerPool
-    from .tools import Binding
-    from .types import IntegerList
-    profile = canonical_support_profile()
-    pool = FourWorkerPool(profile)
-    failures = []
-    for check in DEMO_CODE_CHECKS:
-        payload = check["payload"]
-        resource_text = (f"{check['resource_handle']}: "
-                         + " ".join(str(v) for v in payload))
-        user = render.build_worker_request(
-            "A buffer holds an integer sequence.",
-            f"Return the value at zero-based index {check['index']} of "
-            "the integer sequence in the requested resource.",
-            resource_text=resource_text,
-            contract=render.CONTRACT_TASK_LAST)
-        binding = Binding(resources={
-            check["resource_handle"]: IntegerList(tuple(payload))})
-        for worker in (2, 3):
-            request = pool.render_request(worker, user)
-            gen = pool.generate_singleton(worker, request)
-            result = contract.run_worker_output(2, gen.completion,
-                                                binding)
-            ok = (result.status == "success"
-                  and result.value == check["expected"])
-            print(f"demo {check['demo_index']} worker {worker}: "
-                  f"{result.status} value={result.value} "
-                  f"(expected {check['expected']}) "
-                  f"{'OK' if ok else 'FAIL'}")
-            if not ok:
-                failures.append((check["demo_index"], worker))
-    pool.close()
-    if failures:
-        print(f"FAIL: {failures}")
-        return 1
-    print("demo-check OK: both Code workers execute both matched demos")
+    status = "complete"
+    error_text = None
+    try:
+        trainer = GRPOTrainer(
+            model=model_cfg["model_id"], args=args,
+            train_dataset=dataset,
+            processing_class=processing_class,
+            # §10.1: exactly ONE scalar task reward — no format_reward.
+            reward_funcs=[reward],
+            peft_config=peft_config)
+        trainer.train()
+    except BaseException as error:
+        status = "aborted"
+        error_text = f"{type(error).__name__}: {error}"
+        raise
+    finally:
+        wall = time.monotonic() - started
+        peak = (torch.cuda.max_memory_reserved()
+                if torch.cuda.is_available() else 0)
+        record: dict[str, Any] = {
+            "status": status,
+            "error": error_text,
+            "wall_seconds": round(wall, 1),
+            "peak_reserved_vram_gib": round(peak / 2 ** 30, 2),
+            "surface_lookups": reward.state["lookups"],
+            "completions_recorded": reward.state["written"],
+            "launch_profile_sha256": profile_sha,
+            "surface_manifest_sha256":
+                profile["surface_manifest_sha256"],
+            "canary": canary,
+        }
+        if status == "complete":
+            summary = summarize_action_trace(
+                trace_path, expected_schedule=schedule,
+                group_size=grpo["group_size"])
+            record.update(summary)
+        (run_dir / "summary.json").write_text(
+            json.dumps(record, indent=1, sort_keys=True) + "\n")
+        print(json.dumps(record, indent=1, sort_keys=True))
     return 0
 
 
@@ -310,24 +524,39 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="command", required=True)
     sub.add_parser("check", help="CPU gates: profile, schedule, pins")
-    sub.add_parser("demo-check", help="GPU: matched Code demos execute "
-                                      "through both workers")
-    sub.add_parser("run", help="GPU: the 18-update reward-bearing smoke "
-                               "(gated on the §10.2 prompt review)")
+    sub.add_parser("demo-check", help="GPU: the exact preregistered "
+                                      "demo workflows, both Code "
+                                      "workers on every Code node")
+    sub.add_parser("format-probe", help="GPU: reward-blind schema/"
+                                        "length probe, 18x8")
+    frz = sub.add_parser("freeze", help="record the literal policy "
+                                        "bundle digests")
+    frz.add_argument("--review-record", required=True)
+    sub.add_parser("run", help="GPU: the reward-bearing smoke (frozen "
+                               "bundle + review record required)")
     args = ap.parse_args(argv)
     if args.command == "check":
         validate_launch_profile()
         surface = verify_surface_pin()
         print(f"launch profile OK (sha {launch_profile_sha256()[:16]}), "
               f"schedule {len(smoke_schedule())} groups, surface "
-              f"{len(surface)} rows verified against pin "
-              f"{SURFACE_MANIFEST_SHA256[:16]}")
-        gate = STAGE0C_LAUNCH_PROFILE["policy_prompt_review"]
-        print(f"§10.2 prompt review: "
-              f"{gate or 'PENDING — reward-bearing smoke is gated'}")
+              f"{len(surface)} rows verified against the profile pin")
+        print(f"freeze: {'present' if FREEZE_PATH.exists() else 'ABSENT'}"
+              f"; review: "
+              f"{STAGE0C_LAUNCH_PROFILE['policy_prompt_review'] or 'PENDING'}")
         return 0
     if args.command == "demo-check":
         return run_demo_check()
+    if args.command == "format-probe":
+        return run_format_probe()
+    if args.command == "freeze":
+        record = compute_freeze_record(args.review_record)
+        with FREEZE_PATH.open("x", encoding="utf-8") as handle:
+            json.dump(record, handle, indent=1, sort_keys=True)
+            handle.write("\n")
+        print(f"frozen -> {FREEZE_PATH} (sha "
+              f"{hashlib.sha256(FREEZE_PATH.read_bytes()).hexdigest()[:16]})")
+        return 0
     if args.command == "run":
         return run_smoke()
     raise AssertionError(args.command)

@@ -335,6 +335,19 @@ def build_observation(instance: dict[str, Any],
                                visible_payload_texts=payloads)
 
 
+def format_ood_observation(public_prompt: str, manifest: list[str],
+                           steps: list[dict[str, Any]]) -> str:
+    """Canonical PRIVATE-condition observation layout for hand-written
+    out-of-domain content (the §10.2 policy demonstrations, 121_s
+    finding 1). Same skeleton as `build_observation`, but for synthetic
+    workflows that are not generator instances: there is no identity to
+    check and disclosure is fixed private (no payload block), so this
+    wrapper exposes the layout only. Generator instances always go
+    through `build_observation`."""
+    return _format_observation(public_prompt, manifest, steps,
+                               visible_payload_texts=None)
+
+
 def _format_observation(public_prompt: str, manifest: list[str],
                         steps: list[dict[str, Any]],
                         visible_payload_texts: list[str] | None = None) -> str:
