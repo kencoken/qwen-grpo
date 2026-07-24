@@ -17,7 +17,11 @@ from __future__ import annotations
 import hashlib
 from typing import Mapping
 
-from .types import SYNTAX_REJECTION_CODES  # §7.3 cascade trigger set
+from .types import (
+    CELL_INTERVENTION_EDGES,       # authoritative edge table (136_s)
+    RENDERER_IDS,                  # authoritative renderer list
+    SYNTAX_REJECTION_CODES,        # §7.3 cascade trigger set
+)
 
 # --- §17.1-2: cohort and visible-slice decisions ----------------------------
 
@@ -61,18 +65,13 @@ GATE_THRESHOLDS: dict[str, float] = {
 # --- §7.1: gate applicability matrix ----------------------------------------
 
 # Intervention diagnostics apply per DIRECTED EDGE, never pooled across
-# edges (134_s finding 1): every (edge, diagnostic) pair below is its own
-# independently passed gate, named "{diagnostic}_{src}_{dst}".
+# edges (134_s finding 1): every (edge, diagnostic) pair is its own
+# independently passed gate, named "{diagnostic}_{src}_{dst}". The edge
+# table itself is the authoritative one in types.py — the same table
+# generation and estimand scoring use — imported, not copied, so admission
+# gates cannot drift from it (136_s finding 1).
 INTERVENTION_DIAGNOSTICS = ("corruption", "counterfactual_consistency",
                             "old_answer_persistence")
-CELL_INTERVENTION_EDGES: dict[str, tuple[tuple[str, str], ...]] = {
-    "lookup_atomic": (),
-    "math_atomic": (),
-    "code_atomic": (),
-    "lookup_math": (("n1", "n2"),),
-    "math_code": (("n1", "n2"),),
-    "fork_join": (("n1", "n3"), ("n2", "n3")),
-}
 
 
 def intervention_gate_names(cell_id: str) -> tuple[str, ...]:
@@ -157,7 +156,10 @@ NODE_FAMILIES: dict[str, dict[str, str]] = {
     "fork_join": {"n1": "lookup", "n2": "code", "n3": "math"},
 }
 
-RENDERERS_PER_LATENT = 3  # all three private renderers at every look
+# All private renderers at every look — derived from the authoritative
+# renderer list, not a duplicate literal (136_s follow-through; the
+# WORKER_FAMILIES cross-check against the worker registry is unit 2's).
+RENDERERS_PER_LATENT = len(RENDERER_IDS)
 
 
 def on_contract_nodes(cell_id: str, worker_id: int) -> tuple[str, ...]:
@@ -245,23 +247,30 @@ _HEX64 = frozenset("0123456789abcdef")
 
 
 def canonical_cell_look_vector(cell_looks: Mapping[str, int]) -> str:
-    """The one canonical builder (134_s): comma-joined `cell_id:look`
-    sorted by cell_id. Validates every cell is a known cell and every
-    look belongs to that cell's registered schedule."""
+    """The one canonical builder (134_s, corrected per 136_s finding 2):
+    comma-joined `cell_id:count` sorted by cell_id.
+
+    Population-INDEPENDENT: §8.3 applies the same bootstrap identity to
+    qualification looks, policy-dev headroom, `pilot_gate`, and final
+    C1/C2/C3 inference, so counts like 12/24/56/67/72 are all valid here.
+    Phase-specific schedule/count validation belongs to unit 2's
+    population manifest, not this serializer. Validation here is exactly:
+    known cell, plain-int count (`type(count) is int` — a bool or an
+    integral float would serialize to a different seed identity than the
+    int it compares equal to), count > 0, sorted canonical order."""
     if not cell_looks:
         raise ValueError("empty cell-look vector")
     parts = []
     for cell in sorted(cell_looks):
         if cell not in NODE_FAMILIES:
             raise ValueError(f"unknown cell_id {cell!r}")
-        schedule = (FORK_LOOK_SCHEDULE if cell == "fork_join"
-                    else ORDINARY_LOOK_SCHEDULE)
-        look = cell_looks[cell]
-        if look not in schedule:
+        count = cell_looks[cell]
+        if type(count) is not int:
             raise ValueError(
-                f"look {look!r} not in the registered schedule "
-                f"{schedule} for {cell}")
-        parts.append(f"{cell}:{look}")
+                f"count for {cell} must be a plain int, got {count!r}")
+        if count <= 0:
+            raise ValueError(f"count for {cell} must be > 0, got {count}")
+        parts.append(f"{cell}:{count}")
     return ",".join(parts)
 
 

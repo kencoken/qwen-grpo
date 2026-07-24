@@ -272,17 +272,42 @@ def test_canonical_cell_look_vector():
     vec = stage1.canonical_cell_look_vector(
         {"math_code": 500, "code_atomic": 100})
     assert vec == "code_atomic:100,math_code:500"
-    # fork uses the fork schedule
     assert stage1.canonical_cell_look_vector({"fork_join": 200}) == \
         "fork_join:200"
     with pytest.raises(ValueError):        # unknown cell
         stage1.canonical_cell_look_vector({"bogus_cell": 100})
-    with pytest.raises(ValueError):        # look off the ordinary schedule
-        stage1.canonical_cell_look_vector({"code_atomic": 200})
-    with pytest.raises(ValueError):        # fork look off the fork schedule
-        stage1.canonical_cell_look_vector({"fork_join": 300})
     with pytest.raises(ValueError):        # empty
         stage1.canonical_cell_look_vector({})
+    with pytest.raises(ValueError):        # zero count
+        stage1.canonical_cell_look_vector({"code_atomic": 0})
+    with pytest.raises(ValueError):        # negative count
+        stage1.canonical_cell_look_vector({"code_atomic": -5})
+
+
+def test_canonical_cell_look_vector_population_independent():
+    # 136_s finding 2: the serializer must accept every §8.3 consumer, not
+    # only qualification looks — phase validation is unit 2's manifest.
+    for counts in (
+        {"code_atomic": 12},                        # pilot_gate
+        {"code_atomic": 24},                        # dev_select
+        {cell: 56 for cell in stage1.CORE_CELLS} | {"fork_join": 56},
+        {cell: 67 for cell in stage1.CORE_CELLS},   # five-cell final test
+        {"math_code": 72},                          # policy-dev direction
+        {"fork_join": 300},                         # off-schedule but valid
+    ):
+        vec = stage1.canonical_cell_look_vector(counts)
+        assert vec == ",".join(f"{c}:{counts[c]}" for c in sorted(counts))
+        # and it feeds a valid seed
+        assert 0 <= stage1.bootstrap_seed("a" * 64, "g", counts) < 2 ** 64
+
+
+def test_canonical_cell_look_vector_rejects_bool_and_float():
+    # type(count) is int: an integral float or bool compares equal to the
+    # int but must not silently mint the same (or any) seed identity.
+    with pytest.raises(ValueError):
+        stage1.canonical_cell_look_vector({"code_atomic": 100.0})
+    with pytest.raises(ValueError):
+        stage1.canonical_cell_look_vector({"code_atomic": True})
 
 
 def test_stage2_population_constants():
@@ -300,6 +325,14 @@ def test_stage2_population_constants():
 
 
 # --- 134_s finding 1: per-edge intervention cross-product --------------------
+
+def test_edge_table_is_the_types_object_not_a_copy():
+    # 136_s finding 1: one source of truth. Identity, not equality — an
+    # equal copy is exactly the drift risk being excluded.
+    import tasks.conductor.types as conductor_types
+    assert stage1.CELL_INTERVENTION_EDGES is \
+        conductor_types.CELL_INTERVENTION_EDGES
+
 
 def test_intervention_edge_diagnostic_cross_product():
     for cell, edges in stage1.CELL_INTERVENTION_EDGES.items():
