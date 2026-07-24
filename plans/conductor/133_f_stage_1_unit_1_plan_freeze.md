@@ -17,8 +17,10 @@ not amended:
    both prompt candidates to pass the reward-blind format gate; a single
    format-failing prompt combined with fork sparsity in the other forces a
    full stop rather than the Core fallback. Accepted as conservative
-   fail-closed exposure (Stage 0 measured 144/144 format validity and
-   `FORMAT_REPAIR_V1` exists).
+   fail-closed exposure (Stage 0 measured 144/144 format validity).
+   *Corrected per 134_s finding 3: no `FORMAT_REPAIR_V1` implementation
+   exists; 135_f freezes the no-repair decision — per 132_s §10.1, with
+   none frozen, no repair is allowed.*
 2. **§8.4B per-prompt visibility.** The feasibility replay reveals
    per-prompt direct-gradient densities before the single confirm/amend
    decision. The §8.4 guards ("may not iterate prompts, select a prompt, or
@@ -87,8 +89,9 @@ pin them to their sources. The decisions of record:
    every factor-block size in {1,2,3,6}; the joint-balance acceptance test
    recomputes exact joint contingency tables over 30–129 for every cell and
    requires max−min ≤ 1 (verified: passes for all six cells).
-2. **`policy_dev`:** registered ninth namespace, fail-closed cap 1,000 per
-   cell, disjoint cohorts exactly as 132_s §10.1.
+2. **`policy_dev`:** registered seventh namespace *(count corrected per
+   134_s)*, fail-closed cap 1,000 per cell, disjoint cohorts exactly as
+   132_s §10.1.
 3. **`SYSTEM_DIRECT`:** the rev0 bytes already present in the
    freeze-digested `prompts.py` are **adopted unchanged** as the frozen
    Stage-1 artifact:

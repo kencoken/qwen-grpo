@@ -15,6 +15,7 @@ Citations are to 132_s_stage_1_2_four_worker_redraft_rev2.md unless noted.
 from __future__ import annotations
 
 import hashlib
+from typing import Mapping
 
 from .types import SYNTAX_REJECTION_CODES  # §7.3 cascade trigger set
 
@@ -59,6 +60,28 @@ GATE_THRESHOLDS: dict[str, float] = {
 
 # --- §7.1: gate applicability matrix ----------------------------------------
 
+# Intervention diagnostics apply per DIRECTED EDGE, never pooled across
+# edges (134_s finding 1): every (edge, diagnostic) pair below is its own
+# independently passed gate, named "{diagnostic}_{src}_{dst}".
+INTERVENTION_DIAGNOSTICS = ("corruption", "counterfactual_consistency",
+                            "old_answer_persistence")
+CELL_INTERVENTION_EDGES: dict[str, tuple[tuple[str, str], ...]] = {
+    "lookup_atomic": (),
+    "math_atomic": (),
+    "code_atomic": (),
+    "lookup_math": (("n1", "n2"),),
+    "math_code": (("n1", "n2"),),
+    "fork_join": (("n1", "n3"), ("n2", "n3")),
+}
+
+
+def intervention_gate_names(cell_id: str) -> tuple[str, ...]:
+    """The full edge x diagnostic cross-product for one cell."""
+    return tuple(f"{diag}_{src}_{dst}"
+                 for (src, dst) in CELL_INTERVENTION_EDGES[cell_id]
+                 for diag in INTERVENTION_DIAGNOSTICS)
+
+
 # Mandatory admission gates per cell; failure of any mandatory gate
 # excludes the cell; failure of any of the five mandatory Core cells makes
 # Core NO-GO; fork failure leaves the five-cell Core branch intact.
@@ -83,24 +106,23 @@ GATE_MATRIX: dict[str, dict[str, tuple[str, ...]]] = {
     },
     "lookup_math": {
         "mandatory": ("two_step_deployable", "deployable_vs_one_call",
-                      "selected_route_protocol", "edge_corruption",
-                      "counterfactual_consistency", "old_answer_persistence"),
+                      "selected_route_protocol")
+                     + intervention_gate_names("lookup_math"),
         "c1_positions": ("n1", "n2"),
         "c2_positions": (),
     },
     "math_code": {
         "mandatory": ("two_step_deployable", "deployable_vs_one_call",
-                      "selected_route_protocol", "edge_corruption",
-                      "counterfactual_consistency", "old_answer_persistence"),
+                      "selected_route_protocol")
+                     + intervention_gate_names("math_code"),
         "c1_positions": ("n1", "n2"),
         "c2_positions": ("n2",),        # optional: affects C2 only
     },
     "fork_join": {
         "mandatory": ("fork_leaf_capability", "fork_deployable",
                       "deployable_vs_two_call_shortcut",
-                      "selected_route_protocol",
-                      "branch_corruption_n1", "branch_corruption_n2",
-                      "counterfactual_consistency", "old_answer_persistence"),
+                      "selected_route_protocol")
+                     + intervention_gate_names("fork_join"),
         "c1_positions": ("n1", "n2", "n3"),
         # semantic ids are stable under branch_order: n2 is the Code leaf
         "c2_positions": ("n2",),        # optional: affects C2 only
@@ -109,6 +131,75 @@ GATE_MATRIX: dict[str, dict[str, tuple[str, ...]]] = {
 
 CORE_CELLS = ("lookup_atomic", "math_atomic", "code_atomic",
               "lookup_math", "math_code")
+
+# --- §7.1: protocol-gate denominator contract (134_s finding 2) -------------
+
+# The scientific denominator row is:
+#   one registered private observation x one intended semantic reference
+#   node x one logical worker x one independent reference-node execution.
+# Each row counts once irrespective of cache reuse, de-duplication, control
+# membership, or how many complete assignments consume it; the latent
+# program is the resampling unit. Unit 2 derives expected manifest counts
+# mechanically from the functions below.
+
+# Logical worker id -> endpoint family (frozen registry order, 106_s §4).
+WORKER_FAMILIES: dict[int, str] = {0: "lookup", 1: "math", 2: "code",
+                                   3: "code"}
+
+# Semantic node -> intended endpoint family F(c, j). Acceptance-tested
+# against generated reference programs (op -> family), not hand-trusted.
+NODE_FAMILIES: dict[str, dict[str, str]] = {
+    "lookup_atomic": {"n1": "lookup"},
+    "math_atomic": {"n1": "math"},
+    "code_atomic": {"n1": "code"},
+    "lookup_math": {"n1": "lookup", "n2": "math"},
+    "math_code": {"n1": "math", "n2": "code"},
+    "fork_join": {"n1": "lookup", "n2": "code", "n3": "math"},
+}
+
+RENDERERS_PER_LATENT = 3  # all three private renderers at every look
+
+
+def on_contract_nodes(cell_id: str, worker_id: int) -> tuple[str, ...]:
+    """Nodes of `cell_id` whose intended family matches the worker's —
+    the on-contract stratum for truncation telemetry and gating."""
+    family = WORKER_FAMILIES[worker_id]
+    nodes = NODE_FAMILIES[cell_id]
+    return tuple(n for n in sorted(nodes) if nodes[n] == family)
+
+
+def truncation_rows_per_latent(cell_id: str, worker_id: int) -> int:
+    """Truncation gate rows per latent for one (cell, logical worker):
+    exactly 3 x number_of_on_contract_nodes; 0 means no on-contract
+    support (that worker is not truncation-gated in that cell)."""
+    return RENDERERS_PER_LATENT * len(on_contract_nodes(cell_id, worker_id))
+
+
+def selected_route_rows_per_latent(cell_id: str) -> int:
+    """Selected-route syntax rows per latent for the cell overall:
+    exactly 3 x S."""
+    return RENDERERS_PER_LATENT * len(NODE_FAMILIES[cell_id])
+
+
+def selected_route_rows_per_worker(
+        cell_id: str, deployable: Mapping[str, int]) -> dict[int, int]:
+    """Selected-route syntax rows per latent for every logical worker the
+    construction-frozen deployable mapping `d` selects in this cell:
+    exactly 3 x selected_nodes_for_worker. Validates that `deployable`
+    covers exactly this cell's semantic nodes with known worker ids."""
+    nodes = NODE_FAMILIES[cell_id]
+    if set(deployable) != set(nodes):
+        raise ValueError(
+            f"deployable mapping keys {sorted(deployable)} != semantic "
+            f"nodes {sorted(nodes)} of {cell_id}")
+    counts: dict[int, int] = {}
+    for node, worker_id in deployable.items():
+        if worker_id not in WORKER_FAMILIES:
+            raise ValueError(f"unknown worker id {worker_id!r} at "
+                             f"{cell_id}:{node}")
+        counts[worker_id] = counts.get(worker_id, 0) + RENDERERS_PER_LATENT
+    return counts
+
 
 # §8.2: the one registered universe of renderer-aggregated Code positions.
 # The model-position tail alpha always divides by its size (3), whether the
@@ -150,16 +241,46 @@ BOOTSTRAP_BITGENERATOR = "PCG64"
 _BOOTSTRAP_TAG = "bootstrap-v1"
 
 
-def bootstrap_seed(population_manifest_sha256: str, gate_id: str,
-                   canonical_cell_look_vector: str) -> int:
-    """§8.3 seed: first 8 bytes (big-endian) of the SHA-256 over the
-    ␟-joined material — the same h64 convention as program.py.
+_HEX64 = frozenset("0123456789abcdef")
 
-    `canonical_cell_look_vector` is the comma-joined `cell_id:look`
-    pairs sorted by cell_id (e.g. "code_atomic:300,math_code:500").
-    """
+
+def canonical_cell_look_vector(cell_looks: Mapping[str, int]) -> str:
+    """The one canonical builder (134_s): comma-joined `cell_id:look`
+    sorted by cell_id. Validates every cell is a known cell and every
+    look belongs to that cell's registered schedule."""
+    if not cell_looks:
+        raise ValueError("empty cell-look vector")
+    parts = []
+    for cell in sorted(cell_looks):
+        if cell not in NODE_FAMILIES:
+            raise ValueError(f"unknown cell_id {cell!r}")
+        schedule = (FORK_LOOK_SCHEDULE if cell == "fork_join"
+                    else ORDINARY_LOOK_SCHEDULE)
+        look = cell_looks[cell]
+        if look not in schedule:
+            raise ValueError(
+                f"look {look!r} not in the registered schedule "
+                f"{schedule} for {cell}")
+        parts.append(f"{cell}:{look}")
+    return ",".join(parts)
+
+
+def bootstrap_seed(population_manifest_sha256: str, gate_id: str,
+                   cell_looks: Mapping[str, int]) -> int:
+    """§8.3 seed: first 8 bytes (big-endian) of the SHA-256 over the
+    ␟-joined material — the same h64 convention as program.py. The
+    cell-look vector is built internally by `canonical_cell_look_vector`
+    so callers cannot supply a non-canonical string (134_s)."""
+    digest_chars = set(population_manifest_sha256)
+    if (len(population_manifest_sha256) != 64
+            or not digest_chars <= _HEX64):
+        raise ValueError("population_manifest_sha256 must be 64 lowercase "
+                         "hex characters")
+    if not gate_id:
+        raise ValueError("empty gate_id")
     material = "\x1f".join([population_manifest_sha256, gate_id,
-                            canonical_cell_look_vector, _BOOTSTRAP_TAG])
+                            canonical_cell_look_vector(cell_looks),
+                            _BOOTSTRAP_TAG])
     digest = hashlib.sha256(material.encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big")
 
@@ -240,6 +361,81 @@ SHALLOW_ROUTER_PARAMS: dict[str, object] = {
 SHALLOW_ROUTER_FEATURES = ("cell_id", "node_id", "subtype",
                            "p", "q", "t", "k", "i")
 SHALLOW_ROUTER_MISSING_VALUE = -1
+
+# Encoder configuration (134_s): every categorical is one-hot in a frozen
+# level order; no hashing, no learned embedding, no unseen-level bucket —
+# an unseen level is a LoadError at encode time, never a silent zero row.
+# cell_id levels: lexicographic; node_id levels: n1<n2<n3; subtype levels:
+# the frozen per-cell OBSERVABLE_SUBTYPES lists from baselines.py (the
+# §1.11 shallow-predictor contract), namespaced as "cell:level" and
+# concatenated in cell order. Numeric columns follow in the frozen order
+# (p, q, t, k, i) with missing -> -1, exactly as baselines.feature_row.
+SHALLOW_ROUTER_CELL_LEVELS = ("code_atomic", "fork_join", "lookup_atomic",
+                              "lookup_math", "math_atomic", "math_code")
+SHALLOW_ROUTER_NODE_LEVELS = ("n1", "n2", "n3")
+
+
+def shallow_router_subtype_levels() -> tuple[str, ...]:
+    """Frozen namespaced subtype one-hot order, bound to the baselines
+    §1.11 contract so the two shallow controls cannot drift apart."""
+    from .baselines import OBSERVABLE_SUBTYPES
+    return tuple(f"{cell}:{level}"
+                 for cell in SHALLOW_ROUTER_CELL_LEVELS
+                 for level in OBSERVABLE_SUBTYPES[cell])
+
+# --- §10.1: frozen policy prompt candidates (134_s finding 3) ---------------
+
+# few-shot: the exact Stage-0 SYSTEM_CONDUCTOR bytes (policy freeze
+# fe9bba0d...). schema-only: identical instructions, observation skeleton
+# and output contract with the demonstration block removed — derived
+# mechanically from the frozen bytes, never retyped. Both digests are
+# pinned; drift in either fails closed.
+PROMPT_FEWSHOT_SHA256 = (
+    "fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070")
+PROMPT_SCHEMA_ONLY_SHA256 = (
+    "9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb")
+
+
+def prompt_fewshot() -> str:
+    from .policy import SYSTEM_CONDUCTOR
+    text = SYSTEM_CONDUCTOR
+    if hashlib.sha256(text.encode("utf-8")).hexdigest() != \
+            PROMPT_FEWSHOT_SHA256:
+        raise RuntimeError("few-shot prompt bytes drifted from the pinned "
+                           "Stage-0 policy freeze digest")
+    return text
+
+
+def prompt_schema_only() -> str:
+    from .policy import SYSTEM_CONDUCTOR, _demo_block
+    suffix = "\n\n" + _demo_block()
+    if not SYSTEM_CONDUCTOR.endswith(suffix):
+        raise RuntimeError("SYSTEM_CONDUCTOR no longer ends with the "
+                           "demonstration block; schema-only derivation "
+                           "is invalid")
+    text = SYSTEM_CONDUCTOR[:-len(suffix)]
+    if hashlib.sha256(text.encode("utf-8")).hexdigest() != \
+            PROMPT_SCHEMA_ONLY_SHA256:
+        raise RuntimeError("schema-only prompt bytes drifted from the "
+                           "pinned digest")
+    return text
+
+
+# FORMAT_REPAIR_V1 (134_s finding 3, taking the reviewer's recommended
+# no-repair choice): NO repair transformation is frozen. Per 132_s §10.1,
+# "if none is frozen, no repair is allowed" — a prompt candidate failing
+# the reward-blind format gate is simply ineligible. policy_dev cohort B
+# (indices 24-47) stays registered but unused; it is never reassigned.
+FORMAT_REPAIR_V1 = None
+
+# --- unit-2 successor source digest (134_s) ----------------------------------
+
+# The successor source/environment manifest issued by unit 2 must include,
+# beyond the eight historical SOURCE_DIGEST_FILES, at least contract.py:
+# the Stage-0 digest never bound the direct-answer parser used by the
+# B1/B3/B4 arms. Unit 2 defines the complete list; this constant is the
+# reviewer-required floor and is asserted against that list.
+SUCCESSOR_DIGEST_REQUIRED_ADDITIONS = ("tasks/conductor/contract.py",)
 
 # --- artifact identities ------------------------------------------------------
 

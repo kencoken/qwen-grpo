@@ -128,8 +128,10 @@ POLICY_DEV_COHORTS: dict[str, range] = {
     # Reward-blind format cohort A: one sampled completion per observation
     # per prompt candidate; JSON/schema validity and action length only.
     "format_a": range(0, 24),
-    # Fresh reward-blind cohort B: used only after the one permitted
-    # FORMAT_REPAIR_V1 application; cohort A is retained.
+    # Fresh reward-blind cohort B: reserved for a repair rerun. 135_f
+    # froze the no-repair decision (132_s §10.1: none frozen => no repair
+    # allowed), so this cohort stays registered but unused — never
+    # reassigned to another role.
     "format_b": range(24, 48),
     # Reward-bearing cold-start candidates: support selected and hashed
     # before any reward-bearing policy output (132_s §10.2).
@@ -138,7 +140,15 @@ POLICY_DEV_COHORTS: dict[str, range] = {
 
 
 def policy_dev_cohort(latent_index: int) -> str:
-    """Map a policy_dev latent index to its frozen cohort role."""
+    """Map a policy_dev latent index to its frozen cohort role.
+
+    Same plain-integer domain guard as generate_latent (134_s): bool and
+    float indices would silently land in a cohort while seeding
+    differently elsewhere.
+    """
+    if not isinstance(latent_index, int) or isinstance(latent_index, bool):
+        raise LoadError(
+            f"policy_dev index must be a plain int, got {latent_index!r}")
     for name, rng in POLICY_DEV_COHORTS.items():
         if latent_index in rng:
             return name
