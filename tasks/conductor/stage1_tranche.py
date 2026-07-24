@@ -523,17 +523,19 @@ def aggregate_verdict(a_artifact: Mapping[str, Any],
                       c_artifact: Mapping[str, Any],
                       d_artifact: Mapping[str, Any],
                       b_evidence: Mapping[str, Any], *,
-                      env_manifest: Mapping[str, Any]
-                      ) -> dict[str, Any]:
+                      env_manifest: Mapping[str, Any],
+                      b_pinned_loader=None) -> dict[str, Any]:
+    # `b_pinned_loader` exists for tests only; None means the
+    # authoritative stage1_replay.load_pinned_replay_inputs.
     """The single fail-closed tranche summary feeding the reviewed
     confirm/amend decision (which is never automated). Every check
     contributes; artifacts bind to ONE execution identity that is
     verified to be the hash of a valid environment manifest; B enters
     only as an EVIDENCE BUNDLE — {artifact, replay_manifest,
-    raw_completions_text, surface, support_rows} — whose counts are
-    re-derived from the pinned surface and reparsed raw completions at
-    this boundary (148_s finding 3); Wilson bounds and B direction
-    statuses are recomputed, never trusted."""
+    raw_completions_text} — verified against INTERNALLY loaded pinned
+    inputs and the fully regenerated expected replay manifest at this
+    boundary (148_s finding 3; 151_s finding 2); Wilson bounds and B
+    direction statuses are recomputed, never trusted."""
     from .stage1_manifest import validate_env_manifest
     # 148_s finding 3: the shared identity must be PROVEN to be the
     # content hash of a valid stage1-environment-v2 manifest — a bare
@@ -594,16 +596,15 @@ def aggregate_verdict(a_artifact: Mapping[str, Any],
     # manifest self-hashes and carries the frozen contract (148_s
     # finding 3). A self-rehashed artifact cannot survive this.
     from .stage1_replay import verify_replay_evidence
-    for field in ("artifact", "replay_manifest", "raw_completions_text",
-                  "surface", "support_rows"):
+    for field in ("artifact", "replay_manifest",
+                  "raw_completions_text"):
         if field not in b_evidence:
             raise TrancheError(f"B evidence bundle missing {field!r}")
     summary = verify_replay_evidence(
         b_evidence["artifact"], env_manifest=env_manifest,
         replay_manifest=b_evidence["replay_manifest"],
         raw_completions_text=b_evidence["raw_completions_text"],
-        surface=b_evidence["surface"],
-        support_rows=b_evidence["support_rows"])
+        pinned_loader=b_pinned_loader)
     directions = summary["directions"]
     if set(directions) != {"2", "3"}:
         raise TrancheError("B summary must cover exactly directions "
@@ -699,10 +700,16 @@ def run_full_tranche(*, allow_dirty: bool = False) -> dict[str, Any]:
         d_results: dict[str, dict[str, int]] = {}
         for scen in D_SCENARIOS:
             t0 = time.perf_counter()
-            d_results[scen["id"]] = run_d_battery_scenario(
-                scen, deadline_seconds=deadline)
-            record["scenario_wall_seconds"][scen["id"]] = \
-                int(time.perf_counter() - t0)
+            try:
+                d_results[scen["id"]] = run_d_battery_scenario(
+                    scen, deadline_seconds=deadline)
+            finally:
+                # 151_s finding 4: a deadline abort must still leave
+                # this scenario's wall time in the record (the partial
+                # error count travels in the exception text, which the
+                # outer handler writes into the aborted record)
+                record["scenario_wall_seconds"][scen["id"]] = \
+                    int(time.perf_counter() - t0)
             _persist(f"partial_D_{scen['id']}", d_results[scen["id"]])
         d_art = finalize_artifact("D", exec_sha, d_results,
                                   extra={"agreement": agreement})

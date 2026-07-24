@@ -459,9 +459,15 @@ def sequential_stake_decision(rows_by_cell: list[np.ndarray],
         prefix = [cell[:min(look, cell.shape[0])]
                   for cell in rows_by_cell]
         point = point_estimate(prefix)
+        if point is None:
+            # zero eligible observations at this look: undefined — the
+            # adverse bootstrap endpoints must not fire either branch
+            # (151_s finding 3); expand, and unresolved at cap stays
+            # unresolved
+            continue
         lcb, ucb = paired_cluster_bootstrap(prefix, tail_alpha,
                                             replicates, seed + k)
-        if point is not None and point >= point_min and lcb > 0:
+        if point >= point_min and lcb > 0:
             return "pass"
         if ucb < 0:
             return "fail"

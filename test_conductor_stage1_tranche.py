@@ -116,9 +116,11 @@ def _b_evidence(k2=30, k3=30, exec_sha=None):
                "replay_manifest_sha256":
                    manifest["replay_manifest_sha256"],
                "raw_completions_sha256": raw_sha})
+    def loader():
+        return surface, rows, rr
     return {"artifact": artifact, "replay_manifest": manifest,
-            "raw_completions_text": raw_text, "surface": surface,
-            "support_rows": rows}
+            "raw_completions_text": raw_text, "loader": loader,
+            "surface": surface, "support_rows": rows}
 
 
 
@@ -319,7 +321,8 @@ def _full_artifacts(c_power_pass=True, b_k=30):
 
 def test_aggregate_verdict_confirm_path():
     a, c, d, b = _full_artifacts()
-    v = st.aggregate_verdict(a, c, d, b, env_manifest=ENV)
+    v = st.aggregate_verdict(a, c, d, b, env_manifest=ENV,
+                         b_pinned_loader=b['loader'])
     assert v["confirm_possible"] is True
     assert v["D_failing"] == []
     assert v["B_directions_blocking"] == []
@@ -327,7 +330,8 @@ def test_aggregate_verdict_confirm_path():
 
 def test_aggregate_verdict_c_failure_predicted_path():
     a, c, d, b = _full_artifacts(c_power_pass=False)
-    v = st.aggregate_verdict(a, c, d, b, env_manifest=ENV)
+    v = st.aggregate_verdict(a, c, d, b, env_manifest=ENV,
+                         b_pinned_loader=b['loader'])
     assert v["confirm_possible"] is False
     assert len(v["C_power_failing"]) == 2
 
@@ -348,14 +352,16 @@ def test_aggregate_verdict_requires_valid_env_manifest():
 def test_aggregate_verdict_empty_or_partial_b_refuses():
     a, c, d, b = _full_artifacts()
     with pytest.raises(st.TrancheError, match="missing"):
-        st.aggregate_verdict(a, c, d, {}, env_manifest=ENV)
+        st.aggregate_verdict(a, c, d, {}, env_manifest=ENV,
+                             b_pinned_loader=b["loader"])
     truncated = dict(b)
     raw = json.loads(b["raw_completions_text"])
     raw.pop(next(iter(raw)))
     truncated["raw_completions_text"] = json.dumps(
         dict(sorted(raw.items())), ensure_ascii=False)
     with pytest.raises(InfrastructureError, match="hash"):
-        st.aggregate_verdict(a, c, d, truncated, env_manifest=ENV)
+        st.aggregate_verdict(a, c, d, truncated, env_manifest=ENV,
+                             b_pinned_loader=b["loader"])
 
 
 def test_aggregate_verdict_self_rehashed_b_refuses():
@@ -374,13 +380,15 @@ def test_aggregate_verdict_self_rehashed_b_refuses():
                    art["raw_completions_sha256"]})
     evil = dict(b, artifact=rehashed)
     with pytest.raises(InfrastructureError, match="reproduce"):
-        st.aggregate_verdict(a, c, d, evil, env_manifest=ENV)
+        st.aggregate_verdict(a, c, d, evil, env_manifest=ENV,
+                             b_pinned_loader=b["loader"])
 
 
 def test_aggregate_verdict_b_not_demonstrated_blocks():
     a, c, d, _ = _full_artifacts()
     b = _b_evidence(k2=0, k3=0)
-    v = st.aggregate_verdict(a, c, d, b, env_manifest=ENV)
+    v = st.aggregate_verdict(a, c, d, b, env_manifest=ENV,
+                         b_pinned_loader=b['loader'])
     assert v["B_directions_blocking"] == ["2", "3"]
     assert v["confirm_possible"] is False
 
@@ -389,7 +397,8 @@ def test_aggregate_verdict_mixed_executions_refuse():
     a, c, d, _ = _full_artifacts()
     foreign = _b_evidence(exec_sha="f" * 64)
     with pytest.raises((st.TrancheError, InfrastructureError)):
-        st.aggregate_verdict(a, c, d, foreign, env_manifest=ENV)
+        st.aggregate_verdict(a, c, d, foreign, env_manifest=ENV,
+                             b_pinned_loader=foreign["loader"])
 
 
 def test_aggregate_verdict_d_agreement_failure():
@@ -397,35 +406,93 @@ def test_aggregate_verdict_d_agreement_failure():
     d_bad = st.finalize_artifact(
         "D", EXEC_SHA, {k: dict(v) for k, v in d["results"].items()},
         extra={"agreement": {"agree_count": 995, "datasets": 1_000}})
-    v = st.aggregate_verdict(a, c, d_bad, b, env_manifest=ENV)
+    v = st.aggregate_verdict(a, c, d_bad, b, env_manifest=ENV,
+                             b_pinned_loader=b["loader"])
     assert "agreement" in v["D_failing"]
     assert v["confirm_possible"] is False
 
 
-def test_verify_replay_evidence_checks_manifest_and_contract():
+def test_verify_replay_evidence_regenerates_the_manifest():
     b = _b_evidence()
-    # wrong contract inside the replay manifest refuses
-    bad_manifest = json.loads(json.dumps(b["replay_manifest"]))
-    bad_manifest["contract"] = dict(bad_manifest["contract"],
-                                    total_completions=2_304)
-    with pytest.raises(InfrastructureError):
+    # wrong contract inside a REHASHED replay manifest refuses: the
+    # verifier regenerates the complete expected manifest internally
+    bad = json.loads(json.dumps(b["replay_manifest"]))
+    bad["contract"] = dict(bad["contract"], total_completions=2_304)
+    body = {k: v for k, v in bad.items()
+            if k != "replay_manifest_sha256"}
+    import hashlib as _h
+    from tasks.conductor.profiles import canonical_json
+    bad["replay_manifest_sha256"] = _h.sha256(
+        canonical_json(body).encode("utf-8")).hexdigest()
+    with pytest.raises(InfrastructureError, match="authoritative"):
         sr.verify_replay_evidence(
-            b["artifact"], env_manifest=ENV,
-            replay_manifest=bad_manifest,
+            b["artifact"], env_manifest=ENV, replay_manifest=bad,
             raw_completions_text=b["raw_completions_text"],
-            surface=b["surface"], support_rows=b["support_rows"])
-    # a surface that rederives a different pair table refuses
+            pinned_loader=b["loader"])
+    # 151_s probe: a rehashed manifest with ONE altered request hash
+    # is refused against the regenerated authoritative values
+    bad2 = json.loads(json.dumps(b["replay_manifest"]))
+    rr_key = next(iter(bad2["rendered_request_sha256"]))
+    bad2["rendered_request_sha256"][rr_key] = "b" * 64
+    body2 = {k: v for k, v in bad2.items()
+             if k != "replay_manifest_sha256"}
+    bad2["replay_manifest_sha256"] = _h.sha256(
+        canonical_json(body2).encode("utf-8")).hexdigest()
+    with pytest.raises(InfrastructureError, match="authoritative"):
+        sr.verify_replay_evidence(
+            b["artifact"], env_manifest=ENV, replay_manifest=bad2,
+            raw_completions_text=b["raw_completions_text"],
+            pinned_loader=b["loader"])
+    # a pinned surface that rederives a different pair table refuses
     surface2 = dict(b["surface"])
     key = next(k for k in surface2
                if k[0].startswith("code_atomic")
                and surface2[k] == 1.0)   # flip the w3 win -> direction
     surface2[key] = 0.0
-    with pytest.raises(InfrastructureError, match="rederive"):
+    rows = b["support_rows"]
+
+    def loader2():
+        rr = {f"{o}|{p}": "a" * 64 for o in sorted(rows)
+              for p in (FEW, SO)}
+        return surface2, rows, rr
+    with pytest.raises(InfrastructureError, match="authoritative"):
         sr.verify_replay_evidence(
             b["artifact"], env_manifest=ENV,
             replay_manifest=b["replay_manifest"],
             raw_completions_text=b["raw_completions_text"],
-            surface=surface2, support_rows=b["support_rows"])
+            pinned_loader=loader2)
+
+
+def test_recount_handles_real_build_smoke_rows():
+    # 151_s finding 1: positions arrive as JSON text from the REAL
+    # support rows; the recount must parse them
+    from tasks.conductor.grpo_task import build_smoke_rows
+    rows = {r["observation_id"]: r for r in build_smoke_rows()}
+    assert len(rows) == 18
+    code_obs = next(o for o, r in rows.items()
+                    if r["cell_id"] == "fork_join")
+    meta = rows[code_obs]
+    assert isinstance(meta["positions"], str)  # JSON text, the trap
+    pair = sr.family_correct_variants("fork_join")
+    positions = json.loads(meta["positions"])
+    # craft one parseable completion selecting the w2 variant in the
+    # REAL positional order
+    by_node = dict(zip(sorted(positions), pair[0]))
+    positional = [by_node[n] for n in positions]
+    table = {code_obs: {"cell_id": "fork_join",
+                        "assignment_w2": pair[0],
+                        "assignment_w3": pair[1],
+                        "distinct_payoff": 1, "direction": 2}}
+    raw = {}
+    for p in (FEW, SO):
+        for i in range(sr.REPLAY_COMPLETIONS):
+            raw[f"{code_obs}|{p}|{i:03d}"] = (
+                json.dumps({"worker_ids": positional}) if i < 7
+                else "malformed")
+    counts = sr.recount_from_raw(raw, table, rows)
+    for p in (FEW, SO):
+        assert counts[f"{code_obs}|{p}"] == {
+            "k2": 7, "k3": 0, "n": sr.REPLAY_COMPLETIONS}
 
 
 # --- B replay contract --------------------------------------------------------------

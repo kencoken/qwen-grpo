@@ -307,6 +307,11 @@ def recount_from_raw(raw: Mapping[str, str],
     counts: dict[str, dict[str, int]] = {}
     for obs_id, pair in sorted(pair_table.items()):
         meta = steps_of[obs_id]
+        # build_smoke_rows stores positions as JSON text to survive
+        # Dataset column typing (151_s finding 1) — parse either form
+        positions = meta["positions"]
+        if isinstance(positions, str):
+            positions = json.loads(positions)
         for sha in _PROMPT_SHAS:
             k2 = k3 = 0
             for i in range(REPLAY_COMPLETIONS):
@@ -316,8 +321,8 @@ def recount_from_raw(raw: Mapping[str, str],
                                                   meta["num_steps"])
                 except ActionSchemaError:
                     continue
-                semantic = list(positional_to_semantic(
-                    action, meta["positions"]))
+                semantic = list(positional_to_semantic(action,
+                                                       positions))
                 if semantic == list(pair["assignment_w2"]):
                     k2 += 1
                 elif semantic == list(pair["assignment_w3"]):
@@ -327,51 +332,70 @@ def recount_from_raw(raw: Mapping[str, str],
     return counts
 
 
+def load_pinned_replay_inputs() -> tuple[
+        Mapping[tuple[str, tuple[int, ...]], float],
+        dict[str, dict[str, Any]], dict[str, str]]:
+    """THE authoritative loader for the consuming boundary (151_s
+    finding 2): the pinned surface (hash-verified), the 18 support
+    rows, and the REGENERATED rendered-request hashes for both
+    candidate prompts — nothing caller-supplied."""
+    from transformers import AutoTokenizer
+    from .grpo_smoke import verify_surface_pin
+    from .grpo_task import build_smoke_rows
+    surface = verify_surface_pin()
+    rows = {row["observation_id"]: row for row in build_smoke_rows()}
+    tokenizer = AutoTokenizer.from_pretrained(
+        REPLAY_CONTRACT["model_id"],
+        revision=REPLAY_CONTRACT["revision"])
+    prompts = {REPLAY_CONTRACT["prompt_fewshot_sha256"]:
+                   stage1.prompt_fewshot(),
+               REPLAY_CONTRACT["prompt_schema_only_sha256"]:
+                   stage1.prompt_schema_only()}
+    rr: dict[str, str] = {}
+    for oid, row in rows.items():
+        user = row["prompt"][1]
+        for sha, text in prompts.items():
+            msg = [{"role": "system", "content": text}, dict(user)]
+            rr[f"{oid}|{sha}"] = rendered_request_sha256(
+                tokenizer.apply_chat_template(
+                    msg, tokenize=False, add_generation_prompt=True))
+    return surface, rows, rr
+
+
 def verify_replay_evidence(artifact: Mapping[str, Any], *,
                            env_manifest: Mapping[str, Any],
                            replay_manifest: Mapping[str, Any],
                            raw_completions_text: str,
-                           surface: Mapping[tuple[str, tuple[int, ...]],
-                                            float],
-                           support_rows: Mapping[str, Mapping[str, Any]]
-                           ) -> dict[str, Any]:
-    """THE consuming boundary for B evidence (148_s finding 3): nothing
-    in the artifact is trusted. Verifies, in order:
-
-    1. the environment manifest is a valid self-hashed
-       stage1-environment-v2 and its identity binds the artifact;
-    2. the replay manifest recomputes to its own hash, carries this
-       contract verbatim, binds the same execution identity, and the
-       artifact names exactly this manifest;
-    3. the raw-completions file hashes to the artifact's
-       raw_completions_sha256 and covers exactly the 9,216 keys;
-    4. the pair table and observation meta REDERIVE from the pinned
-       surface and support rows and equal the embedded copies;
-    5. the 9,216 completions REPARSE to exactly the artifact's counts.
-
-    Returns the recomputed summary (statuses derived from the verified
-    counts). `support_rows` maps observation_id -> {cell_id, num_steps,
-    positions} from the pinned support (build_smoke_rows)."""
+                           pinned_loader=None) -> dict[str, Any]:
+    """THE consuming boundary for B evidence (148_s finding 3; hardened
+    per 151_s finding 2): the pinned surface, support rows and
+    rendered-request hashes are loaded/REGENERATED internally — never
+    caller-supplied — and the COMPLETE expected replay manifest is
+    rebuilt and required to equal the supplied one exactly (observation
+    ids, eligible pairs, request hashes, contract, hash — a rehashed
+    manifest with any altered field is refused). Then the raw
+    completions are hash-matched, accounted, and REPARSED to exact
+    count reproduction. `pinned_loader` exists for tests only and
+    defaults to the authoritative loader."""
     from .stage1_manifest import validate_env_manifest
     exec_sha = validate_env_manifest(env_manifest)
     b = load_b_artifact(artifact, exec_sha)
 
-    body = {k: v for k, v in replay_manifest.items()
-            if k != "replay_manifest_sha256"}
-    recomputed = hashlib.sha256(
-        canonical_json(body).encode("utf-8")).hexdigest()
-    if recomputed != replay_manifest.get("replay_manifest_sha256"):
-        raise InfrastructureError("replay manifest hash mismatch")
-    if b["replay_manifest_sha256"] != recomputed:
+    loader = pinned_loader or load_pinned_replay_inputs
+    surface, support_rows, regenerated_rr = loader()
+    cell_of = {oid: row["cell_id"] for oid, row in support_rows.items()}
+    derived_table = pair_table_from_surface(surface, cell_of)
+    expected_manifest = build_replay_manifest(
+        exec_sha, support_rows, regenerated_rr, derived_table)
+    if dict(replay_manifest) != expected_manifest:
+        raise InfrastructureError(
+            "replay manifest does not equal the authoritative "
+            "regenerated manifest (observation ids, eligible pairs, "
+            "request hashes, contract and hash must all match)")
+    if b["replay_manifest_sha256"] != \
+            expected_manifest["replay_manifest_sha256"]:
         raise InfrastructureError(
             "artifact names a different replay manifest")
-    if replay_manifest.get("execution_manifest_sha256") != exec_sha:
-        raise InfrastructureError(
-            "replay manifest bound to a different execution identity")
-    if replay_manifest.get("contract") != REPLAY_CONTRACT:
-        raise InfrastructureError(
-            "replay manifest contract differs from the frozen "
-            "REPLAY_CONTRACT")
 
     raw_sha = hashlib.sha256(
         raw_completions_text.encode("utf-8")).hexdigest()
@@ -383,9 +407,8 @@ def verify_replay_evidence(artifact: Mapping[str, Any], *,
         raise InfrastructureError("raw completions do not cover exactly "
                                   "the 9,216 accounting keys")
 
-    cell_of = {oid: row["cell_id"] for oid, row in support_rows.items()}
-    derived_table = pair_table_from_surface(surface, cell_of)
-    if _sanitized_pair_table(derived_table) !=             _sanitized_pair_table(b["pair_table"]):
+    if _sanitized_pair_table(derived_table) != \
+            _sanitized_pair_table(b["pair_table"]):
         raise InfrastructureError(
             "embedded pair table does not rederive from the pinned "
             "surface")
@@ -552,6 +575,34 @@ def run_replay(*, allow_dirty: bool = False) -> dict[str, Any]:
     manifest = build_replay_manifest(exec_sha, rows, rr_hashes,
                                      pair_table)
 
+    # Run-directory exclusion and manifest persistence happen BEFORE
+    # any model work (151_s finding 4): an aborted GPU run must leave
+    # the environment, replay manifest, and an aborted record on disk.
+    import time as _time
+    out_dir = Path(REPLAY_RUN_DIR)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise InfrastructureError(
+            f"{out_dir} already holds a formal replay run — refusing "
+            "to overwrite (148_s finding 5)")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "env_manifest.json").write_text(
+        json.dumps(env, indent=1), encoding="utf-8")
+    (out_dir / "replay_manifest.json").write_text(
+        json.dumps(manifest, indent=1), encoding="utf-8")
+    record: dict[str, Any] = {"status": "running",
+                              "started_unix": int(_time.time())}
+    (out_dir / "run_record.json").write_text(
+        json.dumps(record, indent=1), encoding="utf-8")
+
+    def _finish(status: str, error_text: str | None = None) -> None:
+        record["status"] = status
+        record["wall_seconds"] = int(_time.time()
+                                     - record["started_unix"])
+        if error_text:
+            record["error"] = error_text
+        (out_dir / "run_record.json").write_text(
+            json.dumps(record, indent=1), encoding="utf-8")
+
     # The SAME frozen construction the Stage-2 trainer uses
     # (grpo_smoke model_init_kwargs + LoraConfig, with TRL's k-bit
     # preparation applied explicitly, 148_s finding 2): bfloat16 dtype,
@@ -580,6 +631,53 @@ def run_replay(*, allow_dirty: bool = False) -> dict[str, Any]:
 
     counts: dict[str, dict[str, int]] = {}
     raw: dict[str, str] = {}
+    try:
+        _generate(model, tokenizer, rows, messages, pair_table, raw,
+                  counts)
+    except BaseException as error:
+        _finish("aborted", f"{type(error).__name__}: {error}")
+        raise
+
+    expected = expected_completion_keys(rows)
+    if set(raw) != expected:
+        _finish("aborted", "completion accounting incomplete")
+        raise InfrastructureError(
+            f"completion accounting incomplete: {len(raw)} != "
+            f"{len(expected)}")
+    raw_blob = json.dumps(dict(sorted(raw.items())), ensure_ascii=False)
+    raw_sha = hashlib.sha256(raw_blob.encode("utf-8")).hexdigest()
+    (out_dir / "raw_completions.json").write_text(raw_blob,
+                                                  encoding="utf-8")
+    artifact = finalize_artifact(
+        "B", exec_sha, counts,
+        # the SANITIZED pair table (ints/strings only — the same form
+        # the manifest freezes) so the artifact is canonical-hashable
+        extra={"pair_table": manifest["eligible_pairs"],
+               "obs_meta": obs_meta,
+               "replay_manifest_sha256":
+                   manifest["replay_manifest_sha256"],
+               "raw_completions_sha256": raw_sha})
+    path = out_dir / "artifact_B.json"
+    path.write_text(json.dumps(artifact, indent=1), encoding="utf-8")
+    reloaded = json.loads(path.read_text(encoding="utf-8"))
+    load_b_artifact(reloaded, exec_sha)
+    _finish("complete")
+    return {"artifact_path": str(path),
+            "replay_manifest_sha256":
+                manifest["replay_manifest_sha256"],
+            "raw_completions_sha256": raw_sha,
+            "summary": summarize_replay(counts, pair_table, obs_meta)}
+
+
+def _generate(model, tokenizer, rows, messages, pair_table, raw,
+              counts) -> None:
+    """The generation loop, isolated so the driver's abort handling
+    wraps exactly the GPU work. Note the frozen RNG semantics: the
+    GLOBAL CPU and CUDA RNG state is reset per singleton draw from the
+    preregistered seed — there is no per-draw generator object."""
+    import torch
+    from .parser import ActionSchemaError, parse_routing_action
+    from .grpo_task import positional_to_semantic
     for oid, row in sorted(rows.items()):
         positions = json.loads(row["positions"])
         pair = pair_table.get(oid)
@@ -623,38 +721,3 @@ def run_replay(*, allow_dirty: bool = False) -> dict[str, Any]:
                 counts[key] = {"k2": k2, "k3": k3,
                                "n": REPLAY_COMPLETIONS}
 
-    expected = expected_completion_keys(rows)
-    if set(raw) != expected:
-        raise InfrastructureError(
-            f"completion accounting incomplete: {len(raw)} != "
-            f"{len(expected)}")
-    out_dir = Path(REPLAY_RUN_DIR)
-    if out_dir.exists() and any(out_dir.iterdir()):
-        raise InfrastructureError(
-            f"{out_dir} already holds a formal replay run — refusing "
-            "to overwrite (148_s finding 5)")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    raw_blob = json.dumps(dict(sorted(raw.items())), ensure_ascii=False)
-    raw_sha = hashlib.sha256(raw_blob.encode("utf-8")).hexdigest()
-    (out_dir / "raw_completions.json").write_text(raw_blob,
-                                                  encoding="utf-8")
-    artifact = finalize_artifact(
-        "B", exec_sha, counts,
-        # the SANITIZED pair table (ints/strings only — the same form
-        # the manifest freezes) so the artifact is canonical-hashable
-        extra={"pair_table": manifest["eligible_pairs"],
-               "obs_meta": obs_meta,
-               "replay_manifest_sha256":
-                   manifest["replay_manifest_sha256"],
-               "raw_completions_sha256": raw_sha})
-    (out_dir / "replay_manifest.json").write_text(
-        json.dumps(manifest, indent=1), encoding="utf-8")
-    path = out_dir / "artifact_B.json"
-    path.write_text(json.dumps(artifact, indent=1), encoding="utf-8")
-    reloaded = json.loads(path.read_text(encoding="utf-8"))
-    load_b_artifact(reloaded, exec_sha)
-    return {"artifact_path": str(path),
-            "replay_manifest_sha256":
-                manifest["replay_manifest_sha256"],
-            "raw_completions_sha256": raw_sha,
-            "summary": summarize_replay(counts, pair_table, obs_meta)}
