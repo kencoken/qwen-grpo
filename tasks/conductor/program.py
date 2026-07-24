@@ -48,7 +48,12 @@ RESAMPLING_CAP = 1000  # §1.14 per-instance resampling cap
 # §1.13: predeclared per-namespace maxima, batch sizes, stopping rules
 # (declared at 0A; only `qualification` uses the §1.14 look schedules).
 NAMESPACE_CONFIG: dict[str, dict[str, Any]] = {
-    "construction": {"max_latent_clusters": 100, "expansion_batch": 100,
+    # D4 (132_s §3.1, approved in 133_f): cap extended 100→130. Indices
+    # 0–29 are the permanently development-consumed D16 prefix — still
+    # generable for historical verification, but the formal construction
+    # cohort is exactly [30, 130) and manifests fail closed outside it
+    # (see CONSTRUCTION_FORMAL_COHORT / validate_construction_cohort).
+    "construction": {"max_latent_clusters": 130, "expansion_batch": 100,
                      "stopping_rule": "fixed"},
     "qualification": {"max_latent_clusters": 500, "expansion_batch": 200,
                       "stopping_rule": "sequential_looks",
@@ -66,7 +71,80 @@ NAMESPACE_CONFIG: dict[str, dict[str, Any]] = {
     # a further erratum, never quiet expansion.
     "worker_dev": {"max_latent_clusters": 30, "expansion_batch": 30,
                    "stopping_rule": "fixed"},
+    # 132_s §10.1 erratum (approved in 133_f): policy-development
+    # universe with a fail-closed cap of 1,000 per cell. Disjoint cohort
+    # roles live in POLICY_DEV_COHORTS below; the registrar rejects any
+    # cross-cohort reuse.
+    "policy_dev": {"max_latent_clusters": 1_000, "expansion_batch": 1_000,
+                   "stopping_rule": "fixed"},
 }
+
+# --- 132_s §3.1 D4: formal construction cohort (approved in 133_f) ---------
+
+# The D16-consumed development prefix: permanently barred from every gate,
+# fitted control, qualification, train, dev or test estimate.
+CONSTRUCTION_CONSUMED_PREFIX = range(0, 30)
+# The one formal construction cohort: exactly 100 consecutive clusters per
+# cell. Index 30 begins on a block boundary for every frozen factor-block
+# size in {1, 2, 3, 6}, so complete blocks keep exact joint balance and the
+# trailing partial block leaves joint counts differing by at most one
+# (acceptance-tested in test_conductor_stage1.py).
+CONSTRUCTION_FORMAL_COHORT = range(30, 130)
+
+
+def validate_construction_cohort(indices: "list[int] | tuple[int, ...]",
+                                 ) -> None:
+    """Fail-closed D4 range rule for construction population manifests.
+
+    The formal cohort is exactly CONSTRUCTION_FORMAL_COHORT, complete and
+    duplicate-free; a consumed-prefix index (0–29) or any index outside
+    [30, 130) is a manifest error, never silently dropped.
+    """
+    seen = set()
+    for idx in indices:
+        if not isinstance(idx, int) or isinstance(idx, bool):
+            raise LoadError(f"non-integer construction index {idx!r}")
+        if idx in CONSTRUCTION_CONSUMED_PREFIX:
+            raise LoadError(
+                f"construction index {idx} is in the development-consumed "
+                f"D16 prefix 0-29 (132_s §3.1)")
+        if idx not in CONSTRUCTION_FORMAL_COHORT:
+            raise LoadError(
+                f"construction index {idx} outside the formal cohort "
+                f"[30, 130) (132_s §3.1)")
+        if idx in seen:
+            raise LoadError(f"duplicate construction index {idx}")
+        seen.add(idx)
+    if seen != set(CONSTRUCTION_FORMAL_COHORT):
+        missing = sorted(set(CONSTRUCTION_FORMAL_COHORT) - seen)
+        raise LoadError(
+            f"formal construction cohort incomplete; missing {missing[:5]}"
+            f"{'...' if len(missing) > 5 else ''}")
+
+
+# --- 132_s §10.1: policy_dev disjoint cohort roles (approved in 133_f) ------
+
+POLICY_DEV_COHORTS: dict[str, range] = {
+    # Reward-blind format cohort A: one sampled completion per observation
+    # per prompt candidate; JSON/schema validity and action length only.
+    "format_a": range(0, 24),
+    # Fresh reward-blind cohort B: used only after the one permitted
+    # FORMAT_REPAIR_V1 application; cohort A is retained.
+    "format_b": range(24, 48),
+    # Reward-bearing cold-start candidates: support selected and hashed
+    # before any reward-bearing policy output (132_s §10.2).
+    "cold_start": range(48, 1_000),
+}
+
+
+def policy_dev_cohort(latent_index: int) -> str:
+    """Map a policy_dev latent index to its frozen cohort role."""
+    for name, rng in POLICY_DEV_COHORTS.items():
+        if latent_index in rng:
+            return name
+    raise LoadError(
+        f"policy_dev index {latent_index} outside the fail-closed cap "
+        f"[0, 1000) (132_s §10.1)")
 
 
 class GenerationError(RuntimeError):

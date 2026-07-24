@@ -479,8 +479,10 @@ def test_prefix_determinism():
 
 
 def test_namespace_caps_enforced():
+    # D4 (132_s §3.1, approved 133_f): construction cap extended 100→130.
     with pytest.raises(GenerationError):
-        generate_latent("lookup_atomic", "construction", 100, PROF)
+        generate_latent("lookup_atomic", "construction", 130, PROF)
+    generate_latent("lookup_atomic", "construction", 129, PROF)
     with pytest.raises(GenerationError):
         generate_latent("fork_join", "qualification", 200, PROF)
     generate_latent("fork_join", "qualification", 199, PROF)

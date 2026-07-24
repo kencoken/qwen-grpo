@@ -600,7 +600,13 @@ NAMESPACES = ("construction", "qualification", "train", "dev", "test",
               # D1 erratum (88_f): dedicated worker-development
               # universe — adaptive inspection permitted, permanently
               # barred from screens/estimates.
-              "worker_dev")
+              "worker_dev",
+              # 132_s §10.1 erratum (approved in 133_f): policy-side
+              # development universe — format probe and reward-bearing
+              # cold start; barred from Stage-1 cell admission,
+              # refitting/reselection, training, checkpoint selection
+              # and test.
+              "policy_dev")
 
 # §1.4: renderer ids; `resource_first` is canonical.
 RENDERER_IDS = ("resource_first", "goal_first", "bound_var")
