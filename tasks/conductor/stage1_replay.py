@@ -338,28 +338,10 @@ def load_pinned_replay_inputs() -> tuple[
     """THE authoritative loader for the consuming boundary (151_s
     finding 2): the pinned surface (hash-verified), the 18 support
     rows, and the REGENERATED rendered-request hashes for both
-    candidate prompts — nothing caller-supplied."""
-    from transformers import AutoTokenizer
-    from .grpo_smoke import verify_surface_pin
-    from .grpo_task import build_smoke_rows
-    surface = verify_surface_pin()
-    rows = {row["observation_id"]: row for row in build_smoke_rows()}
-    tokenizer = AutoTokenizer.from_pretrained(
-        REPLAY_CONTRACT["model_id"],
-        revision=REPLAY_CONTRACT["revision"])
-    prompts = {REPLAY_CONTRACT["prompt_fewshot_sha256"]:
-                   stage1.prompt_fewshot(),
-               REPLAY_CONTRACT["prompt_schema_only_sha256"]:
-                   stage1.prompt_schema_only()}
-    rr: dict[str, str] = {}
-    for oid, row in rows.items():
-        user = row["prompt"][1]
-        for sha, text in prompts.items():
-            msg = [{"role": "system", "content": text}, dict(user)]
-            rr[f"{oid}|{sha}"] = rendered_request_sha256(
-                tokenizer.apply_chat_template(
-                    msg, tokenize=False, add_generation_prompt=True))
-    return surface, rows, rr
+    candidate prompts — nothing caller-supplied. Shares
+    `_load_replay_inputs_full` with the driver."""
+    full = _load_replay_inputs_full()
+    return full["surface"], full["rows"], full["rr_hashes"]
 
 
 def verify_replay_evidence(artifact: Mapping[str, Any], *,
@@ -520,38 +502,53 @@ def _aggregate(values_by_obs: Mapping[str, float],
 REPLAY_RUN_DIR = "runs/stage1-replay"
 
 
-def run_replay(*, allow_dirty: bool = False) -> dict[str, Any]:
-    """Execute the frozen replay end-to-end on the GPU box: environment
-    manifest → pinned surface → pair table → candidate messages and
-    rendered-request hashes → replay manifest (all BEFORE sampling) →
-    seeded singleton generation → parse/classify → raw-completion
-    artifact + validated B artifact, persisted and reloaded."""
+def _build_replay_model():
+    """The SAME frozen construction the Stage-2 trainer uses
+    (grpo_smoke model_init_kwargs + LoraConfig, with TRL's k-bit
+    preparation applied explicitly, 148_s finding 2): bfloat16 dtype,
+    sdpa attention, NF4 double-quant, CAUSAL_LM task type. B remains a
+    SEPARATELY FROZEN SINGLETON REPLAY REGIME — generation batching is
+    deliberately singleton (D16 batch sensitivity), so it is not
+    byte-identical to trainer rollouts and is never described as such.
+    Module-level so the 154_s abort probes can substitute a failing
+    loader."""
     import torch
     from peft import (LoraConfig, get_peft_model,
                       prepare_model_for_kbit_training)
-    from transformers import (AutoModelForCausalLM, AutoTokenizer,
-                              BitsAndBytesConfig)
+    from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+    quant = BitsAndBytesConfig(
+        load_in_4bit=True, bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_compute_dtype=torch.bfloat16)
+    model = AutoModelForCausalLM.from_pretrained(
+        REPLAY_CONTRACT["model_id"],
+        revision=REPLAY_CONTRACT["revision"],
+        torch_dtype=torch.bfloat16,
+        quantization_config=quant, device_map="cuda:0",
+        attn_implementation=REPLAY_CONTRACT["attn_implementation"])
+    model = prepare_model_for_kbit_training(model)
+    model = get_peft_model(model, LoraConfig(
+        r=16, lora_alpha=32, lora_dropout=0.05,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
+        task_type="CAUSAL_LM"))
+    model.eval()
+    return model
 
+
+def _load_replay_inputs_full() -> dict[str, Any]:
+    """Pinned surface, support rows, candidate messages,
+    rendered-request hashes, and the frozen tokenizer — the shared
+    input path for the driver and (first three) the verifier."""
+    from transformers import AutoTokenizer
     from .grpo_smoke import verify_surface_pin
     from .grpo_task import build_smoke_rows
-    from .parser import ActionSchemaError, parse_routing_action
-    from .grpo_task import positional_to_semantic
-    from .stage1_manifest import build_stage1_env_manifest
-    from .stage1_tranche import finalize_artifact, load_artifact
-
-    env = build_stage1_env_manifest(allow_dirty=allow_dirty)
-    exec_sha = env["execution_manifest_sha256"]
     surface = verify_surface_pin()
-
     rows = {row["observation_id"]: row for row in build_smoke_rows()}
     if len(rows) != REPLAY_CONTRACT["observations"]:
         raise InfrastructureError(
             f"support has {len(rows)} observations, contract says "
             f"{REPLAY_CONTRACT['observations']}")
-    cell_of = {oid: row["cell_id"] for oid, row in rows.items()}
-    pair_table = pair_table_from_surface(surface, cell_of)
-    obs_meta = observation_meta(rows)
-
     prompts = {
         REPLAY_CONTRACT["prompt_fewshot_sha256"]:
             stage1.prompt_fewshot(),
@@ -572,6 +569,37 @@ def run_replay(*, allow_dirty: bool = False) -> dict[str, Any]:
             rr_hashes[f"{oid}|{sha}"] = rendered_request_sha256(
                 tokenizer.apply_chat_template(
                     msg, tokenize=False, add_generation_prompt=True))
+    return {"surface": surface, "rows": rows, "messages": messages,
+            "rr_hashes": rr_hashes, "tokenizer": tokenizer}
+
+
+def run_replay(*, allow_dirty: bool = False,
+               _inputs: Mapping[str, Any] | None = None
+               ) -> dict[str, Any]:
+    """Execute the frozen replay end-to-end on the GPU box: environment
+    manifest → pinned surface → pair table → candidate messages and
+    rendered-request hashes → replay manifest (all BEFORE sampling) →
+    seeded singleton generation → parse/classify → raw-completion
+    artifact + validated B artifact, persisted and reloaded.
+
+    Abort contract (154_s): once the `running` record exists, the
+    ENTIRE remaining sequence — model construction through artifact
+    reload — runs inside the abort handler; any failure rewrites the
+    record as `aborted` with wall time and the error. `_inputs` is a
+    test-only injection point for the abort probes and defaults to the
+    authoritative loader."""
+    from .stage1_manifest import build_stage1_env_manifest
+    from .stage1_tranche import finalize_artifact
+
+    env = build_stage1_env_manifest(allow_dirty=allow_dirty)
+    exec_sha = env["execution_manifest_sha256"]
+    inputs = _inputs or _load_replay_inputs_full()
+    surface, rows = inputs["surface"], inputs["rows"]
+    messages, rr_hashes = inputs["messages"], inputs["rr_hashes"]
+    tokenizer = inputs["tokenizer"]
+    cell_of = {oid: row["cell_id"] for oid, row in rows.items()}
+    pair_table = pair_table_from_surface(surface, cell_of)
+    obs_meta = observation_meta(rows)
     manifest = build_replay_manifest(exec_sha, rows, rr_hashes,
                                      pair_table)
 
@@ -603,64 +631,39 @@ def run_replay(*, allow_dirty: bool = False) -> dict[str, Any]:
         (out_dir / "run_record.json").write_text(
             json.dumps(record, indent=1), encoding="utf-8")
 
-    # The SAME frozen construction the Stage-2 trainer uses
-    # (grpo_smoke model_init_kwargs + LoraConfig, with TRL's k-bit
-    # preparation applied explicitly, 148_s finding 2): bfloat16 dtype,
-    # sdpa attention, NF4 double-quant, CAUSAL_LM task type. B remains
-    # a SEPARATELY FROZEN SINGLETON REPLAY REGIME — generation batching
-    # is deliberately singleton (D16 batch sensitivity), so it is not
-    # byte-identical to trainer rollouts and is never described as
-    # such.
-    quant = BitsAndBytesConfig(
-        load_in_4bit=True, bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_compute_dtype=torch.bfloat16)
-    model = AutoModelForCausalLM.from_pretrained(
-        REPLAY_CONTRACT["model_id"],
-        revision=REPLAY_CONTRACT["revision"],
-        torch_dtype=torch.bfloat16,
-        quantization_config=quant, device_map="cuda:0",
-        attn_implementation=REPLAY_CONTRACT["attn_implementation"])
-    model = prepare_model_for_kbit_training(model)
-    model = get_peft_model(model, LoraConfig(
-        r=16, lora_alpha=32, lora_dropout=0.05,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                        "gate_proj", "up_proj", "down_proj"],
-        task_type="CAUSAL_LM"))
-    model.eval()
-
-    counts: dict[str, dict[str, int]] = {}
-    raw: dict[str, str] = {}
     try:
+        model = _build_replay_model()
+        counts: dict[str, dict[str, int]] = {}
+        raw: dict[str, str] = {}
         _generate(model, tokenizer, rows, messages, pair_table, raw,
                   counts)
+        expected = expected_completion_keys(rows)
+        if set(raw) != expected:
+            raise InfrastructureError(
+                f"completion accounting incomplete: {len(raw)} != "
+                f"{len(expected)}")
+        raw_blob = json.dumps(dict(sorted(raw.items())),
+                              ensure_ascii=False)
+        raw_sha = hashlib.sha256(raw_blob.encode("utf-8")).hexdigest()
+        (out_dir / "raw_completions.json").write_text(raw_blob,
+                                                      encoding="utf-8")
+        artifact = finalize_artifact(
+            "B", exec_sha, counts,
+            # the SANITIZED pair table (ints/strings only — the same
+            # form the manifest freezes)
+            extra={"pair_table": manifest["eligible_pairs"],
+                   "obs_meta": obs_meta,
+                   "replay_manifest_sha256":
+                       manifest["replay_manifest_sha256"],
+                   "raw_completions_sha256": raw_sha})
+        path = out_dir / "artifact_B.json"
+        path.write_text(json.dumps(artifact, indent=1),
+                        encoding="utf-8")
+        reloaded = json.loads(path.read_text(encoding="utf-8"))
+        load_b_artifact(reloaded, exec_sha)
     except BaseException as error:
         _finish("aborted", f"{type(error).__name__}: {error}")
         raise
-
-    expected = expected_completion_keys(rows)
-    if set(raw) != expected:
-        _finish("aborted", "completion accounting incomplete")
-        raise InfrastructureError(
-            f"completion accounting incomplete: {len(raw)} != "
-            f"{len(expected)}")
-    raw_blob = json.dumps(dict(sorted(raw.items())), ensure_ascii=False)
-    raw_sha = hashlib.sha256(raw_blob.encode("utf-8")).hexdigest()
-    (out_dir / "raw_completions.json").write_text(raw_blob,
-                                                  encoding="utf-8")
-    artifact = finalize_artifact(
-        "B", exec_sha, counts,
-        # the SANITIZED pair table (ints/strings only — the same form
-        # the manifest freezes) so the artifact is canonical-hashable
-        extra={"pair_table": manifest["eligible_pairs"],
-               "obs_meta": obs_meta,
-               "replay_manifest_sha256":
-                   manifest["replay_manifest_sha256"],
-               "raw_completions_sha256": raw_sha})
-    path = out_dir / "artifact_B.json"
-    path.write_text(json.dumps(artifact, indent=1), encoding="utf-8")
-    reloaded = json.loads(path.read_text(encoding="utf-8"))
-    load_b_artifact(reloaded, exec_sha)
     _finish("complete")
     return {"artifact_path": str(path),
             "replay_manifest_sha256":

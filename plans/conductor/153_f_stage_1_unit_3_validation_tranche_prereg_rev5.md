@@ -10,8 +10,7 @@ tranche
 > eligibility staying `unresolved`, pre-model persistence and abort
 > records in the GPU driver, per-scenario wall times preserved on
 > abort, and the two phrasing corrections below. Revision 4 had
-> applied the `148_s` corrections:
-> Revision 4 applies the `148_s` corrections: preregistered seeds used
+> applied the `148_s` corrections: preregistered seeds used
 > verbatim (no modulus), the Stage-2-parity model construction with B
 > honestly framed as a separately frozen singleton replay regime, the
 > B evidence-verification boundary (pair table rederived from the

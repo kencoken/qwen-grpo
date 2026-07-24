@@ -658,7 +658,8 @@ def run_full_tranche(*, allow_dirty: bool = False) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     record: dict[str, Any] = {"status": "running", "stages": [],
-                              "scenario_wall_seconds": {}}
+                              "scenario_wall_seconds": {},
+                              "started_unix": int(time.time())}
 
     def _persist(name: str, obj: Any) -> None:
         (out_dir / f"{name}.json").write_text(
@@ -723,12 +724,16 @@ def run_full_tranche(*, allow_dirty: bool = False) -> dict[str, Any]:
             load_artifact(json.loads(path.read_text(encoding="utf-8")),
                           name, expected, exec_sha)
         record["status"] = "complete"
+        record["total_wall_seconds"] = int(time.time()
+                                           - record["started_unix"])
         _persist("run_record_final", record)
         return {"execution_manifest_sha256": exec_sha,
                 "run_dir": str(out_dir), "record": record}
     except BaseException as error:
         record["status"] = "aborted"
         record["error"] = f"{type(error).__name__}: {error}"
+        record["total_wall_seconds"] = int(time.time()
+                                           - record["started_unix"])
         (out_dir / "run_record.json").write_text(
             json.dumps(record, indent=1), encoding="utf-8")
         raise

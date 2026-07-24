@@ -655,3 +655,60 @@ def test_replay_manifest_and_meta():
     meta = sr.observation_meta(obs)
     assert meta[obs[0]]["cell_id"] == "code_atomic"
     assert meta[obs[0]]["renderer"] == "resource_first"
+
+
+# --- 154_s: the abort boundary covers the ENTIRE post-`running` sequence ---
+
+def _replay_probe_setup(tmp_path, monkeypatch):
+    import tasks.conductor.stage1_manifest as sm
+    monkeypatch.setattr(sr, "REPLAY_RUN_DIR",
+                        str(tmp_path / "stage1-replay"))
+    monkeypatch.setattr(sm, "build_stage1_env_manifest",
+                        lambda allow_dirty=False: dict(ENV))
+    b = _b_evidence()
+    surface, rows, rr = b["loader"]()
+    return {"surface": surface, "rows": rows, "messages": {},
+            "rr_hashes": rr, "tokenizer": None}
+
+
+def _read_record(tmp_path):
+    return json.loads(
+        (tmp_path / "stage1-replay" / "run_record.json").read_text(
+            encoding="utf-8"))
+
+
+def test_run_replay_model_load_failure_writes_aborted(tmp_path,
+                                                      monkeypatch):
+    inputs = _replay_probe_setup(tmp_path, monkeypatch)
+
+    def boom():
+        raise RuntimeError("CUDA out of memory (probe)")
+    monkeypatch.setattr(sr, "_build_replay_model", boom)
+    with pytest.raises(RuntimeError, match="probe"):
+        sr.run_replay(_inputs=inputs)
+    record = _read_record(tmp_path)
+    assert record["status"] == "aborted"
+    assert "RuntimeError" in record["error"]
+    assert "wall_seconds" in record
+    # the pre-model persistence survived the abort
+    run_dir = tmp_path / "stage1-replay"
+    assert (run_dir / "env_manifest.json").exists()
+    assert (run_dir / "replay_manifest.json").exists()
+
+
+def test_run_replay_finalization_failure_writes_aborted(tmp_path,
+                                                        monkeypatch):
+    # post-generation failure: generation "succeeds" but produces
+    # incomplete accounting — the finalization path must abort with a
+    # record, not leave `running`
+    inputs = _replay_probe_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(sr, "_build_replay_model", lambda: None)
+    monkeypatch.setattr(
+        sr, "_generate",
+        lambda model, tok, rows, msgs, table, raw, counts: None)
+    with pytest.raises(InfrastructureError, match="accounting"):
+        sr.run_replay(_inputs=inputs)
+    record = _read_record(tmp_path)
+    assert record["status"] == "aborted"
+    assert "accounting" in record["error"]
+    assert "wall_seconds" in record
