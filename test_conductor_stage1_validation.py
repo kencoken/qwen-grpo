@@ -68,14 +68,45 @@ def test_clopper_pearson_monotone_in_k():
     assert us == sorted(us)
 
 
-def test_wilson_lower_known_values():
-    # symmetric case: k = n/2, z = 1.96 -> centre pulled below 0.5
+def test_wilson_bounds_one_sided():
+    # frozen per 142_s: ONE-SIDED 95% (z = Phi^-1(0.95) ~ 1.645)
+    from scipy.stats import norm
+    z = norm.ppf(0.95)
+    assert z == pytest.approx(1.6449, abs=1e-4)
     lb = sv.wilson_lower(50, 100)
-    assert 0.40 < lb < 0.5
+    exact = (0.5 + z*z/200 - z*np.sqrt((0.25 + z*z/400)/100)) / \
+        (1 + z*z/100)
+    assert lb == pytest.approx(exact, abs=1e-12)
     assert sv.wilson_lower(0, 100) == 0.0
-    assert sv.wilson_lower(100, 100) > 0.96
-    # monotone in k
+    assert sv.wilson_lower(100, 100) > 0.97
     assert sv.wilson_lower(80, 100) < sv.wilson_lower(90, 100)
+    # upper mirrors lower
+    assert sv.wilson_upper(50, 100) == pytest.approx(1 - lb, abs=1e-12)
+    assert sv.wilson_upper(0, 100) < 0.03
+    with pytest.raises(ValueError):
+        sv.wilson_lower(5, 0)
+    with pytest.raises(ValueError):
+        sv.wilson_upper(11, 10)
+
+
+def test_equivalence_decision_boundaries():
+    # strict |theta| < 0.10: +/-0.10 belongs to the null (132_s §8.2)
+    assert sv.equivalence_decision(-0.09, 0.09) == "pass"
+    assert sv.equivalence_decision(-0.10, 0.05) == "inconclusive"
+    assert sv.equivalence_decision(0.10, 0.20) == "fail"
+    assert sv.equivalence_decision(-0.20, -0.10) == "fail"
+    assert sv.equivalence_decision(-0.15, 0.05) == "inconclusive"
+    with pytest.raises(ValueError):
+        sv.equivalence_decision(0.2, 0.1)
+    with pytest.raises(ValueError):
+        sv.equivalence_decision(float("nan"), 0.1)
+
+
+def test_adverse_replicate_constants():
+    assert sv.ADVERSE_REPLICATE["lower_bound_gate"] == float("-inf")
+    assert sv.ADVERSE_REPLICATE["upper_bound_gate"] == float("inf")
+    assert sv.ADVERSE_REPLICATE["equivalence"] == (float("-inf"),
+                                                   float("inf"))
 
 
 def test_hoeffding_lower_formula():
@@ -235,32 +266,64 @@ def test_row_dispersed_differs_from_cluster_correlated():
     assert rd["pass_rate"] < cc["pass_rate"]
 
 
-def test_acceptance_evaluation_wiring():
-    power = [{"scenario": "ordinary_div3", "delta": 0.15, "sigma": 0.50,
-              "pass_wilson_lb": 0.85},
-             {"scenario": "fork_div3", "delta": 0.15, "sigma": 0.50,
-              "pass_wilson_lb": 0.60}]
-    router = [{"mixture": "core", "effect": 0.10, "sigma": 0.50,
-               "pass_wilson_lb": 0.90}]
-    persistence = [
-        {"schedule": "fork", "n_clusters": 200, "eligibility": 0.60,
-         "theta": 0.05, "dist": "cluster_correlated",
-         "pass_rate": 0.147, "pass_wilson_lb": 0.14},
-        {"schedule": "fork", "n_clusters": 200, "eligibility": 0.60,
-         "theta": 0.0, "dist": "cluster_correlated",
-         "pass_rate": 1.0, "pass_wilson_lb": 1.0},
-    ]
-    verdict = sv.evaluate_acceptance(power, router, persistence)
-    assert verdict["A_positions_failing"] == ["fork_div3@sigma=0.5"]
-    assert verdict["A_router_failing"] == []
-    assert verdict["C_zero_persistence_failing"] == []
-    assert verdict["C_power_failing"] == ["fork"]
-    assert verdict["confirm_possible"] is False
+def test_bootstrap_renderer_coupling():
+    # renderer rows travel WITH their cluster: permuting rows inside a
+    # cluster changes nothing; moving a renderer row across clusters
+    # changes the interval.
+    rng = np.random.default_rng(3)
+    cell = rng.normal(0.1, 0.4, size=(40, 3))
+    base = sv.paired_cluster_bootstrap([cell], 0.05, 300, seed=7)
+    permuted = cell[:, ::-1].copy()
+    assert sv.paired_cluster_bootstrap([permuted], 0.05, 300,
+                                       seed=7) == base
+    crossed = cell.copy()
+    crossed[0, 0], crossed[1, 0] = cell[1, 0], cell[0, 0]
+    assert sv.paired_cluster_bootstrap([crossed], 0.05, 300,
+                                       seed=7) != base
+    # rejects renderer-collapsed input: rows must be matrices
+    with pytest.raises(ValueError, match="matrix"):
+        sv.paired_cluster_bootstrap([cell.mean(axis=1)], 0.05, 50,
+                                    seed=1)
 
 
-def test_bootstrap_lcb_deterministic():
-    cells = [np.linspace(-0.5, 1.0, 40) for _ in range(3)]
-    a = sv.paired_cluster_bootstrap_lcb(cells, 0.05 / 3, 200, seed=7)
-    b = sv.paired_cluster_bootstrap_lcb(cells, 0.05 / 3, 200, seed=7)
-    c = sv.paired_cluster_bootstrap_lcb(cells, 0.05 / 3, 200, seed=8)
+def test_bootstrap_unequal_cell_sizes_and_determinism():
+    rng = np.random.default_rng(4)
+    cells = [rng.normal(0.0, 0.5, size=(n, 3)) for n in (12, 6, 36)]
+    a = sv.paired_cluster_bootstrap(cells, 0.05 / 2, 200, seed=7)
+    b = sv.paired_cluster_bootstrap(cells, 0.05 / 2, 200, seed=7)
+    c = sv.paired_cluster_bootstrap(cells, 0.05 / 2, 200, seed=8)
     assert a == b != c
+    assert a[0] <= a[1]
+
+
+def test_bootstrap_zero_cluster_cell_is_adverse():
+    rng = np.random.default_rng(5)
+    cells = [rng.normal(0.5, 0.1, size=(20, 3)),
+             np.empty((0, 3))]
+    lcb, ucb = sv.paired_cluster_bootstrap(cells, 0.05, 100, seed=1)
+    assert lcb == float("-inf") and ucb == float("-inf")
+
+
+def test_sequential_stake_decision_logic():
+    # strong positive effect: pass; strong negative: conclusive fail;
+    # near-zero spread: unresolved at cap — the complete trichotomy
+    up = [np.full((200, 3), 0.4)]
+    down = [np.full((200, 3), -0.4)]
+    assert sv.sequential_stake_decision(up, (100, 200), 0.05 / 6, 100,
+                                        seed=1) == "pass"
+    assert sv.sequential_stake_decision(down, (100, 200), 0.05 / 6, 100,
+                                        seed=1) == "fail"
+    rng = np.random.default_rng(6)
+    flat = [rng.normal(0.0, 0.001, size=(200, 3))]
+    assert sv.sequential_stake_decision(flat, (100, 200), 0.05 / 6, 100,
+                                        seed=1) == "unresolved"
+
+
+def test_sequential_equivalence_decision_logic():
+    rng = np.random.default_rng(7)
+    inside = [rng.normal(0.0, 0.05, size=(200, 3))]
+    outside = [rng.normal(0.5, 0.05, size=(200, 3))]
+    assert sv.sequential_equivalence_decision(
+        inside, (100, 200), 0.05 / 2, 100, seed=1) == "pass"
+    assert sv.sequential_equivalence_decision(
+        outside, (100, 200), 0.05 / 2, 100, seed=1) == "fail"

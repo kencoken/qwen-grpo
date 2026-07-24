@@ -69,16 +69,54 @@ def clopper_pearson_lower(k: int, n: int, alpha: float) -> float:
     return float(_beta.ppf(alpha, k, n - k + 1))
 
 
-def wilson_lower(k: int, n: int, confidence: float = 0.95) -> float:
-    """95% (by default) Wilson score lower bound on a proportion."""
+def _wilson(k: int, n: int, confidence: float) -> tuple[float, float]:
     if n <= 0:
         raise ValueError("n must be positive")
+    if not 0 <= k <= n:
+        raise ValueError(f"k={k} outside [0, {n}]")
     z = float(_norm.ppf(confidence))
     phat = k / n
     denom = 1.0 + z * z / n
     centre = phat + z * z / (2 * n)
     margin = z * ((phat * (1 - phat) + z * z / (4 * n)) / n) ** 0.5
-    return max(0.0, (centre - margin) / denom)
+    return (max(0.0, (centre - margin) / denom),
+            min(1.0, (centre + margin) / denom))
+
+
+def wilson_lower(k: int, n: int, confidence: float = 0.95) -> float:
+    """ONE-SIDED 95% Wilson score lower bound (z = Phi^-1(0.95) ~ 1.645;
+    frozen per 142_s: the §8.4 pass-probability and agreement criteria
+    are one-sided claims)."""
+    return _wilson(k, n, confidence)[0]
+
+
+def wilson_upper(k: int, n: int, confidence: float = 0.95) -> float:
+    """ONE-SIDED 95% Wilson score upper bound — the §8.4D
+    operational-error ceiling comparator."""
+    return _wilson(k, n, confidence)[1]
+
+
+def equivalence_decision(lcb: float, ucb: float,
+                         band: float = 0.10) -> str:
+    """§8.2 strict-equivalence trichotomy: |theta| < band. Pass only when
+    the full interval lies strictly inside (-band, band); fail when it
+    lies wholly outside; otherwise inconclusive. theta = +/-band belongs
+    to the null."""
+    if not np.isfinite(lcb) or not np.isfinite(ucb) or lcb > ucb:
+        raise ValueError(f"malformed interval [{lcb}, {ucb}]")
+    if lcb > -band and ucb < band:
+        return "pass"
+    if lcb >= band or ucb <= -band:
+        return "fail"
+    return "inconclusive"
+
+
+# §8.3 undefined-replicate rules: a replicate with zero eligible
+# observations receives the gate-adverse extreme and is counted, never
+# redrawn.
+ADVERSE_REPLICATE = {"lower_bound_gate": float("-inf"),
+                     "upper_bound_gate": float("inf"),
+                     "equivalence": (float("-inf"), float("inf"))}
 
 
 def hoeffding_lower(mean_q: float, n: int, tail_alpha: float) -> float:
@@ -301,7 +339,7 @@ def simulate_persistence_envelope(schedule: str, n_clusters: int,
     }
 
 
-# --- D. coverage battery (framework; execution gated on budget approval) ---------
+# --- D. coverage battery primitives ------------------------------------------------
 
 COVERAGE_OUTER_TRIALS = 5_000
 COVERAGE_INNER_REPLICATES = 2_000
@@ -318,36 +356,110 @@ def coverage_alpha_ceiling(allocated_operational_alpha: float) -> float:
         0.005, 0.25 * allocated_operational_alpha)
 
 
-def paired_cluster_bootstrap_lcb(diffs_by_cell: list[np.ndarray],
-                                 tail_alpha: float, replicates: int,
-                                 seed: int) -> float:
+def paired_cluster_bootstrap(rows_by_cell: list[np.ndarray],
+                             tail_alpha: float, replicates: int,
+                             seed: int) -> tuple[float, float]:
     """The production §8.3 construction in miniature, for the coverage
     battery: independently resample N_c latent ids WITHIN each cell,
-    equal-cell average, percentile endpoint via
-    numpy.quantile(method='linear'). Cluster values enter as
-    renderer-collapsed paired differences."""
+    CARRYING every renderer row of a resampled cluster (rows are
+    (clusters, renderers) matrices — renderer-coupled by construction),
+    collapse renderer-within-cluster, equal-cell average, percentile
+    endpoints via numpy.quantile(method='linear') at tail_alpha and
+    1 - tail_alpha. A cell with zero clusters contributes the adverse
+    extreme per the §8.3 undefined-replicate rule."""
     rng = np.random.Generator(np.random.PCG64(seed))
     reps = np.empty(replicates)
+    cluster_means = []
+    for cell in rows_by_cell:
+        if cell.ndim != 2:
+            raise ValueError("each cell must be a (clusters, renderers) "
+                             "matrix — renderer rows travel with their "
+                             "cluster")
+        cluster_means.append(cell.mean(axis=1) if cell.shape[0]
+                             else np.empty(0))
     for r in range(replicates):
-        cell_means = [
-            cell[rng.integers(0, len(cell), size=len(cell))].mean()
-            for cell in diffs_by_cell]
-        reps[r] = float(np.mean(cell_means))
-    return float(np.quantile(reps, tail_alpha, method="linear"))
+        cell_vals = []
+        adverse = False
+        for means in cluster_means:
+            n = len(means)
+            if n == 0:
+                adverse = True
+                break
+            cell_vals.append(means[rng.integers(0, n, size=n)].mean())
+        reps[r] = float("-inf") if adverse else float(np.mean(cell_vals))
+    return (_linear_quantile(reps, tail_alpha),
+            _linear_quantile(reps, 1.0 - tail_alpha))
+
+
+def _linear_quantile(values: np.ndarray, q: float) -> float:
+    """numpy.quantile(method='linear') semantics, extended so an
+    adverse +/-inf replicate propagates to the endpoint instead of
+    producing NaN during interpolation (§8.3: adverse replicates are
+    counted, never redrawn)."""
+    s = np.sort(values)
+    h = (len(s) - 1) * q
+    lo, hi = int(np.floor(h)), int(np.ceil(h))
+    a, b = float(s[lo]), float(s[hi])
+    if not np.isfinite(a):
+        return a
+    if not np.isfinite(b):
+        return b if h > lo else a
+    return a + (h - lo) * (b - a)
+
+
+def sequential_stake_decision(rows_by_cell: list[np.ndarray],
+                              looks: tuple[int, ...], tail_alpha: float,
+                              replicates: int, seed: int,
+                              point_min: float = POINT_MATERIALITY
+                              ) -> str:
+    """The production stake trichotomy over registered looks, using the
+    bootstrap intervals on immutable cluster prefixes: pass on
+    (point >= point_min AND LCB > 0); conclusive fail on UCB < 0; else
+    expand; unresolved at cap. Look k uses seed+k (frozen)."""
+    for k, look in enumerate(looks):
+        prefix = [cell[:min(look, cell.shape[0])]
+                  for cell in rows_by_cell]
+        point = float(np.mean([cell.mean() for cell in prefix]))
+        lcb, ucb = paired_cluster_bootstrap(prefix, tail_alpha,
+                                            replicates, seed + k)
+        if point >= point_min and lcb > 0:
+            return "pass"
+        if ucb < 0:
+            return "fail"
+    return "unresolved"
+
+
+def sequential_equivalence_decision(rows_by_cell: list[np.ndarray],
+                                    looks: tuple[int, ...],
+                                    look_tail_alpha: float,
+                                    replicates: int, seed: int,
+                                    band: float = 0.10) -> str:
+    """§8.2 equivalence over registered looks: the two-sided interval
+    splits the one-look tail alpha across both tails."""
+    for k, look in enumerate(looks):
+        prefix = [cell[:min(look, cell.shape[0])]
+                  for cell in rows_by_cell]
+        lcb, ucb = paired_cluster_bootstrap(prefix, look_tail_alpha / 2.0,
+                                            replicates, seed + k)
+        decision = equivalence_decision(lcb, ucb, band)
+        if decision != "inconclusive":
+            return decision
+    return "unresolved"
 
 
 def benchmark_worst_case(outer_trials: int = 20) -> dict[str, Any]:
     """Timing-only dry run (NON-frozen throwaway seed, statistical
-    output discarded): the worst coverage scenario is the 500-cluster
-    ordinary terminal look with 2,000 inner replicates. Scales linearly
-    in outer trials; 132_s requires this benchmark and an approved CPU
-    budget before the full battery runs."""
+    output discarded): the worst coverage scenario is the ordinary
+    3-look sequential null at 500 clusters x 3 renderers with 2,000
+    inner replicates per look. Scales linearly in outer trials; 132_s
+    requires this benchmark and an approved CPU budget before the full
+    battery runs."""
     rng = np.random.Generator(np.random.PCG64(0xDEADBEEF))  # throwaway
-    cells = [rng.normal(0.0, 0.5, size=500) for _ in range(5)]
+    cells = [rng.normal(0.0, 0.5, size=(500, 3)) for _ in range(5)]
     t0 = time.perf_counter()
     for i in range(outer_trials):
-        paired_cluster_bootstrap_lcb(cells, 0.05 / 3,
-                                     COVERAGE_INNER_REPLICATES, seed=i)
+        sequential_stake_decision(cells, (100, 300, 500), 0.05 / 9,
+                                  COVERAGE_INNER_REPLICATES, seed=i)
     elapsed = time.perf_counter() - t0
     per_trial = elapsed / outer_trials
     return {
@@ -358,53 +470,4 @@ def benchmark_worst_case(outer_trials: int = 20) -> dict[str, Any]:
         "projected_full_battery_hours":
             per_trial * COVERAGE_OUTER_TRIALS * COVERAGE_SCENARIO_CAP
             / 3600.0,
-    }
-
-
-# --- acceptance evaluation ---------------------------------------------------------
-
-def evaluate_acceptance(power_results: list[Mapping[str, Any]],
-                        router_results: list[Mapping[str, Any]],
-                        persistence_results: list[Mapping[str, Any]]
-                        ) -> dict[str, Any]:
-    """The frozen §8.4 A/C acceptance rules applied to completed grid
-    results. Returns per-criterion verdicts and the overall
-    confirm/amend recommendation input (the DECISION itself is a
-    reviewed artifact, never automated)."""
-    a_fail, a_detail = [], []
-    for row in power_results:
-        if row["delta"] == ACCEPT_DELTA and \
-                row["sigma"] <= ACCEPT_SIGMA_MAX:
-            ok = row["pass_wilson_lb"] >= ACCEPT_PASS_WILSON_LB
-            a_detail.append((row["scenario"], row["sigma"], ok))
-            if not ok:
-                a_fail.append(f"{row['scenario']}@sigma={row['sigma']}")
-    r_fail = []
-    for row in router_results:
-        if row["effect"] == ROUTER_ACCEPT_EFFECT and \
-                row["sigma"] <= ACCEPT_SIGMA_MAX:
-            if row["pass_wilson_lb"] < ACCEPT_PASS_WILSON_LB:
-                r_fail.append(f"{row['mixture']}@sigma={row['sigma']}")
-    c_zero_fail, c_power_fail = [], []
-    for row in persistence_results:
-        if row["dist"] != "cluster_correlated":
-            continue  # row-dispersed is a mandatory adverse disclosure
-        terminal = PERSISTENCE_LOOKS[row["schedule"]]["looks"][-1]
-        floor = PERSISTENCE_FLOORS[row["schedule"]]
-        at_floor_terminal = (row["n_clusters"] == terminal
-                             and row["eligibility"] == floor)
-        if not at_floor_terminal:
-            continue
-        if row["theta"] == 0.0 and row["pass_rate"] < 1.0:
-            c_zero_fail.append(row["schedule"])
-        if row["theta"] == PERSISTENCE_POWER_THETA and \
-                row["pass_wilson_lb"] < PERSISTENCE_POWER_WILSON_LB:
-            c_power_fail.append(row["schedule"])
-    return {
-        "A_positions_failing": a_fail,
-        "A_router_failing": r_fail,
-        "C_zero_persistence_failing": c_zero_fail,
-        "C_power_failing": c_power_fail,
-        "confirm_possible": not (a_fail or r_fail or c_zero_fail
-                                 or c_power_fail),
     }
