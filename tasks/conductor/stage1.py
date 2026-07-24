@@ -307,8 +307,9 @@ CASCADE_TRIGGER_CODES = frozenset(SYNTAX_REJECTION_CODES)
 # CUDA allocation failure, filesystem I/O on trace/cache writes, and an
 # interrupted generation (no finish_reason). Typed InfrastructureError
 # contract violations are deterministic and never retried. Exception ->
-# code mapping is implemented (and acceptance-tested) in the unit-2
-# execution layer:
+# code mapping is implemented (and acceptance-tested) in the UNIT-4
+# execution layer (deferral recorded per 139_s: unit 2 is registration
+# only, and this mapping must exist before the first construction call):
 #   torch.cuda.OutOfMemoryError            -> E_INFRA_CUDA_OOM
 #   OSError/IOError on artifact read/write -> E_INFRA_IO
 #   generation ends without finish_reason  -> E_INFRA_INCOMPLETE_CALL
