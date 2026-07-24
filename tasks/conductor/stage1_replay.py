@@ -8,8 +8,10 @@ Everything the GPU call depends on is frozen HERE, before sampling:
   conductor model) and the adapter decision: NF4-quantized base plus a
   FRESHLY INITIALIZED LoRA adapter with the frozen Stage-0 configuration
   (zero-initialized B matrices — outputs equal the quantized base; the
-  adapter is loaded anyway so the sampling path is byte-identical to the
-  Stage-2 path);
+  adapter is loaded through the same frozen construction the Stage-2
+  trainer uses, with TRL's k-bit preparation applied explicitly; B is a
+  SEPARATELY FROZEN SINGLETON REPLAY REGIME, not byte-identical trainer
+  batching);
 - every sampling parameter; SINGLETON generation with one seeded torch
   generator per (observation_id, prompt_sha256, completion_index);
 - **256 completions per observation per prompt** (145_s-directed
@@ -53,7 +55,8 @@ REPLAY_CONTRACT: dict[str, Any] = {
     "contract": "stage1-replay-v2",
     "model_id": "Qwen/Qwen2.5-3B-Instruct",
     "revision": "aa8e72537993ba99e69dfaafa59ed015b17504d1",
-    "adapter": "fresh-lora-r16-a32-d0.05-zero-B",  # base-equivalent
+    "adapter": "fresh-lora-r16-a32-d0.05-zero-B-kbit-prepared",
+    "regime": "singleton-replay-v1",  # separately frozen; NOT trainer batching
     "quantization": {"load_in_4bit": "true", "quant_type": "nf4",
                      "double_quant": "true",
                      "compute_dtype": "bfloat16"},
@@ -263,12 +266,15 @@ def build_replay_manifest(execution_manifest_sha256: str,
 
 def load_b_artifact(artifact: Mapping[str, Any],
                     execution_manifest_sha256: str) -> dict[str, Any]:
-    """Fail-closed B loader (145_s finding 1): validates the content
-    hash, execution identity, embedded pair table/meta, exact count-row
-    key set, n == 256 and count identities. The verdict recomputes
-    direction statuses from these counts; nothing is trusted."""
+    """Structural B loader: content hash, execution identity, embedded
+    pair table/meta, exact count-row key set, n == 256, count
+    identities. STRUCTURAL ONLY — formal consumption goes through
+    `verify_replay_evidence`, which re-derives the pair table from the
+    pinned surface and reparses the raw completions (148_s finding 3);
+    this loader alone cannot authenticate the counts."""
     from .stage1_tranche import load_artifact
-    for field in ("pair_table", "obs_meta", "replay_manifest_sha256"):
+    for field in ("pair_table", "obs_meta", "replay_manifest_sha256",
+                  "raw_completions_sha256"):
         if field not in artifact:
             raise InfrastructureError(f"B artifact missing {field!r}")
     pair_table = artifact["pair_table"]
@@ -276,6 +282,124 @@ def load_b_artifact(artifact: Mapping[str, Any],
     return load_artifact(artifact, "B", expected,
                          execution_manifest_sha256,
                          b_n=REPLAY_COMPLETIONS)
+
+
+def _sanitized_pair_table(pair_table: Mapping[str, Mapping[str, Any]]
+                          ) -> dict[str, dict[str, Any]]:
+    """The ints/strings-only form embedded in manifests/artifacts."""
+    return {o: {"cell_id": row["cell_id"],
+                "assignment_w2": list(row["assignment_w2"]),
+                "assignment_w3": list(row["assignment_w3"]),
+                "distinct_payoff": int(row["distinct_payoff"]),
+                "direction": int(row["direction"] or 0)}
+            for o, row in sorted(pair_table.items())}
+
+
+def recount_from_raw(raw: Mapping[str, str],
+                     pair_table: Mapping[str, Mapping[str, Any]],
+                     steps_of: Mapping[str, Mapping[str, Any]]
+                     ) -> dict[str, dict[str, int]]:
+    """Independent recount: reparse every persisted completion for the
+    pair-bearing observations and rebuild the k2/k3/n table. Pure CPU;
+    used by `verify_replay_evidence` to authenticate artifact counts."""
+    from .parser import ActionSchemaError, parse_routing_action
+    from .grpo_task import positional_to_semantic
+    counts: dict[str, dict[str, int]] = {}
+    for obs_id, pair in sorted(pair_table.items()):
+        meta = steps_of[obs_id]
+        for sha in _PROMPT_SHAS:
+            k2 = k3 = 0
+            for i in range(REPLAY_COMPLETIONS):
+                text = raw[f"{obs_id}|{sha}|{i:03d}"]
+                try:
+                    action = parse_routing_action(text,
+                                                  meta["num_steps"])
+                except ActionSchemaError:
+                    continue
+                semantic = list(positional_to_semantic(
+                    action, meta["positions"]))
+                if semantic == list(pair["assignment_w2"]):
+                    k2 += 1
+                elif semantic == list(pair["assignment_w3"]):
+                    k3 += 1
+            counts[f"{obs_id}|{sha}"] = {"k2": k2, "k3": k3,
+                                         "n": REPLAY_COMPLETIONS}
+    return counts
+
+
+def verify_replay_evidence(artifact: Mapping[str, Any], *,
+                           env_manifest: Mapping[str, Any],
+                           replay_manifest: Mapping[str, Any],
+                           raw_completions_text: str,
+                           surface: Mapping[tuple[str, tuple[int, ...]],
+                                            float],
+                           support_rows: Mapping[str, Mapping[str, Any]]
+                           ) -> dict[str, Any]:
+    """THE consuming boundary for B evidence (148_s finding 3): nothing
+    in the artifact is trusted. Verifies, in order:
+
+    1. the environment manifest is a valid self-hashed
+       stage1-environment-v2 and its identity binds the artifact;
+    2. the replay manifest recomputes to its own hash, carries this
+       contract verbatim, binds the same execution identity, and the
+       artifact names exactly this manifest;
+    3. the raw-completions file hashes to the artifact's
+       raw_completions_sha256 and covers exactly the 9,216 keys;
+    4. the pair table and observation meta REDERIVE from the pinned
+       surface and support rows and equal the embedded copies;
+    5. the 9,216 completions REPARSE to exactly the artifact's counts.
+
+    Returns the recomputed summary (statuses derived from the verified
+    counts). `support_rows` maps observation_id -> {cell_id, num_steps,
+    positions} from the pinned support (build_smoke_rows)."""
+    from .stage1_manifest import validate_env_manifest
+    exec_sha = validate_env_manifest(env_manifest)
+    b = load_b_artifact(artifact, exec_sha)
+
+    body = {k: v for k, v in replay_manifest.items()
+            if k != "replay_manifest_sha256"}
+    recomputed = hashlib.sha256(
+        canonical_json(body).encode("utf-8")).hexdigest()
+    if recomputed != replay_manifest.get("replay_manifest_sha256"):
+        raise InfrastructureError("replay manifest hash mismatch")
+    if b["replay_manifest_sha256"] != recomputed:
+        raise InfrastructureError(
+            "artifact names a different replay manifest")
+    if replay_manifest.get("execution_manifest_sha256") != exec_sha:
+        raise InfrastructureError(
+            "replay manifest bound to a different execution identity")
+    if replay_manifest.get("contract") != REPLAY_CONTRACT:
+        raise InfrastructureError(
+            "replay manifest contract differs from the frozen "
+            "REPLAY_CONTRACT")
+
+    raw_sha = hashlib.sha256(
+        raw_completions_text.encode("utf-8")).hexdigest()
+    if raw_sha != b["raw_completions_sha256"]:
+        raise InfrastructureError("raw completions do not hash to the "
+                                  "artifact's raw_completions_sha256")
+    raw = json.loads(raw_completions_text)
+    if set(raw) != expected_completion_keys(support_rows):
+        raise InfrastructureError("raw completions do not cover exactly "
+                                  "the 9,216 accounting keys")
+
+    cell_of = {oid: row["cell_id"] for oid, row in support_rows.items()}
+    derived_table = pair_table_from_surface(surface, cell_of)
+    if _sanitized_pair_table(derived_table) !=             _sanitized_pair_table(b["pair_table"]):
+        raise InfrastructureError(
+            "embedded pair table does not rederive from the pinned "
+            "surface")
+    if observation_meta(support_rows) != b["obs_meta"]:
+        raise InfrastructureError(
+            "embedded observation meta does not rederive from the "
+            "support ids")
+
+    recounted = recount_from_raw(raw, derived_table, support_rows)
+    if recounted != {k: dict(v) for k, v in b["results"].items()}:
+        raise InfrastructureError(
+            "artifact counts do not reproduce from the raw completions")
+    return summarize_replay(recounted, derived_table,
+                            observation_meta(support_rows))
 
 
 def summarize_replay(counts: Mapping[str, Mapping[str, int]],
@@ -380,7 +504,8 @@ def run_replay(*, allow_dirty: bool = False) -> dict[str, Any]:
     seeded singleton generation → parse/classify → raw-completion
     artifact + validated B artifact, persisted and reloaded."""
     import torch
-    from peft import LoraConfig, get_peft_model
+    from peft import (LoraConfig, get_peft_model,
+                      prepare_model_for_kbit_training)
     from transformers import (AutoModelForCausalLM, AutoTokenizer,
                               BitsAndBytesConfig)
 
@@ -427,6 +552,14 @@ def run_replay(*, allow_dirty: bool = False) -> dict[str, Any]:
     manifest = build_replay_manifest(exec_sha, rows, rr_hashes,
                                      pair_table)
 
+    # The SAME frozen construction the Stage-2 trainer uses
+    # (grpo_smoke model_init_kwargs + LoraConfig, with TRL's k-bit
+    # preparation applied explicitly, 148_s finding 2): bfloat16 dtype,
+    # sdpa attention, NF4 double-quant, CAUSAL_LM task type. B remains
+    # a SEPARATELY FROZEN SINGLETON REPLAY REGIME — generation batching
+    # is deliberately singleton (D16 batch sensitivity), so it is not
+    # byte-identical to trainer rollouts and is never described as
+    # such.
     quant = BitsAndBytesConfig(
         load_in_4bit=True, bnb_4bit_quant_type="nf4",
         bnb_4bit_use_double_quant=True,
@@ -434,12 +567,15 @@ def run_replay(*, allow_dirty: bool = False) -> dict[str, Any]:
     model = AutoModelForCausalLM.from_pretrained(
         REPLAY_CONTRACT["model_id"],
         revision=REPLAY_CONTRACT["revision"],
+        torch_dtype=torch.bfloat16,
         quantization_config=quant, device_map="cuda:0",
         attn_implementation=REPLAY_CONTRACT["attn_implementation"])
+    model = prepare_model_for_kbit_training(model)
     model = get_peft_model(model, LoraConfig(
         r=16, lora_alpha=32, lora_dropout=0.05,
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                        "gate_proj", "up_proj", "down_proj"]))
+                        "gate_proj", "up_proj", "down_proj"],
+        task_type="CAUSAL_LM"))
     model.eval()
 
     counts: dict[str, dict[str, int]] = {}
@@ -454,7 +590,10 @@ def run_replay(*, allow_dirty: bool = False) -> dict[str, Any]:
                 add_generation_prompt=True).to(model.device)
             k2 = k3 = 0
             for i in range(REPLAY_COMPLETIONS):
-                seed = completion_seed(oid, sha, i) % (2 ** 63)
+                # full unsigned 64-bit seed, EXACTLY as preregistered —
+                # no modulus (148_s finding 1); the pinned torch build
+                # accepts the full range
+                seed = completion_seed(oid, sha, i)
                 torch.manual_seed(seed)
                 torch.cuda.manual_seed_all(seed)
                 with torch.no_grad():
@@ -490,6 +629,10 @@ def run_replay(*, allow_dirty: bool = False) -> dict[str, Any]:
             f"completion accounting incomplete: {len(raw)} != "
             f"{len(expected)}")
     out_dir = Path(REPLAY_RUN_DIR)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise InfrastructureError(
+            f"{out_dir} already holds a formal replay run — refusing "
+            "to overwrite (148_s finding 5)")
     out_dir.mkdir(parents=True, exist_ok=True)
     raw_blob = json.dumps(dict(sorted(raw.items())), ensure_ascii=False)
     raw_sha = hashlib.sha256(raw_blob.encode("utf-8")).hexdigest()

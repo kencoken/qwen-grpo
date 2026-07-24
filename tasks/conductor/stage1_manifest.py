@@ -139,6 +139,41 @@ def build_stage1_env_manifest(*, allow_dirty: bool = False
     return env
 
 
+def validate_env_manifest(env: Mapping[str, Any]) -> str:
+    """148_s finding 3: an execution identity is only trustworthy when
+    it is proven to BE the content hash of a valid
+    `stage1-environment-v2` manifest — a bare 64-hex string proves only
+    equality. Recomputes the content hash, checks the manifest kind and
+    required fields, and (retirement fail-closed) the source identity
+    against current bytes. Returns the verified identity."""
+    if env.get("manifest") != "stage1-environment-v2":
+        raise ManifestError(
+            f"not a stage1-environment-v2 manifest: "
+            f"{env.get('manifest')!r}")
+    declared = env.get("execution_manifest_sha256")
+    if not declared:
+        raise ManifestError("environment manifest carries no "
+                            "execution_manifest_sha256")
+    body = {k: v for k, v in env.items()
+            if k != "execution_manifest_sha256"}
+    recomputed = hashlib.sha256(
+        canonical_json(body).encode("utf-8")).hexdigest()
+    if recomputed != declared:
+        raise ManifestError(
+            "environment manifest hash mismatch — the execution "
+            "identity is not the hash of this manifest")
+    for field in ("git_commit", "uv_lock_sha256", "stage1_source_sha256",
+                  "stage1_source_files", "gpu", "torch"):
+        if field not in env:
+            raise ManifestError(f"environment manifest missing "
+                                f"{field!r}")
+    if env["stage1_source_sha256"] != stage1_source_digest():
+        raise ManifestError(
+            "environment manifest bound to a different source identity "
+            "— retirement is fail-closed at load (132_s §11.4)")
+    return declared
+
+
 # --- 2. registrars and the authoritative validator ---------------------------
 
 def _enforce_registered_profile(profile: Mapping[str, Any]) -> str:

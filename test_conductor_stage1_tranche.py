@@ -19,9 +19,107 @@ from tasks.conductor import stage1_tranche as st
 from tasks.conductor.grpo_smoke import STAGE0C_LAUNCH_PROFILE
 from tasks.conductor.types import InfrastructureError
 
-EXEC_SHA = "e" * 64
 FEW = sr.REPLAY_CONTRACT["prompt_fewshot_sha256"]
 SO = sr.REPLAY_CONTRACT["prompt_schema_only_sha256"]
+
+def _env_manifest():
+    import hashlib
+    from tasks.conductor.profiles import canonical_json
+    from tasks.conductor.stage1_manifest import (stage1_source_digest,
+                                                 stage1_source_files)
+    body = {"manifest": "stage1-environment-v2", "git_commit": "t" * 40,
+            "git_dirty": 0, "uv_lock_sha256": "u" * 64,
+            "stage1_source_sha256": stage1_source_digest(),
+            "stage1_source_files": list(stage1_source_files()),
+            "gpu": "test-gpu", "torch": "test"}
+    sha = hashlib.sha256(
+        canonical_json(body).encode("utf-8")).hexdigest()
+    return {**body, "execution_manifest_sha256": sha}
+
+
+ENV = _env_manifest()
+EXEC_SHA = ENV["execution_manifest_sha256"]
+
+
+def _support_rows():
+    """18 synthetic support observations: 3 pair-bearing cells x 1 obs
+    + 15 code-free fillers, positional order == sorted nodes."""
+    rows = {}
+    pair_cells = [("code_atomic", ["n1"]),
+                  ("math_code", ["n1", "n2"]),
+                  ("fork_join", ["n1", "n2", "n3"])]
+    for idx, (cell, positions) in enumerate(pair_cells):
+        oid = (f"{cell}:worker_dev:{idx:05d}:aaaaaaa{idx}:"
+               "resource_first:private")
+        rows[oid] = {"cell_id": cell, "num_steps": len(positions),
+                     "positions": positions}
+    for i in range(15):
+        oid = (f"lookup_atomic:worker_dev:{i + 10:05d}:bbbbbb{i:02x}:"
+               "goal_first:private")
+        rows[oid] = {"cell_id": "lookup_atomic", "num_steps": 1,
+                     "positions": ["n1"]}
+    return rows
+
+
+def _surface(rows):
+    surface = {}
+    payoffs = {"code_atomic": (0.5, 1.0),      # w3 direction
+               "math_code": (1.0, 1.0),        # tie
+               "fork_join": (1.0, 0.5)}        # w2 direction
+    for oid, meta in rows.items():
+        pair = sr.family_correct_variants(meta["cell_id"])
+        if pair is None:
+            continue
+        w2, w3 = pair
+        p2, p3 = payoffs[meta["cell_id"]]
+        surface[(oid, tuple(w2))] = p2
+        surface[(oid, tuple(w3))] = p3
+    return surface
+
+
+def _b_evidence(k2=30, k3=30, exec_sha=None):
+    """A complete, self-consistent B evidence bundle whose raw
+    completions genuinely reparse to the counts."""
+    import hashlib
+    exec_sha = exec_sha or EXEC_SHA
+    rows = _support_rows()
+    surface = _surface(rows)
+    cell_of = {o: m["cell_id"] for o, m in rows.items()}
+    table = sr.pair_table_from_surface(surface, cell_of)
+    meta = sr.observation_meta(rows)
+    raw, counts = {}, {}
+    for oid, m in sorted(rows.items()):
+        pair = table.get(oid)
+        for p in (FEW, SO):
+            for i in range(sr.REPLAY_COMPLETIONS):
+                if pair is not None and i < k2:
+                    action = pair["assignment_w2"]
+                elif pair is not None and i < k2 + k3:
+                    action = pair["assignment_w3"]
+                else:
+                    raw[f"{oid}|{p}|{i:03d}"] = "malformed"
+                    continue
+                raw[f"{oid}|{p}|{i:03d}"] = json.dumps(
+                    {"worker_ids": list(action)})
+            if pair is not None:
+                counts[f"{oid}|{p}"] = {"k2": k2, "k3": k3,
+                                        "n": sr.REPLAY_COMPLETIONS}
+    raw_text = json.dumps(dict(sorted(raw.items())), ensure_ascii=False)
+    raw_sha = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+    rr = {f"{o}|{p}": "a" * 64 for o in sorted(rows)
+          for p in (FEW, SO)}
+    manifest = sr.build_replay_manifest(exec_sha, rows, rr, table)
+    artifact = st.finalize_artifact(
+        "B", exec_sha, counts,
+        extra={"pair_table": manifest["eligible_pairs"],
+               "obs_meta": meta,
+               "replay_manifest_sha256":
+                   manifest["replay_manifest_sha256"],
+               "raw_completions_sha256": raw_sha})
+    return {"artifact": artifact, "replay_manifest": manifest,
+            "raw_completions_text": raw_text, "surface": surface,
+            "support_rows": rows}
+
 
 
 # --- exact grid registries ------------------------------------------------------
@@ -196,43 +294,6 @@ def test_load_rejects_mixed_executions():
 
 # --- fail-closed aggregate verdict -------------------------------------------------
 
-def _pair_table():
-    return {
-        "code_atomic:worker_dev:00000:aaaaaaaa:resource_first:private":
-            {"cell_id": "code_atomic", "assignment_w2": [2],
-             "assignment_w3": [3], "distinct_payoff": 1, "direction": 3},
-        "fork_join:worker_dev:00000:bbbbbbbb:goal_first:private":
-            {"cell_id": "fork_join", "assignment_w2": [0, 2, 1],
-             "assignment_w3": [0, 3, 1], "distinct_payoff": 1,
-             "direction": 2},
-        "math_code:worker_dev:00000:cccccccc:bound_var:private":
-            {"cell_id": "math_code", "assignment_w2": [1, 2],
-             "assignment_w3": [1, 3], "distinct_payoff": 0,
-             "direction": 0},
-    }
-
-
-def _obs_meta(table):
-    meta = {}
-    for obs in table:
-        cell, _, _, _, renderer, _ = obs.split(":")
-        meta[obs] = {"cell_id": cell,
-                     "latent": ":".join(obs.split(":")[:4]),
-                     "renderer": renderer}
-    return meta
-
-
-def _b_artifact(k2=30, k3=30, exec_sha=EXEC_SHA):
-    table = _pair_table()
-    counts = {f"{o}|{p}": {"k2": k2, "k3": k3,
-                           "n": sr.REPLAY_COMPLETIONS}
-              for o in table for p in (FEW, SO)}
-    return st.finalize_artifact(
-        "B", exec_sha, counts,
-        extra={"pair_table": table, "obs_meta": _obs_meta(table),
-               "replay_manifest_sha256": "d" * 64})
-
-
 def _full_artifacts(c_power_pass=True, b_k=30):
     reg = st.expected_result_keys()
     a_res = {k: {"pass_count": 9_500, "fail_count": 0,
@@ -245,20 +306,20 @@ def _full_artifacts(c_power_pass=True, b_k=30):
         k = n if theta == 0.0 else (9_000 if c_power_pass else 1_440)
         c_res[key] = {"pass_count": k, "unresolved_count": 0,
                       "trials": n}
-    d_res = {s["id"]: {"error_count": 0,
-                       "trials": sv.COVERAGE_OUTER_TRIALS}
-             for s in st.D_SCENARIOS}
+    d_res = {sc["id"]: {"error_count": 0,
+                        "trials": sv.COVERAGE_OUTER_TRIALS}
+             for sc in st.D_SCENARIOS}
     a = st.finalize_artifact("A", EXEC_SHA, a_res)
     c = st.finalize_artifact("C", EXEC_SHA, c_res)
     d = st.finalize_artifact(
         "D", EXEC_SHA, d_res,
         extra={"agreement": {"agree_count": 999, "datasets": 1_000}})
-    return a, c, d, _b_artifact(k2=b_k, k3=b_k)
+    return a, c, d, _b_evidence(k2=b_k, k3=b_k)
 
 
 def test_aggregate_verdict_confirm_path():
     a, c, d, b = _full_artifacts()
-    v = st.aggregate_verdict(a, c, d, b)
+    v = st.aggregate_verdict(a, c, d, b, env_manifest=ENV)
     assert v["confirm_possible"] is True
     assert v["D_failing"] == []
     assert v["B_directions_blocking"] == []
@@ -266,39 +327,69 @@ def test_aggregate_verdict_confirm_path():
 
 def test_aggregate_verdict_c_failure_predicted_path():
     a, c, d, b = _full_artifacts(c_power_pass=False)
-    v = st.aggregate_verdict(a, c, d, b)
+    v = st.aggregate_verdict(a, c, d, b, env_manifest=ENV)
     assert v["confirm_possible"] is False
     assert len(v["C_power_failing"]) == 2
 
 
-def test_aggregate_verdict_empty_b_refuses():
-    # 145_s probe: even an empty directions mapping must refuse
+def test_aggregate_verdict_requires_valid_env_manifest():
+    # 148_s finding 3: the identity must be the hash of a valid
+    # environment manifest, not a bare matching string
+    a, c, d, b = _full_artifacts()
+    from tasks.conductor.stage1_manifest import ManifestError
+    with pytest.raises(ManifestError, match="environment"):
+        st.aggregate_verdict(a, c, d, b, env_manifest={
+            **ENV, "execution_manifest_sha256": "e" * 64})
+    with pytest.raises(ManifestError, match="stage1-environment-v2"):
+        st.aggregate_verdict(a, c, d, b,
+                             env_manifest={"manifest": "bogus"})
+
+
+def test_aggregate_verdict_empty_or_partial_b_refuses():
+    a, c, d, b = _full_artifacts()
+    with pytest.raises(st.TrancheError, match="missing"):
+        st.aggregate_verdict(a, c, d, {}, env_manifest=ENV)
+    truncated = dict(b)
+    raw = json.loads(b["raw_completions_text"])
+    raw.pop(next(iter(raw)))
+    truncated["raw_completions_text"] = json.dumps(
+        dict(sorted(raw.items())), ensure_ascii=False)
+    with pytest.raises(InfrastructureError, match="hash"):
+        st.aggregate_verdict(a, c, d, truncated, env_manifest=ENV)
+
+
+def test_aggregate_verdict_self_rehashed_b_refuses():
+    # the 148_s attack: re-finalize the artifact with tampered counts
+    # (valid self-hash) — the raw-completion recount must refuse it
+    a, c, d, b = _full_artifacts()
+    art = b["artifact"]
+    tampered_counts = {k: {"k2": 0, "k3": 0, "n": sr.REPLAY_COMPLETIONS}
+                       for k in art["results"]}
+    rehashed = st.finalize_artifact(
+        "B", EXEC_SHA, tampered_counts,
+        extra={"pair_table": art["pair_table"],
+               "obs_meta": art["obs_meta"],
+               "replay_manifest_sha256": art["replay_manifest_sha256"],
+               "raw_completions_sha256":
+                   art["raw_completions_sha256"]})
+    evil = dict(b, artifact=rehashed)
+    with pytest.raises(InfrastructureError, match="reproduce"):
+        st.aggregate_verdict(a, c, d, evil, env_manifest=ENV)
+
+
+def test_aggregate_verdict_b_not_demonstrated_blocks():
     a, c, d, _ = _full_artifacts()
-    with pytest.raises((st.TrancheError, InfrastructureError)):
-        st.aggregate_verdict(a, c, d, {})
-    empty_table = st.finalize_artifact(
-        "B", EXEC_SHA, {},
-        extra={"pair_table": {}, "obs_meta": {},
-               "replay_manifest_sha256": "d" * 64})
-    with pytest.raises(InfrastructureError, match="empty pair table"):
-        st.aggregate_verdict(a, c, d, empty_table)
+    b = _b_evidence(k2=0, k3=0)
+    v = st.aggregate_verdict(a, c, d, b, env_manifest=ENV)
+    assert v["B_directions_blocking"] == ["2", "3"]
+    assert v["confirm_possible"] is False
 
 
 def test_aggregate_verdict_mixed_executions_refuse():
     a, c, d, _ = _full_artifacts()
-    foreign_b = _b_artifact(exec_sha="f" * 64)
-    with pytest.raises(st.TrancheError, match="foreign execution"):
-        st.aggregate_verdict(a, c, d, foreign_b)
-
-
-def test_aggregate_verdict_b_not_demonstrated_blocks():
-    # at 256 the branch is REACHABLE: zero counts with O=4 comparisons
-    # give U_CP(0;256) ~ 0.02 -> g ~ 0.02 < 0.10
-    a, c, d, _ = _full_artifacts()
-    b = _b_artifact(k2=0, k3=0)
-    v = st.aggregate_verdict(a, c, d, b)
-    assert v["B_directions_blocking"] == ["2", "3"]
-    assert v["confirm_possible"] is False
+    foreign = _b_evidence(exec_sha="f" * 64)
+    with pytest.raises((st.TrancheError, InfrastructureError)):
+        st.aggregate_verdict(a, c, d, foreign, env_manifest=ENV)
 
 
 def test_aggregate_verdict_d_agreement_failure():
@@ -306,9 +397,35 @@ def test_aggregate_verdict_d_agreement_failure():
     d_bad = st.finalize_artifact(
         "D", EXEC_SHA, {k: dict(v) for k, v in d["results"].items()},
         extra={"agreement": {"agree_count": 995, "datasets": 1_000}})
-    v = st.aggregate_verdict(a, c, d_bad, b)
+    v = st.aggregate_verdict(a, c, d_bad, b, env_manifest=ENV)
     assert "agreement" in v["D_failing"]
     assert v["confirm_possible"] is False
+
+
+def test_verify_replay_evidence_checks_manifest_and_contract():
+    b = _b_evidence()
+    # wrong contract inside the replay manifest refuses
+    bad_manifest = json.loads(json.dumps(b["replay_manifest"]))
+    bad_manifest["contract"] = dict(bad_manifest["contract"],
+                                    total_completions=2_304)
+    with pytest.raises(InfrastructureError):
+        sr.verify_replay_evidence(
+            b["artifact"], env_manifest=ENV,
+            replay_manifest=bad_manifest,
+            raw_completions_text=b["raw_completions_text"],
+            surface=b["surface"], support_rows=b["support_rows"])
+    # a surface that rederives a different pair table refuses
+    surface2 = dict(b["surface"])
+    key = next(k for k in surface2
+               if k[0].startswith("code_atomic")
+               and surface2[k] == 1.0)   # flip the w3 win -> direction
+    surface2[key] = 0.0
+    with pytest.raises(InfrastructureError, match="rederive"):
+        sr.verify_replay_evidence(
+            b["artifact"], env_manifest=ENV,
+            replay_manifest=b["replay_manifest"],
+            raw_completions_text=b["raw_completions_text"],
+            surface=surface2, support_rows=b["support_rows"])
 
 
 # --- B replay contract --------------------------------------------------------------
@@ -359,8 +476,11 @@ def test_expected_completion_keys_9216():
 
 
 def test_summarize_replay_fail_closed_and_statuses():
-    table = _pair_table()
-    meta = _obs_meta(table)
+    rows = _support_rows()
+    surface = _surface(rows)
+    table = sr.pair_table_from_surface(
+        surface, {o: m["cell_id"] for o, m in rows.items()})
+    meta = sr.observation_meta(rows)
     counts = {f"{o}|{p}": {"k2": 30, "k3": 28,
                            "n": sr.REPLAY_COMPLETIONS}
               for o in table for p in (FEW, SO)}
@@ -404,11 +524,14 @@ def test_summarize_uses_frozen_weighting_not_raw_average():
     # cell, not two raw observations: add a second fork renderer with
     # an extreme count and check the cell-equal aggregate differs from
     # the raw mean
-    table = _pair_table()
-    table["fork_join:worker_dev:00000:bbbbbbbb:bound_var:private"] = \
-        dict(table["fork_join:worker_dev:00000:bbbbbbbb:"
-                   "goal_first:private"])
-    meta = _obs_meta(table)
+    rows = _support_rows()
+    surface = _surface(rows)
+    table = sr.pair_table_from_surface(
+        surface, {o: m["cell_id"] for o, m in rows.items()})
+    fork_obs = next(o for o in table if o.startswith("fork_join"))
+    second = fork_obs.replace("resource_first", "bound_var")
+    table[second] = dict(table[fork_obs])
+    meta = sr.observation_meta(list(table))
     counts = {}
     for o, row in table.items():
         for p in (FEW, SO):
@@ -427,8 +550,8 @@ def test_summarize_uses_frozen_weighting_not_raw_average():
                                           rel=1e-9)
 
 
-def test_load_b_artifact_fail_closed():
-    b = _b_artifact()
+def test_load_b_artifact_structural_fail_closed():
+    b = _b_evidence()["artifact"]
     loaded = sr.load_b_artifact(json.loads(json.dumps(b)), EXEC_SHA)
     assert loaded["results"]
     with pytest.raises(st.TrancheError, match="foreign execution"):
@@ -436,6 +559,10 @@ def test_load_b_artifact_fail_closed():
     stripped = {k: v for k, v in b.items() if k != "obs_meta"}
     with pytest.raises(InfrastructureError, match="obs_meta"):
         sr.load_b_artifact(stripped, EXEC_SHA)
+    stripped2 = {k: v for k, v in b.items()
+                 if k != "raw_completions_sha256"}
+    with pytest.raises(InfrastructureError, match="raw_completions"):
+        sr.load_b_artifact(stripped2, EXEC_SHA)
     tampered = dict(b)
     key = next(iter(b["results"]))
     tampered["results"] = {**b["results"],
@@ -446,7 +573,10 @@ def test_load_b_artifact_fail_closed():
 
 
 def test_replay_manifest_and_meta():
-    table = _pair_table()
+    rows = _support_rows()
+    surface = _surface(rows)
+    table = sr.pair_table_from_surface(
+        surface, {o: m["cell_id"] for o, m in rows.items()})
     obs = sorted(table)
     rr = {f"{o}|{p}": "a" * 64 for o in obs for p in (FEW, SO)}
     m = sr.build_replay_manifest(EXEC_SHA, obs, rr, table)

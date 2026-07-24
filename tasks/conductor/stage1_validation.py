@@ -458,14 +458,35 @@ def sequential_stake_decision(rows_by_cell: list[np.ndarray],
     for k, look in enumerate(looks):
         prefix = [cell[:min(look, cell.shape[0])]
                   for cell in rows_by_cell]
-        point = float(np.mean([cell.mean() for cell in prefix]))
+        point = point_estimate(prefix)
         lcb, ucb = paired_cluster_bootstrap(prefix, tail_alpha,
                                             replicates, seed + k)
-        if point >= point_min and lcb > 0:
+        if point is not None and point >= point_min and lcb > 0:
             return "pass"
         if ucb < 0:
             return "fail"
     return "unresolved"
+
+
+def point_estimate(rows_by_cell: list[np.ndarray]) -> float | None:
+    """The SAME eligible-cluster, equal-cell statistic the bootstrap
+    resamples (148_s smaller correction): NaN rows are ineligible;
+    cluster value = mean of its eligible rows; cell value = mean over
+    clusters with eligible rows; equal-cell mean. None when any cell
+    has zero eligible observations — the gate stays unresolved rather
+    than a NaN point silently comparing false."""
+    cell_vals = []
+    for cell in rows_by_cell:
+        if cell.shape[0] == 0:
+            return None
+        finite = ~np.isnan(cell)
+        counts = finite.sum(axis=1)
+        if not counts.any():
+            return None
+        sums = np.where(finite, cell, 0.0).sum(axis=1)
+        means = sums[counts > 0] / counts[counts > 0]
+        cell_vals.append(float(means.mean()))
+    return float(np.mean(cell_vals))
 
 
 def sequential_equivalence_decision(rows_by_cell: list[np.ndarray],

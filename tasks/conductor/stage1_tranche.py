@@ -290,12 +290,17 @@ def run_agreement_gate() -> dict[str, int]:
         rng = np.random.Generator(np.random.PCG64(seed))
         delta = deltas[(i // 4) % 3]
         if family == "stake_ordinary":
-            rows = [_tp_rows(rng, delta, 0.5, 500)]
+            # EXACTLY the D1 shape (148_s finding 4): five equally
+            # weighted sigma=0.75 cells at the ordinary looks
+            rows = [_tp_rows(rng, delta, 0.75, 500) for _ in range(5)]
         elif family == "stake_fork":
+            # the D2 shape: one sigma=0.50 cell at the fork looks
             rows = [_tp_rows(rng, delta, 0.5, 200)]
         elif family == "equivalence":
-            rows = [_tp_rows(rng, delta, 0.5, 500)]
-        else:  # pilot_unequal: heterogeneous cells at a boundary shift
+            # alternate positive/negative band boundaries (148_s)
+            sign = 1.0 if (i // 8) % 2 == 0 else -1.0
+            rows = [sign * _tp_rows(rng, delta, 0.5, 500)]
+        else:  # pilot_unequal: the D5 shape at a boundary shift
             sigmas = (0.25, 0.40, 0.50, 0.60, 0.75, 0.90)
             counts = (12, 12, 12, 12, 12, 6)
             rows = [_tp_rows(rng, delta / 2, sg, n)
@@ -517,17 +522,23 @@ def _checked_rate(row: Mapping[str, Any], numerator: str,
 def aggregate_verdict(a_artifact: Mapping[str, Any],
                       c_artifact: Mapping[str, Any],
                       d_artifact: Mapping[str, Any],
-                      b_artifact: Mapping[str, Any]) -> dict[str, Any]:
+                      b_evidence: Mapping[str, Any], *,
+                      env_manifest: Mapping[str, Any]
+                      ) -> dict[str, Any]:
     """The single fail-closed tranche summary feeding the reviewed
     confirm/amend decision (which is never automated). Every check
-    contributes; every input is a validated content-addressed artifact
-    bound to ONE authoritative execution identity (the compatibility
-    rule for B's GPU session is identity: same box, same
-    stage1-environment-v2 manifest); Wilson bounds and B direction
-    statuses are recomputed from integer counts, never trusted."""
-    exec_sha = _check_hex64(
-        a_artifact.get("execution_manifest_sha256"),
-        "A execution_manifest_sha256")
+    contributes; artifacts bind to ONE execution identity that is
+    verified to be the hash of a valid environment manifest; B enters
+    only as an EVIDENCE BUNDLE — {artifact, replay_manifest,
+    raw_completions_text, surface, support_rows} — whose counts are
+    re-derived from the pinned surface and reparsed raw completions at
+    this boundary (148_s finding 3); Wilson bounds and B direction
+    statuses are recomputed, never trusted."""
+    from .stage1_manifest import validate_env_manifest
+    # 148_s finding 3: the shared identity must be PROVEN to be the
+    # content hash of a valid stage1-environment-v2 manifest — a bare
+    # matching 64-hex string proves only equality
+    exec_sha = validate_env_manifest(env_manifest)
     reg = expected_result_keys()
     a = load_artifact(a_artifact, "A",
                       reg["A_position"] | reg["A_router"], exec_sha)
@@ -577,14 +588,22 @@ def aggregate_verdict(a_artifact: Mapping[str, Any],
         if sv.wilson_upper(k, n) > ceiling:
             d_fail.append(scen["id"])
 
-    # B: validated artifact; direction statuses RECOMPUTED from its
-    # integer counts and embedded pre-sampling pair table — never
-    # trusted from a summary (145_s finding 1). An empty or partial B
-    # refuses inside load_b_artifact/summarize_replay.
-    from .stage1_replay import load_b_artifact, summarize_replay
-    b = load_b_artifact(b_artifact, exec_sha)
-    summary = summarize_replay(b["results"], b["pair_table"],
-                               b["obs_meta"])
+    # B: full evidence verification at the consuming boundary — the
+    # pair table rederives from the pinned surface, the raw completions
+    # hash-match and reparse to the artifact counts, the replay
+    # manifest self-hashes and carries the frozen contract (148_s
+    # finding 3). A self-rehashed artifact cannot survive this.
+    from .stage1_replay import verify_replay_evidence
+    for field in ("artifact", "replay_manifest", "raw_completions_text",
+                  "surface", "support_rows"):
+        if field not in b_evidence:
+            raise TrancheError(f"B evidence bundle missing {field!r}")
+    summary = verify_replay_evidence(
+        b_evidence["artifact"], env_manifest=env_manifest,
+        replay_manifest=b_evidence["replay_manifest"],
+        raw_completions_text=b_evidence["raw_completions_text"],
+        surface=b_evidence["surface"],
+        support_rows=b_evidence["support_rows"])
     directions = summary["directions"]
     if set(directions) != {"2", "3"}:
         raise TrancheError("B summary must cover exactly directions "
@@ -615,75 +634,117 @@ SCENARIO_ABORT_FACTOR = 4
 
 
 def run_full_tranche(*, allow_dirty: bool = False) -> dict[str, Any]:
-    """The single CPU-side tranche command, enforcing the frozen order:
-    one environment manifest → deterministic equivalence set (must pass)
-    → worst-case benchmark → A grids → C grid → agreement gate → D
-    battery with the 4x-runtime abort per scenario → artifacts persisted
-    to runs/stage1-validation/, reloaded and re-verified via
-    load_artifact. Check B (GPU) runs separately under the same
-    environment identity; aggregate_verdict joins all four."""
+    """The single CPU-side tranche command, enforcing the frozen order
+    with STAGED persistence (148_s finding 5): the run directory is
+    fresh (refuses to overwrite a formal run), the environment manifest
+    is written first, every stage boundary persists immediately, each D
+    scenario records its wall time, and an in-loop deadline aborts an
+    over-budget scenario mid-run — an agreement failure or abort leaves
+    the environment, A/C artifacts, agreement outcome, timings, partial
+    D results, and an `aborted` run record on disk. Check B (GPU) runs
+    separately under the same environment identity; aggregate_verdict
+    joins all four."""
     import json
     import time
     from pathlib import Path
 
     from .stage1_manifest import build_stage1_env_manifest
-    env = build_stage1_env_manifest(allow_dirty=allow_dirty)
-    exec_sha = env["execution_manifest_sha256"]
-
-    det = run_deterministic_equivalence_set()   # raises on any mismatch
-    bench = sv.benchmark_worst_case()
-    per_trial_budget = SCENARIO_ABORT_FACTOR * \
-        bench["seconds_per_outer_trial"] * sv.COVERAGE_OUTER_TRIALS
-
-    a_results = run_a_grids()
-    c_results = run_c_grid()
-    agreement = run_agreement_gate()
-    if not agreement_passes(agreement):
-        raise TrancheError(
-            f"agreement gate failed ({agreement['agree_count']}/"
-            f"{agreement['datasets']}); the reduced-replicate battery "
-            "may not run")
-    d_results: dict[str, dict[str, int]] = {}
-    for scen in D_SCENARIOS:
-        t0 = time.perf_counter()
-        block = run_d_battery_scenario(scen)
-        elapsed = time.perf_counter() - t0
-        if elapsed > per_trial_budget:
-            raise TrancheError(
-                f"{scen['id']} took {elapsed:.0f}s > "
-                f"{SCENARIO_ABORT_FACTOR}x the benchmarked projection "
-                f"({per_trial_budget:.0f}s) — aborting per 144_f/147_f")
-        d_results[scen["id"]] = block
-
     out_dir = Path(TRANCHE_RUN_DIR)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise TrancheError(
+            f"{out_dir} already holds a formal tranche run — refusing "
+            "to overwrite (148_s finding 5)")
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    record: dict[str, Any] = {"status": "running", "stages": [],
+                              "scenario_wall_seconds": {}}
+
+    def _persist(name: str, obj: Any) -> None:
+        (out_dir / f"{name}.json").write_text(
+            json.dumps(obj, indent=1), encoding="utf-8")
+        record["stages"].append(name)
+        (out_dir / "run_record.json").write_text(
+            json.dumps(record, indent=1), encoding="utf-8")
+
     reg = expected_result_keys()
-    artifacts = {
-        "A": finalize_artifact("A", exec_sha, a_results),
-        "C": finalize_artifact("C", exec_sha, c_results),
-        "D": finalize_artifact("D", exec_sha, d_results,
-                               extra={"agreement": agreement}),
-    }
-    (out_dir / "env_manifest.json").write_text(
-        json.dumps(env, indent=1), encoding="utf-8")
-    for name, artifact in artifacts.items():
-        path = out_dir / f"artifact_{name}.json"
-        path.write_text(json.dumps(artifact, indent=1), encoding="utf-8")
-        reloaded = json.loads(path.read_text(encoding="utf-8"))
-        expected = (reg["A_position"] | reg["A_router"]
-                    if name == "A" else reg[name])
-        load_artifact(reloaded, name, expected, exec_sha)
-    return {"execution_manifest_sha256": exec_sha,
-            "deterministic_equivalence": det,
-            "benchmark": bench, "agreement": agreement,
-            "artifact_paths": {n: str(out_dir / f"artifact_{n}.json")
-                               for n in artifacts}}
+    try:
+        env = build_stage1_env_manifest(allow_dirty=allow_dirty)
+        exec_sha = env["execution_manifest_sha256"]
+        _persist("env_manifest", env)
+
+        det = run_deterministic_equivalence_set()  # raises on mismatch
+        _persist("deterministic_equivalence", det)
+
+        bench = sv.benchmark_worst_case()
+        deadline = SCENARIO_ABORT_FACTOR * \
+            bench["seconds_per_outer_trial"] * sv.COVERAGE_OUTER_TRIALS
+        _persist("benchmark", {
+            "seconds_per_outer_trial_x1e6":
+                int(bench["seconds_per_outer_trial"] * 1e6),
+            "deadline_seconds": int(deadline)})
+
+        a_art = finalize_artifact("A", exec_sha, run_a_grids())
+        _persist("artifact_A", a_art)
+        c_art = finalize_artifact("C", exec_sha, run_c_grid())
+        _persist("artifact_C", c_art)
+
+        agreement = run_agreement_gate()
+        _persist("agreement", agreement)
+        if not agreement_passes(agreement):
+            raise TrancheError(
+                f"agreement gate failed ({agreement['agree_count']}/"
+                f"{agreement['datasets']}); the reduced-replicate "
+                "battery may not run")
+
+        d_results: dict[str, dict[str, int]] = {}
+        for scen in D_SCENARIOS:
+            t0 = time.perf_counter()
+            d_results[scen["id"]] = run_d_battery_scenario(
+                scen, deadline_seconds=deadline)
+            record["scenario_wall_seconds"][scen["id"]] = \
+                int(time.perf_counter() - t0)
+            _persist(f"partial_D_{scen['id']}", d_results[scen["id"]])
+        d_art = finalize_artifact("D", exec_sha, d_results,
+                                  extra={"agreement": agreement})
+        _persist("artifact_D", d_art)
+
+        # persist-reload verification of every artifact
+        for name, expected in (("A", reg["A_position"]
+                                | reg["A_router"]),
+                               ("C", reg["C"]), ("D", reg["D"])):
+            path = out_dir / f"artifact_{name}.json"
+            load_artifact(json.loads(path.read_text(encoding="utf-8")),
+                          name, expected, exec_sha)
+        record["status"] = "complete"
+        _persist("run_record_final", record)
+        return {"execution_manifest_sha256": exec_sha,
+                "run_dir": str(out_dir), "record": record}
+    except BaseException as error:
+        record["status"] = "aborted"
+        record["error"] = f"{type(error).__name__}: {error}"
+        (out_dir / "run_record.json").write_text(
+            json.dumps(record, indent=1), encoding="utf-8")
+        raise
 
 
-def run_d_battery_scenario(scen: Mapping[str, Any]) -> dict[str, int]:
-    """One frozen coverage scenario at 5,000 outer trials."""
+def run_d_battery_scenario(scen: Mapping[str, Any],
+                           deadline_seconds: float | None = None
+                           ) -> dict[str, int]:
+    """One frozen coverage scenario at 5,000 outer trials, with an
+    IN-LOOP deadline (148_s finding 5): the abort interrupts an
+    over-budget scenario mid-run (checked every 50 trials) instead of
+    timing a completed one; the partial error count travels in the
+    exception message for the aborted-run record."""
+    import time
     errors = 0
+    started = time.perf_counter()
     for t in range(sv.COVERAGE_OUTER_TRIALS):
+        if deadline_seconds is not None and t % 50 == 0 and \
+                time.perf_counter() - started > deadline_seconds:
+            raise TrancheError(
+                f"{scen['id']} exceeded its {deadline_seconds:.0f}s "
+                f"deadline at trial {t}/{sv.COVERAGE_OUTER_TRIALS} "
+                f"(partial errors={errors}) — aborting per 147_f/150_f")
         trial_seed = sv.scenario_seed(f"{scen['id']}|{t}")
         decision = scen["dgp"](trial_seed)
         errors += int(decision == scen["error_decision"])
