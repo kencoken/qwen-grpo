@@ -51,7 +51,7 @@ class WorkerSpec:
         (106_s §5); a shorthand label is never an independent sharing
         claim. The complete physical key additionally includes
         quantization config and device, composed at the runtime
-        boundary where those settings live (108_f)."""
+        boundary where those settings live (108_s)."""
         return (self.model_id, self.model_revision)
 
 
@@ -84,7 +84,7 @@ STAGE0_WORKER_POOL: tuple[WorkerSpec, ...] = tuple(
 
 WORKER_IDS: tuple[int, ...] = tuple(
     spec.worker_id for spec in STAGE0_WORKER_POOL)
-# Immutable views (108_f): mutating dispatch must not be possible
+# Immutable views (108_s): mutating dispatch must not be possible
 # without changing the pool fingerprint.
 WORKER_NAMES: "MappingProxyType[int, str]" = MappingProxyType(
     {spec.worker_id: spec.name for spec in STAGE0_WORKER_POOL})
@@ -142,7 +142,7 @@ def worker_static_fingerprint(spec: WorkerSpec) -> str:
     identity half only: the complete selected-logical-worker execution
     fingerprint (chat-template bytes, request contract, decoding, token
     caps, grammar/tool versions) is composed at the runtime boundary in
-    unit 2, where those settings live (108_f). Two workers may share
+    unit 2, where those settings live (108_s). Two workers may share
     weights (0-2) or request bytes (2 and 3); they never share this
     identity."""
     record = {spec_field.name: getattr(spec, spec_field.name)

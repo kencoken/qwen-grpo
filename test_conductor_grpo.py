@@ -227,10 +227,31 @@ def test_reward_bearing_smoke_requires_the_freeze(monkeypatch, tmp_path):
         grpo_smoke.run_smoke()
 
 
-def test_freeze_fixture_verifies_and_names_the_review():
-    """Post-freeze: the committed fixture matches the live bytes and
-    names the §10.2 review record; any byte drift refuses."""
-    frozen = grpo_smoke.verify_freeze()
+def test_freeze_fixture_refuses_on_the_disclosed_citation_fix():
+    """Post-Stage-0 state (138_f): the queued workerpool.py 108_f->108_s
+    citation correction (129_f; applied in unit 2 with the successor
+    digest) moved `executable_source_sha256` — so the Stage-0 freeze
+    correctly REFUSES now, on exactly that field. Every other frozen
+    field must still match the live bytes: the refusal is the designed
+    guard doing its job on a disclosed citation-only edit, not drift in
+    the model-visible bundle. Stage-1 execution binds the successor
+    stage1_manifest digest instead."""
+    import json
+    with pytest.raises(InfrastructureError,
+                       match="executable_source_sha256"):
+        grpo_smoke.verify_freeze()
+    frozen = json.loads(grpo_smoke.FREEZE_PATH.read_text(encoding="utf-8"))
+    current = grpo_smoke.compute_freeze_record(
+        frozen.get("policy_prompt_review"))
+    for key in ("policy_system_prompt_sha256", "observation_sha256",
+                "chat_template_sha256", "conductor_tokenizer",
+                "launch_profile_sha256", "support_declaration_sha256"):
+        assert frozen[key] == current[key], key
+    assert frozen["executable_source_sha256"] != \
+        current["executable_source_sha256"]
+    # the historical and successor digests, pinned (138_f disclosure)
+    assert frozen["executable_source_sha256"].startswith("688f7e06")
+    assert current["executable_source_sha256"].startswith("9f9fe6f6")
     assert frozen["policy_prompt_review"] == \
         grpo_smoke.STAGE0C_LAUNCH_PROFILE["policy_prompt_review"]
     assert len(frozen["observation_sha256"]) == 18
