@@ -102,8 +102,9 @@ def equivalence_decision(lcb: float, ucb: float,
     the full interval lies strictly inside (-band, band); fail when it
     lies wholly outside; otherwise inconclusive. theta = +/-band belongs
     to the null."""
-    if not np.isfinite(lcb) or not np.isfinite(ucb) or lcb > ucb:
+    if np.isnan(lcb) or np.isnan(ucb) or lcb > ucb:
         raise ValueError(f"malformed interval [{lcb}, {ucb}]")
+    # adverse-widened endpoints (-inf/+inf) fall through to inconclusive
     if lcb > -band and ucb < band:
         return "pass"
     if lcb >= band or ucb <= -band:
@@ -356,39 +357,77 @@ def coverage_alpha_ceiling(allocated_operational_alpha: float) -> float:
         0.005, 0.25 * allocated_operational_alpha)
 
 
+_GATE_KINDS = ("lower_bound", "upper_bound", "equivalence")
+
+
 def paired_cluster_bootstrap(rows_by_cell: list[np.ndarray],
                              tail_alpha: float, replicates: int,
-                             seed: int) -> tuple[float, float]:
+                             seed: int, gate: str = "lower_bound"
+                             ) -> tuple[float, float]:
     """The production §8.3 construction in miniature, for the coverage
     battery: independently resample N_c latent ids WITHIN each cell,
     CARRYING every renderer row of a resampled cluster (rows are
     (clusters, renderers) matrices — renderer-coupled by construction),
     collapse renderer-within-cluster, equal-cell average, percentile
-    endpoints via numpy.quantile(method='linear') at tail_alpha and
-    1 - tail_alpha. A cell with zero clusters contributes the adverse
-    extreme per the §8.3 undefined-replicate rule."""
+    endpoints via linear quantiles at tail_alpha and 1 - tail_alpha.
+
+    Eligibility: NaN entries are ineligible rows. A cluster whose rows
+    are all ineligible stays in the sampling population (§8.3) but
+    carries no eligible observations; a REPLICATE with zero eligible
+    observations overall is undefined and receives the gate-adverse
+    extreme (145_s finding 5): -inf for a lower-bound gate, +inf for an
+    upper-bound gate, and the adverse endpoint ON EACH SIDE for
+    equivalence (the replicate enters the lower endpoint as -inf and
+    the upper endpoint as +inf)."""
+    if gate not in _GATE_KINDS:
+        raise ValueError(f"unknown gate kind {gate!r}")
     rng = np.random.Generator(np.random.PCG64(seed))
-    reps = np.empty(replicates)
     cluster_means = []
     for cell in rows_by_cell:
         if cell.ndim != 2:
             raise ValueError("each cell must be a (clusters, renderers) "
                              "matrix — renderer rows travel with their "
                              "cluster")
-        cluster_means.append(cell.mean(axis=1) if cell.shape[0]
-                             else np.empty(0))
+        if cell.shape[0]:
+            finite = ~np.isnan(cell)
+            counts = finite.sum(axis=1)
+            sums = np.where(finite, cell, 0.0).sum(axis=1)
+            means = np.where(counts > 0,
+                             sums / np.maximum(counts, 1), np.nan)
+        else:
+            means = np.empty(0)
+        cluster_means.append(means)
+    values = np.empty(replicates)
+    adverse = np.zeros(replicates, dtype=bool)
     for r in range(replicates):
         cell_vals = []
-        adverse = False
         for means in cluster_means:
             n = len(means)
             if n == 0:
-                adverse = True
+                cell_vals = None
                 break
-            cell_vals.append(means[rng.integers(0, n, size=n)].mean())
-        reps[r] = float("-inf") if adverse else float(np.mean(cell_vals))
-    return (_linear_quantile(reps, tail_alpha),
-            _linear_quantile(reps, 1.0 - tail_alpha))
+            picked = means[rng.integers(0, n, size=n)]
+            eligible = picked[~np.isnan(picked)]
+            if len(eligible) == 0:
+                cell_vals = None
+                break
+            cell_vals.append(eligible.mean())
+        if cell_vals is None:
+            adverse[r] = True
+            values[r] = 0.0  # placeholder; replaced per endpoint below
+        else:
+            values[r] = float(np.mean(cell_vals))
+    if gate == "lower_bound":
+        lo_vals = np.where(adverse, -np.inf, values)
+        hi_vals = lo_vals
+    elif gate == "upper_bound":
+        lo_vals = np.where(adverse, np.inf, values)
+        hi_vals = lo_vals
+    else:  # equivalence: adverse endpoint on each side
+        lo_vals = np.where(adverse, -np.inf, values)
+        hi_vals = np.where(adverse, np.inf, values)
+    return (_linear_quantile(lo_vals, tail_alpha),
+            _linear_quantile(hi_vals, 1.0 - tail_alpha))
 
 
 def _linear_quantile(values: np.ndarray, q: float) -> float:
@@ -440,7 +479,8 @@ def sequential_equivalence_decision(rows_by_cell: list[np.ndarray],
         prefix = [cell[:min(look, cell.shape[0])]
                   for cell in rows_by_cell]
         lcb, ucb = paired_cluster_bootstrap(prefix, look_tail_alpha / 2.0,
-                                            replicates, seed + k)
+                                            replicates, seed + k,
+                                            gate="equivalence")
         decision = equivalence_decision(lcb, ucb, band)
         if decision != "inconclusive":
             return decision

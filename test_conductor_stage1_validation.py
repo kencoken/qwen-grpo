@@ -327,3 +327,42 @@ def test_sequential_equivalence_decision_logic():
         inside, (100, 200), 0.05 / 2, 100, seed=1) == "pass"
     assert sv.sequential_equivalence_decision(
         outside, (100, 200), 0.05 / 2, 100, seed=1) == "fail"
+
+
+def test_bootstrap_equivalence_adverse_widens_both_sides():
+    # 145_s finding 5: for equivalence the adverse rule is
+    # LCB=-inf, UCB=+inf — the replicate enters each endpoint adversely
+    rng = np.random.default_rng(8)
+    # nonempty population: 5 clusters, only ONE carries eligible rows
+    # (NaN = ineligible), so many replicates miss it entirely
+    cell = np.full((5, 3), np.nan)
+    cell[0, :] = 0.05
+    lcb, ucb = sv.paired_cluster_bootstrap([cell], 0.05, 200, seed=3,
+                                           gate="equivalence")
+    assert lcb == float("-inf") and ucb == float("inf")
+    # and the widened interval is inconclusive, never a crash or a pass
+    assert sv.equivalence_decision(lcb, ucb) == "inconclusive"
+    # upper-bound gate: adverse contributes +inf
+    lcb_u, ucb_u = sv.paired_cluster_bootstrap([cell], 0.05, 200,
+                                               seed=3,
+                                               gate="upper_bound")
+    assert ucb_u == float("inf")
+    # lower-bound gate: adverse contributes -inf (unchanged behavior)
+    lcb_l, _ = sv.paired_cluster_bootstrap([cell], 0.05, 200, seed=3,
+                                           gate="lower_bound")
+    assert lcb_l == float("-inf")
+    with pytest.raises(ValueError, match="gate"):
+        sv.paired_cluster_bootstrap([cell], 0.05, 10, seed=1,
+                                    gate="bogus")
+
+
+def test_bootstrap_eligibility_zero_eligible_cluster_retained():
+    # a cluster with no eligible rows stays in the sampling population
+    # (§8.3) but carries no eligible observations; replicates that
+    # draw eligible clusters compute normally
+    rng = np.random.default_rng(9)
+    cell = rng.normal(0.2, 0.1, size=(30, 3))
+    cell[5, :] = np.nan          # one fully ineligible cluster
+    lcb, ucb = sv.paired_cluster_bootstrap([cell], 0.05, 300, seed=4)
+    assert np.isfinite(lcb) and np.isfinite(ucb)
+    assert 0.1 < lcb <= ucb < 0.3
