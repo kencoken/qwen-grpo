@@ -114,6 +114,17 @@ AMEND1_D_ALPHAS = {
 
 B_COMPLETION_KEYS_EXPECTED = 9_216
 
+# The formal deterministic-equivalence-set seeds (161_s finding 3):
+# these ARE consumed by the amended run order (entry gate) and belong
+# in the canonical registry under the retained D/B domain.
+DETSET_KEYS = tuple(f"D-detset|{name}" for name in
+                    ("inside_zero", "boundary_plus", "boundary_minus",
+                     "outside_plus", "outside_minus", "inside_edge"))
+
+# component counts: 48 A + 24 router + 48 C paths + 8x5000 D
+# + 6 det-set + 9,216 B completions
+FULL_SEED_REGISTRY_ENTRIES = 48 + 24 + 48 + 8 * 5_000 + 6 + 9_216
+
 
 # --- §9.3: canonical seed registry ----------------------------------------------
 
@@ -143,6 +154,35 @@ def build_seed_registry() -> dict[str, int]:
         for t in range(sv.COVERAGE_OUTER_TRIALS):
             key = f"{d_id}|{t}"
             registry[key] = seed(DB_SEED_DOMAIN, key)
+    for key in DETSET_KEYS:
+        registry[key] = seed(DB_SEED_DOMAIN, key)
+    return registry
+
+
+def finalize_seed_registry(observation_ids) -> dict[str, int]:
+    """The AUTHORITATIVE full registry (161_s finding 3): the partial
+    component registry plus the 9,216 concrete B completion seeds,
+    whose key material is EXACTLY stage1_replay.completion_seed's —
+    raw unpadded completion indices, both pinned prompt digests, the
+    18 real support observation ids. Only this finalized registry's
+    digest may enter an execution bundle."""
+    obs = sorted(observation_ids)
+    if len(obs) != 18:
+        raise InfrastructureError(
+            f"B support must be exactly 18 observations, got {len(obs)}")
+    registry = build_seed_registry()
+    prompts = (stage1.PROMPT_FEWSHOT_SHA256,
+               stage1.PROMPT_SCHEMA_ONLY_SHA256)
+    for oid in obs:
+        for sha in prompts:
+            for i in range(256):
+                key = f"B|{oid}|{sha}|{i}"      # RAW index — the real
+                registry[key] = seed(DB_SEED_DOMAIN, key)  # material
+    if len(registry) != FULL_SEED_REGISTRY_ENTRIES:
+        raise InfrastructureError(
+            f"finalized seed registry has {len(registry)} entries, "
+            f"expected {FULL_SEED_REGISTRY_ENTRIES} — duplicate or "
+            "missing keys")
     return registry
 
 
@@ -157,6 +197,12 @@ PERSISTENCE_BOUNDARY_R = 0.10
 PERSISTENCE_BRANCHES = ("zero", "positive")
 BISECTION_ITERATIONS = 80
 ENDPOINT_ATOL = 1e-12
+ENDPOINT_RTOL = 0.0                    # §4.5: rtol=0, atol=1e-12
+# §4.5 numerical conventions, promoted to tested constants (161_s):
+FLOAT_DTYPE = "float64"
+TOLERANCE_FACTOR = 64                  # tol = 64*eps64*max(1,|S|,...)
+STUDENT_T_IMPL = "scipy.stats.t.ppf"   # frozen implementation + args
+QUANTILE_METHOD_D15 = "linear"         # retained by D1-D5 bootstraps
 
 
 def persistence_tail_allocation(schedule: str
@@ -172,22 +218,118 @@ def persistence_tail_allocation(schedule: str
 # §4.6: the exact per-look serialization fields for qualification and
 # simulation persistence records. No descriptive rate may replace
 # p_hat or the interval fields.
-PERSISTENCE_LOOK_FIELDS = (
+PERSISTENCE_BASE_FIELDS = (
     "N", "m", "K", "J", "Qbar_num", "Qbar_den", "sum_A",
     "p_hat_num", "p_hat_den",           # p_hat = J/K as integers
     "branch",                            # "zero" | "positive"
     "denominator_check",                 # "ok"|"unresolved"|"n/a"
     "decision",                          # "pass"|"fail"|"unresolved"
     "tail_a", "tail_a_zero", "tail_a_ratio",
-    # zero branch: U (and U_A, L_Q when variable eligibility);
-    # positive branch: G_L, G_U, L_p, U_p — persisted as string
-    # decimals by the Unit B serializer; decisions re-derived at load
 )
+# 161_s finding 4: branch-specific bound fields are EXPLICIT schema,
+# not comments. Bounds are persisted as string decimals by the Unit-B
+# serializer; decisions are re-derived at load, never trusted.
+PERSISTENCE_ZERO_BRANCH_FIELDS = PERSISTENCE_BASE_FIELDS + (
+    "zero_U",            # the operational upper bound
+    "zero_U_A",          # CP component ("n/a" when structural)
+    "zero_L_Q",          # Hoeffding component ("n/a" when structural)
+)
+PERSISTENCE_POSITIVE_BRANCH_FIELDS = PERSISTENCE_BASE_FIELDS + (
+    "pos_G_L", "pos_G_U",       # threshold-score interval at r=0.10
+    "pos_L_p", "pos_U_p",       # inverted ratio interval endpoints
+)
+PERSISTENCE_LOOK_FIELDS = PERSISTENCE_BASE_FIELDS  # shared core
+
+# Amended C/D sufficient-statistic row schemas (161_s finding 4),
+# frozen BEFORE Unit B produces them. Integer counts only; identities
+# enforced at load exactly like the v1 _ROW_SCHEMAS.
+AMEND1_ROW_SCHEMAS: dict[str, dict[str, Any]] = {
+    # per coupled path: first terminal decision counts over the outer
+    # trials (first_pass + first_fail + cap_unresolved == trials)
+    "C_path": {
+        "fields": frozenset({"first_pass", "first_fail",
+                             "cap_unresolved", "trials"}),
+        "trials": C_OUTER_TRIALS,
+        "identity": lambda r: (r["first_pass"] + r["first_fail"]
+                               + r["cap_unresolved"] == r["trials"]),
+    },
+    # per registered-look marginal: decision counts + branch counts
+    # (pass+fail+unresolved == trials; zero+positive == trials;
+    # denominator-unresolved only arises inside the positive branch)
+    "C_marginal": {
+        "fields": frozenset({"pass_count", "fail_count",
+                             "unresolved_count", "zero_branch",
+                             "positive_branch",
+                             "denominator_unresolved", "trials"}),
+        "trials": C_OUTER_TRIALS,
+        "identity": lambda r: (
+            r["pass_count"] + r["fail_count"] + r["unresolved_count"]
+            == r["trials"]
+            and r["zero_branch"] + r["positive_branch"] == r["trials"]
+            and r["denominator_unresolved"] <= r["positive_branch"]),
+    },
+    # per D scenario (unchanged meaning, amended production policy)
+    "D": {
+        "fields": frozenset({"error_count", "trials"}),
+        "trials": sv.COVERAGE_OUTER_TRIALS,
+        "identity": lambda r: r["error_count"] <= r["trials"],
+    },
+    # D6-D8 per-look branch counts (158_s §6)
+    "D_branch": {
+        "fields": frozenset({"zero_branch", "positive_branch",
+                             "denominator_unresolved", "trials"}),
+        "trials": sv.COVERAGE_OUTER_TRIALS,
+        "identity": lambda r: (
+            r["zero_branch"] + r["positive_branch"] == r["trials"]
+            and r["denominator_unresolved"] <= r["positive_branch"]),
+    },
+}
+
+
+def validate_amend1_rows(kind: str,
+                         rows: Mapping[str, Mapping[str, int]]) -> None:
+    """Fail-closed row validation against the frozen amended schemas
+    (Unit B/C runners and loaders both call this)."""
+    schema = AMEND1_ROW_SCHEMAS.get(kind)
+    if schema is None:
+        raise InfrastructureError(f"unknown amend1 row kind {kind!r}")
+    for key, row in rows.items():
+        if set(row) != schema["fields"]:
+            raise InfrastructureError(
+                f"{kind} row {key!r}: fields {sorted(row)} != schema")
+        for field, value in row.items():
+            if type(value) is not int or value < 0:
+                raise InfrastructureError(
+                    f"{kind} row {key!r}: bad {field!r}={value!r}")
+        if row["trials"] != schema["trials"]:
+            raise InfrastructureError(
+                f"{kind} row {key!r}: trials != frozen "
+                f"{schema['trials']}")
+        if not schema["identity"](row):
+            raise InfrastructureError(
+                f"{kind} row {key!r}: impossible counts {dict(row)!r}")
 
 # --- §2: v1 evidence archive verifier (entry gate for the amended lock) ---------
 
 V1_EVIDENCE_DIR = Path(
     "plans/conductor/evidence/stage1_pre_ce1_v1_ae26ba5d")
+# 161_s finding 2: the manifest itself is PINNED, the diagnostic
+# script joins the frozen table (as corrected at Unit-A repair), and
+# the complete identity block + exact file set are validated.
+V1_EVIDENCE_MANIFEST_SHA256 = (
+    "4ae0fb83ed48b1a0630a6281eafa71d8073ee0f7c3bf041f058fbcbe7910c51d")
+V1_IDENTITY = {
+    "preregistration_153f_sha256":
+        "235acb78d9b875999ab90ca50a37e9fbe4c208fa2fa92a285c3229ec01748572",
+    "reviewed_executable_commit":
+        "75b852ff3bc3bd5671352451bfc60eae161b4370",
+    "lock_commit": "da8424bcf27dd59ad4c4e3fc32cb4edef6ba090a",
+    "source_digest":
+        "8034178f00d952e4f8952dc511a79ac8fc7e36fa58b46e523d47964a9cc4470b",
+    "execution_identity":
+        "ae26ba5d3ab951ce0a898fcd14b055be144b3a8d642cc3a80e38c433c53d24b1",
+    "outcome_commit": "20507e6d9f4573746813a47349e11cb227a42b9b",
+}
 V1_EVIDENCE_HASHES = {
     "env_manifest.json":
         "caa666660ee4ebbbf88189771fc8f2322799964f891a1a68fbc1fac639c7b189",
@@ -205,6 +347,8 @@ V1_EVIDENCE_HASHES = {
         "6a0b6fac3561f45bf439415b5f84a6a1ca1caf05485b1430f251bc6055a71cf0",
     "agreement_diagnostic.txt":
         "34ec1caa5b7e0e11ec8d5fe5b7fad1da3a65e85db963144ca894dfd2068eb754",
+    "agreement_diagnostic_script.py":
+        "f816b43ea05b811c04c67eb6f94e810363b8cbabef245143bb4ca53b9ad0d43b",
 }
 
 
@@ -219,8 +363,22 @@ def verify_v1_evidence_archive(root: Path | str = V1_EVIDENCE_DIR
     if not manifest_path.exists():
         raise InfrastructureError("v1 evidence manifest is absent")
     manifest_bytes = manifest_path.read_bytes()
+    got_manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+    if got_manifest_sha != V1_EVIDENCE_MANIFEST_SHA256:
+        raise InfrastructureError(
+            f"v1 evidence manifest sha256 {got_manifest_sha[:8]}... != "
+            f"pinned {V1_EVIDENCE_MANIFEST_SHA256[:8]}... — the archive "
+            "identity itself is frozen (161_s)")
     manifest = json.loads(manifest_bytes)
     files = manifest.get("files", {})
+    if set(files) != set(V1_EVIDENCE_HASHES):
+        raise InfrastructureError(
+            "v1 evidence manifest file set != the frozen table")
+    for field, expected in V1_IDENTITY.items():
+        if manifest.get(field) != expected:
+            raise InfrastructureError(
+                f"v1 evidence manifest identity field {field!r} != "
+                "frozen value")
     for name, expected_sha in V1_EVIDENCE_HASHES.items():
         path = root / name
         if not path.exists():
@@ -237,12 +395,7 @@ def verify_v1_evidence_archive(root: Path | str = V1_EVIDENCE_DIR
             raise InfrastructureError(
                 f"v1 evidence manifest entry for {name} disagrees with "
                 "the archived bytes")
-    if manifest.get("execution_identity") != (
-            "ae26ba5d3ab951ce0a898fcd14b055be144b3a8d642cc3a80e38c433"
-            "c53d24b1"):
-        raise InfrastructureError("v1 evidence manifest names the wrong "
-                                  "execution identity")
-    return hashlib.sha256(manifest_bytes).hexdigest()
+    return got_manifest_sha
 
 
 # --- §9.2: atomic run-root claim --------------------------------------------------
@@ -270,9 +423,61 @@ _BUNDLE_REQUIRED = (
     "amendment_prereg_sha256", "lock_record_sha256", "git_commit",
     "source_digest", "environment_manifest_sha256",
     "v1_evidence_manifest_sha256", "seed_registry_sha256",
-    "scenario_grid_sha256", "b_support_sha256", "prompt_sha256s",
-    "artifact_tags", "run_roots", "attempt_id",
+    "seed_registry_entries", "scenario_grid_sha256", "b_support_sha256",
+    "prompt_sha256s", "artifact_tags", "run_roots", "attempt_id",
 )
+_BUNDLE_HEX64_FIELDS = (
+    "amendment_prereg_sha256", "lock_record_sha256", "source_digest",
+    "environment_manifest_sha256", "v1_evidence_manifest_sha256",
+    "seed_registry_sha256", "scenario_grid_sha256", "b_support_sha256",
+)
+_HEX = frozenset("0123456789abcdef")
+
+
+def _check_bundle_semantics(body: Mapping[str, Any]) -> None:
+    """The SAME semantic checks at build and at load (161_s finding 1):
+    a self-rehashed bundle with altered frozen literals must refuse at
+    validation, not only at construction."""
+    expected_fields = {"manifest", *_BUNDLE_REQUIRED}
+    got_fields = set(body) - {"execution_bundle_sha256"}
+    if got_fields != expected_fields:
+        raise InfrastructureError(
+            f"execution bundle field set mismatch: missing "
+            f"{sorted(expected_fields - got_fields)}, extra "
+            f"{sorted(got_fields - expected_fields)}")
+    if body["manifest"] != "stage1-execution-bundle-amend1-v1":
+        raise InfrastructureError("not an amend1 execution bundle")
+    if body["attempt_id"] != ATTEMPT_ID:
+        raise InfrastructureError(
+            f"attempt id must be the frozen literal {ATTEMPT_ID!r}")
+    if body["artifact_tags"] != [AMEND1_VALIDATION_TAG,
+                                 AMEND1_REPLAY_TAG,
+                                 AMEND1_ARTIFACT_TAG]:
+        raise InfrastructureError("artifact tags are not the frozen "
+                                  "amend1 literals")
+    if body["run_roots"] != [AMEND1_VALIDATION_RUN_ROOT,
+                             AMEND1_REPLAY_RUN_ROOT]:
+        raise InfrastructureError("run roots are not the frozen amend1 "
+                                  "literals")
+    if body["prompt_sha256s"] != [stage1.PROMPT_FEWSHOT_SHA256,
+                                  stage1.PROMPT_SCHEMA_ONLY_SHA256]:
+        raise InfrastructureError("prompt digests are not the pinned "
+                                  "candidates")
+    for field in _BUNDLE_HEX64_FIELDS:
+        value = body[field]
+        if not isinstance(value, str) or len(value) != 64 or \
+                not set(value) <= _HEX:
+            raise InfrastructureError(
+                f"bundle field {field!r} must be 64 lowercase hex")
+    if not isinstance(body["git_commit"], str) or \
+            len(body["git_commit"]) != 40:
+        raise InfrastructureError("git_commit must be a 40-hex commit")
+    if body["seed_registry_entries"] != FULL_SEED_REGISTRY_ENTRIES:
+        raise InfrastructureError(
+            f"seed_registry_entries "
+            f"{body['seed_registry_entries']!r} != authoritative "
+            f"{FULL_SEED_REGISTRY_ENTRIES} — a bundle may only bind the "
+            "FINALIZED full registry (161_s finding 3)")
 
 
 def build_execution_bundle(fields: Mapping[str, Any]) -> dict[str, Any]:
@@ -284,20 +489,9 @@ def build_execution_bundle(fields: Mapping[str, Any]) -> dict[str, Any]:
     if missing:
         raise InfrastructureError(
             f"execution bundle missing fields: {missing}")
-    if fields["attempt_id"] != ATTEMPT_ID:
-        raise InfrastructureError(
-            f"attempt id must be the frozen literal {ATTEMPT_ID!r}")
-    if fields["artifact_tags"] != [AMEND1_VALIDATION_TAG,
-                                   AMEND1_REPLAY_TAG,
-                                   AMEND1_ARTIFACT_TAG]:
-        raise InfrastructureError("artifact tags are not the frozen "
-                                  "amend1 literals")
-    if fields["run_roots"] != [AMEND1_VALIDATION_RUN_ROOT,
-                               AMEND1_REPLAY_RUN_ROOT]:
-        raise InfrastructureError("run roots are not the frozen amend1 "
-                                  "literals")
     body = {"manifest": "stage1-execution-bundle-amend1-v1"}
     body.update({k: fields[k] for k in _BUNDLE_REQUIRED})
+    _check_bundle_semantics(body)
     digest = hashlib.sha256(
         canonical_json(body).encode("utf-8")).hexdigest()
     out = dict(body)
@@ -314,10 +508,9 @@ def validate_execution_bundle(bundle: Mapping[str, Any]) -> str:
         canonical_json(body).encode("utf-8")).hexdigest()
     if digest != bundle.get("execution_bundle_sha256"):
         raise InfrastructureError("execution bundle hash mismatch")
-    if bundle.get("manifest") != "stage1-execution-bundle-amend1-v1":
-        raise InfrastructureError("not an amend1 execution bundle")
-    if bundle.get("attempt_id") != ATTEMPT_ID:
-        raise InfrastructureError("wrong attempt id")
+    # 161_s finding 1: reapply EVERY semantic check at load — a
+    # self-rehashed bundle with altered frozen literals must refuse
+    _check_bundle_semantics(body)
     return digest
 
 

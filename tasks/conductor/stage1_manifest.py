@@ -130,6 +130,12 @@ def build_stage1_env_manifest(*, allow_dirty: bool = False
     else:
         env["git_dirty"] = 0
     env["manifest"] = "stage1-environment-v2"
+    # 161_s: the amended statistics run on PCG64/Student-t/Beta/score
+    # inversion — the exact numerical stack versions are load-bearing
+    import numpy
+    import scipy
+    env["numpy"] = numpy.__version__
+    env["scipy"] = scipy.__version__
     env["stage1_source_sha256"] = stage1_source_digest()
     env["stage1_source_files"] = list(stage1_source_files())
     env["historical_stage0_source_sha256"] = (

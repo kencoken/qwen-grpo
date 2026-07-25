@@ -50,19 +50,41 @@ def test_v1_evidence_archive_tamper_refuses(tmp_path):
     m = json.loads(mp.read_text())
     m["files"]["benchmark.json"]["bytes"] += 1
     mp.write_text(json.dumps(m, sort_keys=True, indent=1))
-    with pytest.raises(InfrastructureError, match="disagrees"):
+    # any manifest edit now fails the PINNED manifest hash first
+    with pytest.raises(InfrastructureError, match="pinned"):
         am.verify_v1_evidence_archive(tmp_path / "a3")
+    # 161_s finding 2 reproductions: a modified lock_commit and a
+    # modified diagnostic script must both refuse
+    shutil.copytree(am.V1_EVIDENCE_DIR, tmp_path / "a4")
+    mp4 = tmp_path / "a4" / "evidence_manifest.json"
+    m4 = json.loads(mp4.read_text())
+    m4["lock_commit"] = "f" * 40
+    mp4.write_text(json.dumps(m4, sort_keys=True, indent=1))
+    with pytest.raises(InfrastructureError, match="pinned"):
+        am.verify_v1_evidence_archive(tmp_path / "a4")
+    shutil.copytree(am.V1_EVIDENCE_DIR, tmp_path / "a5")
+    sp = tmp_path / "a5" / "agreement_diagnostic_script.py"
+    sp.write_text(sp.read_text() + "\n# tampered\n")
+    with pytest.raises(InfrastructureError, match="sha256"):
+        am.verify_v1_evidence_archive(tmp_path / "a5")
 
 
 # --- §9.3: seed domains and registry ------------------------------------------------
 
 def test_db_domain_reproduces_v1_scenario_seeds():
     # D and B seeds were never exposed; the retained domain must
-    # reproduce the v1 derivation EXACTLY
+    # reproduce the v1 derivation EXACTLY — using the REAL key
+    # material: raw unpadded completion indices (161_s finding 3)
+    from tasks.conductor import stage1_replay as sr
     for key in ("D1_seq_null_ordinary_div3|0",
                 "D5_pilot_hetero_unequal|4999",
-                "B|obs|" + "p" * 64 + "|000"):
+                "D-detset|boundary_plus",
+                f"B|obs|{'p' * 64}|0",
+                f"B|obs|{'p' * 64}|255"):
         assert am.seed(am.DB_SEED_DOMAIN, key) == sv.scenario_seed(key)
+    # and equality with the actual replay derivation end-to-end
+    assert am.seed(am.DB_SEED_DOMAIN, f"B|obs1|{'p' * 64}|7") == \
+        sr.completion_seed("obs1", "p" * 64, 7)
 
 
 def test_ac_domain_differs_from_v1():
@@ -73,8 +95,9 @@ def test_ac_domain_differs_from_v1():
 
 def test_seed_registry_properties():
     reg = am.build_seed_registry()
-    # completeness: 48 A + 24 router + 48 C paths + 8x5000 D
-    assert len(reg) == 48 + 24 + 48 + 8 * 5_000
+    # components: 48 A + 24 router + 48 C paths + 8x5000 D + 6 det-set
+    assert len(reg) == 48 + 24 + 48 + 8 * 5_000 + 6
+    assert "D-detset|inside_zero" in reg
     assert all(0 <= v < 2 ** 64 for v in reg.values())
     # A/C entries use the fresh domain; D entries the retained one
     a_key = "A|ordinary_div1|0.15|0.5|10000"
@@ -85,6 +108,25 @@ def test_seed_registry_properties():
     # digest deterministic
     assert am.seed_registry_digest(reg) == \
         am.seed_registry_digest(am.build_seed_registry())
+
+
+def test_finalized_registry_is_the_only_bundle_input():
+    from tasks.conductor import stage1_replay as sr
+    obs = [f"o{i:02d}" for i in range(18)]
+    full = am.finalize_seed_registry(obs)
+    assert len(full) == am.FULL_SEED_REGISTRY_ENTRIES == 49_342
+    # the B entries use EXACTLY completion_seed's material
+    key = f"B|o03|{stage1.PROMPT_FEWSHOT_SHA256}|42"
+    assert full[key] == sr.completion_seed(
+        "o03", stage1.PROMPT_FEWSHOT_SHA256, 42)
+    # wrong support size refuses
+    with pytest.raises(InfrastructureError, match="18"):
+        am.finalize_seed_registry(obs[:17])
+    # a bundle refuses a partial registry count
+    fields = _bundle_fields()
+    fields["seed_registry_entries"] = len(am.build_seed_registry())
+    with pytest.raises(InfrastructureError, match="FINALIZED"):
+        am.build_execution_bundle(fields)
 
 
 def test_c_path_registry_cardinalities():
@@ -126,6 +168,46 @@ def test_persistence_tail_allocation():
     assert am.BISECTION_ITERATIONS == 80
     assert "p_hat_num" in am.PERSISTENCE_LOOK_FIELDS
     assert "branch" in am.PERSISTENCE_LOOK_FIELDS
+    # 161_s finding 4: branch bounds are explicit schema, not comments
+    assert "zero_U" in am.PERSISTENCE_ZERO_BRANCH_FIELDS
+    assert "zero_U_A" in am.PERSISTENCE_ZERO_BRANCH_FIELDS
+    assert "zero_L_Q" in am.PERSISTENCE_ZERO_BRANCH_FIELDS
+    for f in ("pos_G_L", "pos_G_U", "pos_L_p", "pos_U_p"):
+        assert f in am.PERSISTENCE_POSITIVE_BRANCH_FIELDS
+    assert am.FLOAT_DTYPE == "float64"
+    assert am.TOLERANCE_FACTOR == 64
+    assert am.STUDENT_T_IMPL == "scipy.stats.t.ppf"
+    assert am.ENDPOINT_RTOL == 0.0
+
+
+def test_amend1_row_schemas_fail_closed():
+    ok_path = {"k": {"first_pass": 9_000, "first_fail": 500,
+                     "cap_unresolved": 500, "trials": 10_000}}
+    am.validate_amend1_rows("C_path", ok_path)
+    bad_sum = {"k": {"first_pass": 9_000, "first_fail": 600,
+                     "cap_unresolved": 500, "trials": 10_000}}
+    with pytest.raises(InfrastructureError, match="impossible"):
+        am.validate_amend1_rows("C_path", bad_sum)
+    ok_marg = {"k": {"pass_count": 8_000, "fail_count": 1_000,
+                     "unresolved_count": 1_000, "zero_branch": 100,
+                     "positive_branch": 9_900,
+                     "denominator_unresolved": 5, "trials": 10_000}}
+    am.validate_amend1_rows("C_marginal", ok_marg)
+    bad_branch = {"k": dict(ok_marg["k"], zero_branch=200)}
+    with pytest.raises(InfrastructureError, match="impossible"):
+        am.validate_amend1_rows("C_marginal", bad_branch)
+    bad_denom = {"k": dict(ok_marg["k"], zero_branch=9_900,
+                           positive_branch=100,
+                           denominator_unresolved=500)}
+    with pytest.raises(InfrastructureError, match="impossible"):
+        am.validate_amend1_rows("C_marginal", bad_denom)
+    ok_dbr = {"k": {"zero_branch": 2_736, "positive_branch": 2_264,
+                    "denominator_unresolved": 3, "trials": 5_000}}
+    am.validate_amend1_rows("D_branch", ok_dbr)
+    with pytest.raises(InfrastructureError, match="fields"):
+        am.validate_amend1_rows("C_path", ok_marg)
+    with pytest.raises(InfrastructureError, match="unknown"):
+        am.validate_amend1_rows("bogus", {})
 
 
 # --- §9.2: run-root claims --------------------------------------------------------------
@@ -163,6 +245,7 @@ def _bundle_fields():
         "seed_registry_sha256": "1" * 64,
         "scenario_grid_sha256": "2" * 64,
         "b_support_sha256": "3" * 64,
+        "seed_registry_entries": am.FULL_SEED_REGISTRY_ENTRIES,
         "prompt_sha256s": [stage1.PROMPT_FEWSHOT_SHA256,
                            stage1.PROMPT_SCHEMA_ONLY_SHA256],
         "artifact_tags": [am.AMEND1_VALIDATION_TAG,
@@ -198,6 +281,37 @@ def test_execution_bundle_fail_closed():
     tampered = dict(bundle, git_commit="x" * 40)
     with pytest.raises(InfrastructureError, match="hash mismatch"):
         am.validate_execution_bundle(tampered)
+
+
+def test_execution_bundle_self_rehash_attack_refuses():
+    # 161_s finding 1 reproduction: change frozen literals, RECOMPUTE
+    # the self-hash — validation must still refuse on semantics
+    import hashlib as _h
+    from tasks.conductor.profiles import canonical_json
+    bundle = am.build_execution_bundle(_bundle_fields())
+
+    def rehash(body):
+        body = dict(body)
+        body.pop("execution_bundle_sha256", None)
+        body["execution_bundle_sha256"] = _h.sha256(
+            canonical_json(body).encode("utf-8")).hexdigest()
+        return body
+
+    evil_tags = rehash(dict(bundle, artifact_tags=["v1-tag"]))
+    with pytest.raises(InfrastructureError, match="tags"):
+        am.validate_execution_bundle(evil_tags)
+    evil_roots = rehash(dict(bundle, run_roots=["runs/other"]))
+    with pytest.raises(InfrastructureError, match="roots"):
+        am.validate_execution_bundle(evil_roots)
+    evil_prompt = rehash(dict(bundle, prompt_sha256s=["a" * 64]))
+    with pytest.raises(InfrastructureError, match="prompt"):
+        am.validate_execution_bundle(evil_prompt)
+    evil_extra = rehash(dict(bundle, smuggled="x"))
+    with pytest.raises(InfrastructureError, match="field set"):
+        am.validate_execution_bundle(evil_extra)
+    evil_count = rehash(dict(bundle, seed_registry_entries=42))
+    with pytest.raises(InfrastructureError, match="FINALIZED"):
+        am.validate_execution_bundle(evil_count)
 
 
 # --- §9: old-artifact refusal ----------------------------------------------------------------

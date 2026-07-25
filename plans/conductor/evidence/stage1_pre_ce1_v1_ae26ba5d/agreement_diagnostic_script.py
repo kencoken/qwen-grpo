@@ -9,9 +9,17 @@ disagreements. It did not enter the gate; the frozen agreement failure
 does not depend on it. Its directionality finding (both flips
 2k=pass vs 10k=not_pass/unresolved) is retrospective.
 
-Regenerate (at v1 executable commit da8424b, from the repo root):
-    uv run python plans/conductor/evidence/\
+Regeneration (161_s correction: this FILE did not exist at the
+historical checkout — it was first committed at Unit A, 2b2b6dc; only
+the MODULES it imports must be at the v1 commit):
+
+    git worktree add /tmp/v1-checkout da8424b
+    cd /tmp/v1-checkout && uv run python \
+        /home/ken/qwen-grpo/plans/conductor/evidence/\
 stage1_pre_ce1_v1_ae26ba5d/agreement_diagnostic_script.py
+
+i.e. run this script by absolute path from a worktree of commit
+da8424b, so `tasks.conductor.*` resolve to the exact v1 bytes.
 """
 
 import numpy as np
