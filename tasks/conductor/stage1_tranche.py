@@ -419,15 +419,19 @@ def _check_hex64(value: Any, what: str) -> str:
 def finalize_artifact(name: str, execution_manifest_sha256: str,
                       results: Mapping[str, Mapping[str, int]],
                       extra: Mapping[str, Any] | None = None,
-                      tag: str = TRANCHE_ARTIFACT_TAG
+                      tag: str = TRANCHE_ARTIFACT_TAG,
+                      row_schema: Mapping[str, Any] | None = None
                       ) -> dict[str, Any]:
     """Canonical, content-addressed tranche artifact. INTEGER sufficient
     statistics only (rates/bounds recomputed at load); the execution
     identity is validated; `extra` may not shadow reserved fields."""
     _check_hex64(execution_manifest_sha256, "execution_manifest_sha256")
-    if name not in _ROW_SCHEMAS:
+    if row_schema is not None:
+        schema = row_schema           # amended schemas (158_s Unit B+)
+    elif name in _ROW_SCHEMAS:
+        schema = _ROW_SCHEMAS[name]
+    else:
         raise TrancheError(f"unknown artifact name {name!r}")
-    schema = _ROW_SCHEMAS[name]
     for key, row in results.items():
         if set(row) != schema["fields"]:
             raise TrancheError(
@@ -460,7 +464,9 @@ def load_artifact(artifact: Mapping[str, Any], name: str,
                   expected_keys: frozenset[str],
                   execution_manifest_sha256: str | None = None,
                   b_n: int | None = None,
-                  tag: str = TRANCHE_ARTIFACT_TAG) -> dict[str, Any]:
+                  tag: str = TRANCHE_ARTIFACT_TAG,
+                  row_schema: Mapping[str, Any] | None = None
+                  ) -> dict[str, Any]:
     """Fail-closed reload: hash recompute, tag/name, exact key set,
     exact per-row schema with trial-count and count identities, and —
     when given — the ONE authoritative execution identity (145_s
@@ -488,7 +494,8 @@ def load_artifact(artifact: Mapping[str, Any], name: str,
             f"artifact {name}: key set mismatch "
             f"(missing {len(expected_keys - got)}, "
             f"extra {len(got - expected_keys)})")
-    schema = _ROW_SCHEMAS[name]
+    schema = row_schema if row_schema is not None \
+        else _ROW_SCHEMAS[name]
     for key, row in artifact["results"].items():
         if set(row) != schema["fields"]:
             raise TrancheError(f"artifact {name}: row {key!r} has wrong "
