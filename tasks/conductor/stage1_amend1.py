@@ -749,8 +749,11 @@ def build_lock_bundle(*, prereg_path: Path | str,
     - `environment_manifest_sha256`: a freshly BUILT and validated
       manifest;
     - the registry trio: rederived from the AUTHORITATIVE support ids
-      (`build_smoke_rows`), verified canonical (`_support_ids` is a
-      test-only injection point).
+      (`payoff_support.support_observations` — the 18 identity-
+      selected observations, unique by construction; 178_s finding 1:
+      the smoke-schedule rows duplicate observations across prompt
+      schedules and are NOT a support source), verified canonical
+      (`_support_ids` is a test-only injection point).
 
     Returns (bundle, seed_registry, env_manifest); the bundle has
     already passed `validate_execution_bundle` and the env
@@ -761,9 +764,9 @@ def build_lock_bundle(*, prereg_path: Path | str,
     env = build_stage1_env_manifest(allow_dirty=allow_dirty)
     validate_env_manifest(env)
     if _support_ids is None:
-        from .grpo_task import build_smoke_rows
-        _support_ids = sorted(row["observation_id"]
-                              for row in build_smoke_rows())
+        from .payoff_support import support_observations
+        _support_ids = sorted(obs["observation_id"]
+                              for obs in support_observations())
     registry = finalize_seed_registry(_support_ids)
     verify_registry_canonical(registry)
     fields = {

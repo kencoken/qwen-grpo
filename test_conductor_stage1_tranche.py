@@ -1085,48 +1085,174 @@ def test_build_lock_bundle_derives_everything(tmp_path, monkeypatch):
     assert "fields" not in params    # nothing caller-typed
 
 
-def test_archive_evidence_roundtrip_and_refusals(tmp_path):
-    # 175_s finding 3: the concrete archive command — byte copy of
-    # both roots, manifest, byte-for-byte verification, immutability
+def _production_context(tmp_path, monkeypatch):
+    """A REAL derive-everything context: production support ids
+    (178_s finding 1 — no injection), tmp reviewed documents, and an
+    env manifest pinned to the actual HEAD."""
+    import tasks.conductor.stage1_manifest as sm
+    head = am_mod.current_git_commit()
+    env = _env_manifest(git_commit=head)
+    monkeypatch.setattr(sm, "build_stage1_env_manifest",
+                        lambda allow_dirty=False: dict(env))
+    prereg = tmp_path / "prereg.md"
+    prereg.write_bytes(b"PREREG BYTES")
+    lock = tmp_path / "lock.md"
+    lock.write_bytes(b"LOCK BYTES")
+    bundle, registry, _ = am_mod.build_lock_bundle(
+        prereg_path=prereg, lock_record_path=lock)
+    return bundle, registry, prereg, lock
+
+
+def test_build_lock_bundle_production_default(tmp_path, monkeypatch):
+    # 178_s finding 1: the PRODUCTION default derives the support
+    # from payoff_support.support_observations — 18 unique ids (the
+    # smoke-schedule rows would duplicate them and refuse)
+    bundle, registry, _, _ = _production_context(tmp_path, monkeypatch)
+    from tasks.conductor.payoff_support import support_observations
+    ids = sorted(o["observation_id"] for o in support_observations())
+    assert len(ids) == len(set(ids)) == 18
+    assert am_mod._registry_support_ids(registry) == ids
+    assert bundle["seed_registry_entries"] == 49_342
+    am_mod.validate_execution_bundle(bundle, seed_registry=registry)
+
+
+def test_persisted_context_and_cpu_first_order(tmp_path, monkeypatch):
+    # 178_s finding 2: replay/finalize consume the CPU run's
+    # PERSISTED bundle and refuse before a complete CPU root exists
     from tasks.conductor import stage1_amend1_run as sar
-    bundle, a, c, d, b = _amend1_artifacts()
-    val, rep = _write_amend1_run_dirs(tmp_path, bundle, a, c, d, b)
-    out = sar.archive_evidence(validation_dir=val, replay_dir=rep,
-                               evidence_parent=tmp_path / "evidence")
+    bundle, registry, prereg, lock = _production_context(tmp_path,
+                                                         monkeypatch)
+    val = tmp_path / "val"
+    # no CPU root at all -> CPU-first refusal
+    val.mkdir()
+    with pytest.raises(InfrastructureError, match="tranche first"):
+        sar.persisted_context(validation_dir=val, prereg_path=prereg,
+                              lock_record_path=lock)
+    for name in am_mod.EXPECTED_RUN_FILES[
+            am_mod.AMEND1_VALIDATION_RUN_ROOT]:
+        if name != "aggregate.json":
+            (val / name).write_text("{}", encoding="utf-8")
+    (val / "execution_bundle_manifest.json").write_text(
+        json.dumps(bundle), encoding="utf-8")
+    # incomplete CPU record -> refusal BEFORE anything else runs
+    (val / "run_record.json").write_text(
+        json.dumps({"status": "running"}), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="complete"):
+        sar.persisted_context(validation_dir=val, prereg_path=prereg,
+                              lock_record_path=lock)
+    (val / "run_record.json").write_text(
+        json.dumps({"status": "complete"}), encoding="utf-8")
+    context = sar.persisted_context(validation_dir=val,
+                                    prereg_path=prereg,
+                                    lock_record_path=lock)
+    assert context["bundle"] == bundle
+    assert am_mod.seed_registry_digest(context["seed_registry"]) == \
+        bundle["seed_registry_sha256"]
+    # authoritative provenance drift (lock record bytes changed after
+    # the CPU run) refuses before the replay root would be claimed
+    lock.write_bytes(b"LOCK BYTES CHANGED")
+    with pytest.raises(InfrastructureError, match="authoritative"):
+        sar.persisted_context(validation_dir=val, prereg_path=prereg,
+                              lock_record_path=lock)
+
+
+def test_archive_evidence_success_mode(tmp_path, monkeypatch):
+    # 178_s finding 3: success mode validates provenance, both
+    # completed roots, exact file sets and the finalized aggregate,
+    # staging + atomic rename
     from pathlib import Path
+    from tasks.conductor import stage1_amend1_run as sar
+    bundle, registry, prereg, lock = _production_context(tmp_path,
+                                                         monkeypatch)
+    _, a, c, d, b = _amend1_artifacts()
+    val, rep = _write_amend1_run_dirs(tmp_path, bundle, a, c, d, b)
+    # missing aggregate -> success refuses on the exact file set
+    with pytest.raises(InfrastructureError, match="missing"):
+        sar.archive_evidence("success", validation_dir=val,
+                             replay_dir=rep,
+                             evidence_parent=tmp_path / "ev",
+                             prereg_path=prereg,
+                             lock_record_path=lock)
+    (val / "aggregate.json").write_text("{}", encoding="utf-8")
+    # an incomplete replay refuses
+    (rep / "run_record.json").write_text(
+        json.dumps({"status": "aborted"}), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="statuses"):
+        sar.archive_evidence("success", validation_dir=val,
+                             replay_dir=rep,
+                             evidence_parent=tmp_path / "ev",
+                             prereg_path=prereg,
+                             lock_record_path=lock)
+    (rep / "run_record.json").write_text(
+        json.dumps({"status": "complete"}), encoding="utf-8")
+    out = sar.archive_evidence("success", validation_dir=val,
+                               replay_dir=rep,
+                               evidence_parent=tmp_path / "ev",
+                               prereg_path=prereg,
+                               lock_record_path=lock)
     dest = Path(out["evidence_dir"])
     manifest = json.loads(
         (dest / "evidence_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["mode"] == "success"
+    assert manifest["validation_errors"] == []
     assert manifest["execution_bundle_sha256"] == \
         bundle["execution_bundle_sha256"]
-    assert manifest["validation_status"] == "complete"
-    n_val = len(list(val.iterdir()))
-    n_rep = len(list(rep.iterdir()))
-    assert out["files"] == n_val + n_rep
+    assert manifest["git_commit"] == bundle["git_commit"]
+    # the frozen command list and the formal logs are recorded
+    assert any("tranche" in cmd for cmd in manifest["commands"])
+    assert "validation/run_record.json" in manifest["formal_logs"]
+    assert out["files"] == len(list(val.iterdir())) + \
+        len(list(rep.iterdir()))
     for rel, entry in manifest["files"].items():
         assert (dest / rel).stat().st_size == entry["bytes"]
-    # immutable: refuses the existing destination
+    # no staging remnant; destination immutable
+    assert not list((tmp_path / "ev").glob(".staging_*"))
     with pytest.raises(InfrastructureError, match="immutable"):
-        sar.archive_evidence(validation_dir=val, replay_dir=rep,
-                             evidence_parent=tmp_path / "evidence")
-    # a tampered persisted bundle refuses before any copy
-    val2 = tmp_path / "val2"
-    val2.mkdir()
-    evil = dict(bundle, git_commit="u" * 40)
-    (val2 / "execution_bundle_manifest.json").write_text(
+        sar.archive_evidence("success", validation_dir=val,
+                             replay_dir=rep,
+                             evidence_parent=tmp_path / "ev",
+                             prereg_path=prereg,
+                             lock_record_path=lock)
+
+
+def test_archive_evidence_abort_mode(tmp_path):
+    # 178_s finding 3: abort mode preserves partial bytes WITHOUT
+    # trusting the bundle and records the validation errors
+    from pathlib import Path
+    from tasks.conductor import stage1_amend1_run as sar
+    with pytest.raises(InfrastructureError, match="unknown archive"):
+        sar.archive_evidence("partial", validation_dir=tmp_path)
+    val = tmp_path / "val"
+    val.mkdir()
+    evil = {"manifest": "x", "execution_bundle_sha256": "f" * 64}
+    (val / "execution_bundle_manifest.json").write_text(
         json.dumps(evil), encoding="utf-8")
-    with pytest.raises(InfrastructureError, match="self-hash"):
-        sar.archive_evidence(validation_dir=val2, replay_dir=rep,
-                             evidence_parent=tmp_path / "evidence2")
-    # differing bundles across the two roots refuse
-    other = am_mod.build_execution_bundle(
-        dict(_bundle_fields_amend1(), lock_record_sha256="e" * 64),
-        seed_registry=_REGISTRY_S)
-    (val2 / "execution_bundle_manifest.json").write_text(
-        json.dumps(other), encoding="utf-8")
-    with pytest.raises(InfrastructureError, match="different"):
-        sar.archive_evidence(validation_dir=val2, replay_dir=rep,
-                             evidence_parent=tmp_path / "evidence2")
+    (val / "run_record.json").write_text(
+        json.dumps({"status": "aborted", "error": "boom"}),
+        encoding="utf-8")
+    (val / "partial_D_D1_seq_null_ordinary_div3.json").write_text(
+        "{}", encoding="utf-8")
+    # success mode REFUSES this state...
+    with pytest.raises(InfrastructureError, match="refused"):
+        sar.archive_evidence("success", validation_dir=val,
+                             replay_dir=tmp_path / "absent",
+                             evidence_parent=tmp_path / "ev")
+    # ...abort mode preserves it and records why it is not clean
+    out = sar.archive_evidence("abort", validation_dir=val,
+                               replay_dir=tmp_path / "absent",
+                               evidence_parent=tmp_path / "ev")
+    assert out["mode"] == "abort"
+    assert any("self-hash" in e for e in out["validation_errors"])
+    dest = Path(out["evidence_dir"])
+    manifest = json.loads(
+        (dest / "evidence_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["mode"] == "abort"
+    assert manifest["replay_status"] == "absent"
+    assert manifest["validation_status"] == "aborted"
+    assert manifest["validation_errors"]
+    assert "validation/run_record.json" in manifest["formal_logs"]
+    assert (dest / "validation" /
+            "execution_bundle_manifest.json").exists()
 
 
 def test_prelock_probe_recipe_and_lock_record_discovery(tmp_path,
