@@ -149,17 +149,26 @@ def zero_branch_bound(n: int, sum_a: int, qbar: float, a_zero: float,
 
 
 def look_decision(j_rows: np.ndarray, k_rows: np.ndarray,
-                  schedule: str, *,
+                  schedule: str, *, structural: bool,
                   with_inversion: bool = True) -> dict[str, Any]:
     """One registered look: branch selection (trigger EXACTLY J == 0),
     the §4.6 gate rule, and the full §4 serialization record with the
-    frozen per-branch field sets."""
+    frozen per-branch field sets.
+
+    `structural` is the DESIGN-DECLARED full-eligibility guarantee
+    (166_s finding 2): the sharper zero bound is valid only when the
+    registered design guarantees K_c = m, never inferred from observed
+    data. Observed data contradicting a structural declaration is an
+    infrastructure error."""
     stats = suff_stats(j_rows, k_rows)
     a, a_zero, a_ratio = am.persistence_tail_allocation(schedule)
     n = stats.n
     k_total, j_total = stats.s_k, stats.s_j
     sum_a = int(np.count_nonzero(j_rows > 0))
-    structural = bool(np.all(k_rows == M))
+    if structural and not bool(np.all(k_rows == M)):
+        raise InfrastructureError(
+            "structural full eligibility declared but observed K_c < m "
+            "— design/data contradiction")
     base = {
         "N": n, "m": M, "K": k_total, "J": j_total,
         "Qbar_num": k_total, "Qbar_den": M * n, "sum_A": sum_a,
@@ -225,7 +234,28 @@ def _membership(stats: SuffStats, r_values: np.ndarray,
     s_d = np.float64(stats.s_j) - r * np.float64(stats.s_k)
     s_d2 = (np.float64(stats.s_j2) - 2.0 * r * np.float64(stats.s_jk)
             + r * r * np.float64(stats.s_k2))
-    v_d = np.maximum(s_d2 - s_d * s_d / n, 0.0)
+    cross = s_d * s_d / n
+    v_d = s_d2 - cross
+    # the frozen 64-eps refuse-vs-clamp rule, elementwise (166_s
+    # finding 3) — with the SCAN's magnitude set including the summed
+    # intermediates: near r ~ p_hat, V_D(r) is a near-total
+    # cancellation of terms of order S_J2 / 2r S_JK / r^2 S_K2, so the
+    # rounding-error floor scales with THOSE, not with the tiny
+    # result. (Measured: exact-zero-variance data produces residuals
+    # ~ eps * intermediate ~ 2e-14 while the result-scale tolerance is
+    # 1.4e-14.) The r = 0.10 GATE keeps the frozen §4.5 scalar rule
+    # verbatim — no cancellation arises there. Frozen as the
+    # scan-variant rule in the final successor.
+    tol = am.TOLERANCE_FACTOR * _EPS64 * np.maximum.reduce([
+        np.full_like(v_d, 1.0), np.abs(s_d2), np.abs(cross),
+        np.full_like(v_d, abs(float(stats.s_j2))),
+        np.abs(2.0 * r * np.float64(stats.s_jk)),
+        np.abs(r * r * np.float64(stats.s_k2))])
+    if np.any(v_d < -tol):
+        raise InfrastructureError(
+            "membership variance below -tolerance — numerical "
+            "inconsistency in the inversion scan")
+    v_d = np.where(v_d < 0.0, 0.0, v_d)
     s_sd = np.sqrt(v_d / (n - 1.0))
     q = float(_student_t.ppf(1.0 - a_ratio, df=stats.n - 1))
     dbar = s_d / n
@@ -357,19 +387,15 @@ def gen_row_dispersed(rng: np.random.Generator, looks: tuple[int, ...],
 def generate_path(schedule: str, eligibility: float, theta: float,
                   dist: str, trial_seed: int
                   ) -> tuple[np.ndarray, np.ndarray]:
-    looks = sv.PERSISTENCE_LOOKS[schedule]["looks"]
+    """Test/probe convenience wrapper: one draw from a fresh stream."""
     rng = np.random.Generator(np.random.PCG64(trial_seed))
-    if dist == "cluster_correlated":
-        return gen_cluster_correlated(rng, looks, eligibility, theta)
-    if dist == "row_dispersed":
-        return gen_row_dispersed(rng, looks, eligibility, theta)
-    raise InfrastructureError(f"unknown distribution {dist!r}")
+    return _generate_with_rng(rng, schedule, eligibility, theta, dist)
 
 
 # --- coupled-path evaluation -----------------------------------------------------------
 
-def evaluate_path(j: np.ndarray, k: np.ndarray, schedule: str
-                  ) -> dict[str, Any]:
+def evaluate_path(j: np.ndarray, k: np.ndarray, schedule: str, *,
+                  structural: bool) -> dict[str, Any]:
     """Apply §4.6 to the immutable prefixes in look order: first
     terminal decision stops the operational path (early fail stops;
     pass stops; unresolved expands; unresolved at cap = non-pass).
@@ -380,6 +406,7 @@ def evaluate_path(j: np.ndarray, k: np.ndarray, schedule: str
     outcome, decided_at = "cap_unresolved", None
     for look in looks:
         record = look_decision(j[:look], k[:look], schedule,
+                               structural=structural,
                                with_inversion=False)
         marginals[look] = record
         if decided_at is None and record["decision"] == "pass":
@@ -390,28 +417,40 @@ def evaluate_path(j: np.ndarray, k: np.ndarray, schedule: str
             "marginals": marginals}
 
 
+def _generate_with_rng(rng: np.random.Generator, schedule: str,
+                       eligibility: float, theta: float, dist: str
+                       ) -> tuple[np.ndarray, np.ndarray]:
+    looks = sv.PERSISTENCE_LOOKS[schedule]["looks"]
+    if dist == "cluster_correlated":
+        return gen_cluster_correlated(rng, looks, eligibility, theta)
+    if dist == "row_dispersed":
+        return gen_row_dispersed(rng, looks, eligibility, theta)
+    raise InfrastructureError(f"unknown distribution {dist!r}")
+
+
 def run_c_path(schedule: str, eligibility: float, theta: float,
-               dist: str, n_trials: int = am.C_OUTER_TRIALS,
-               _seed_domain: str = am.AC_SEED_DOMAIN
+               dist: str, path_seed: int,
+               n_trials: int = am.C_OUTER_TRIALS
                ) -> tuple[dict[str, int], dict[str, dict[str, int]]]:
-    """One coupled path cell: n_trials fresh-seed maximum-cap paths
-    under the FRESH A/C domain (§9.3), returning the C_path row and its
-    per-look C_marginal rows (integer sufficient statistics only).
-    `_seed_domain` exists ONLY for the throwaway timing probe — the
-    frozen grid always runs under the default domain."""
+    """One coupled path cell: ONE PCG64 seeded from the REGISTERED
+    path seed, trials drawn sequentially from that stream (166_s
+    finding 1 — the bundle registers exactly one seed per C path).
+    Returns the C_path row and its per-look C_marginal rows (integer
+    sufficient statistics only). Structural eligibility is
+    design-declared: eligibility == 1.0 exactly."""
     path_key = am.c_path_key(schedule, eligibility, theta, dist)
     looks = sv.PERSISTENCE_LOOKS[schedule]["looks"]
+    structural = eligibility == 1.0
+    rng = np.random.Generator(np.random.PCG64(path_seed))
     counts = {"first_pass": 0, "first_fail": 0, "cap_unresolved": 0}
     marg = {look: {"pass_count": 0, "fail_count": 0,
                    "unresolved_count": 0, "zero_branch": 0,
                    "positive_branch": 0, "denominator_unresolved": 0}
             for look in looks}
-    for trial in range(n_trials):
-        # per-trial stream: frozen derivation over (path key, trial)
-        trial_seed = am.seed(_seed_domain, f"{path_key}|{trial}")
-        j, k = generate_path(schedule, eligibility, theta, dist,
-                             trial_seed)
-        result = evaluate_path(j, k, schedule)
+    for _trial in range(n_trials):
+        j, k = _generate_with_rng(rng, schedule, eligibility, theta,
+                                  dist)
+        result = evaluate_path(j, k, schedule, structural=structural)
         counts[result["outcome"]] += 1
         for look, record in result["marginals"].items():
             row = marg[look]
@@ -432,6 +471,43 @@ def run_c_path(schedule: str, eligibility: float, theta: float,
                                                 "trials": n_trials}
                      for look in looks}
     return path_row, marginal_rows
+
+
+C_DEADLINE_SECONDS = 30 * 60
+
+
+def run_amended_c(seed_registry: Mapping[str, int]
+                  ) -> tuple[dict[str, dict[str, int]],
+                             dict[str, dict[str, int]]]:
+    """The formal all-48 runner (166_s finding 1): consumes EXACTLY the
+    registered path seeds from the FINALIZED registry, enforces the
+    exact 48-key registry and the 30-minute §5.4 deadline (checked
+    between paths and every 500 trials via the per-path runner's
+    granularity). Executes only under the amended lock."""
+    if len(seed_registry) != am.FULL_SEED_REGISTRY_ENTRIES:
+        raise InfrastructureError(
+            "the formal C runner requires the FINALIZED seed registry")
+    started = time.perf_counter()
+    path_rows: dict[str, dict[str, int]] = {}
+    marginal_rows: dict[str, dict[str, int]] = {}
+    for cell in am.c_path_cells():
+        if time.perf_counter() - started > C_DEADLINE_SECONDS:
+            raise InfrastructureError(
+                "amended C exceeded its 30-minute budget — aborting "
+                "per 158_s §5.4")
+        key = am.c_path_key(*cell)
+        registered = seed_registry.get(key)
+        if registered is None or \
+                registered != am.seed(am.AC_SEED_DOMAIN, key):
+            raise InfrastructureError(
+                f"registered seed missing or wrong for {key!r}")
+        row, marginals = run_c_path(*cell, path_seed=registered)
+        path_rows[key] = row
+        marginal_rows.update(marginals)
+    if set(path_rows) != {am.c_path_key(*c) for c in am.c_path_cells()}:
+        raise InfrastructureError("C runner did not produce the exact "
+                                  "48-path set")
+    return path_rows, marginal_rows
 
 
 # --- §5.3 hard-path acceptance -----------------------------------------------------------
@@ -532,6 +608,45 @@ def scalar_reference_bounds(j_rows: np.ndarray, k_rows: np.ndarray,
             "denominator_l": kbar - q * (kvar ** 0.5) / (n ** 0.5)}
 
 
+def scalar_reference_inversion(j_rows: np.ndarray,
+                               k_rows: np.ndarray,
+                               a_ratio: float) -> tuple[float, float]:
+    """Row-level reference inversion (166_s finding 3): membership
+    computed by the two-pass scalar statistic at each candidate r,
+    replicating the frozen grid-union-{p_hat} verification and the
+    80-iteration outward bisection with outer-bracket endpoints —
+    sharing NO code with the optimized path."""
+    n = len(j_rows)
+    p_hat = float(j_rows.sum()) / float(k_rows.sum())
+
+    def member(r: float) -> bool:
+        ref = scalar_reference_bounds(j_rows, k_rows, r, a_ratio)
+        return ref["g_l"] <= 0.0 <= ref["g_u"]
+
+    grid = sorted(set([i / 1_000 for i in range(1_001)] + [p_hat]))
+    members = [r for r in grid if member(r)]
+    if not members:
+        raise InfrastructureError("reference inversion: no members")
+    # contiguity on the augmented grid
+    idxs = [grid.index(r) for r in members]
+    if idxs != list(range(idxs[0], idxs[-1] + 1)):
+        raise InfrastructureError("reference inversion: not a single "
+                                  "interval")
+
+    def bisect(inside: float, outside: float) -> float:
+        for _ in range(am.BISECTION_ITERATIONS):
+            mid = (inside + outside) / 2.0
+            if member(mid):
+                inside = mid
+            else:
+                outside = mid
+        return outside
+
+    l_p = 0.0 if member(0.0) else bisect(p_hat, 0.0)
+    u_p = 1.0 if member(1.0) else bisect(p_hat, 1.0)
+    return float(l_p), float(u_p)
+
+
 def _decision_from(g_l: float, g_u: float, denominator_l: float) -> str:
     if denominator_l <= 0.0:
         return "unresolved"
@@ -550,6 +665,7 @@ def reference_agreement_probe(cases: list[tuple[np.ndarray, np.ndarray,
     trichotomy decision and within ENDPOINT_ATOL on (G_L, G_U,
     denominator_L). Raises on any disagreement."""
     checked = 0
+    inverted = 0
     for j_rows, k_rows, schedule in cases:
         _, _, a_ratio = am.persistence_tail_allocation(schedule)
         stats = suff_stats(j_rows, k_rows)
@@ -568,10 +684,23 @@ def reference_agreement_probe(cases: list[tuple[np.ndarray, np.ndarray,
                 raise InfrastructureError(
                     f"scalar/optimized endpoint {field} disagreement "
                     f"{fast[field]!r} vs {ref[field]!r}")
+        # 166_s finding 3: the INVERSION gets its own independent
+        # row-level reference comparison (rtol = 0, atol = 1e-12)
+        if fast["denominator_l"] > 0.0:
+            l_fast, u_fast = invert_ratio_interval(stats, a_ratio)
+            l_ref, u_ref = scalar_reference_inversion(j_rows, k_rows,
+                                                      a_ratio)
+            if abs(l_fast - l_ref) > am.ENDPOINT_ATOL or \
+                    abs(u_fast - u_ref) > am.ENDPOINT_ATOL:
+                raise InfrastructureError(
+                    "scalar/optimized INVERSION endpoint disagreement")
+            inverted += 1
         checked += 1
     if checked == 0:
         raise InfrastructureError("probe had no positive-branch cases")
-    return {"cases_checked": checked}
+    if inverted == 0:
+        raise InfrastructureError("probe exercised no inversions")
+    return {"cases_checked": checked, "inversions_checked": inverted}
 
 
 _THROWAWAY_DOMAIN = "throwaway-timing-v1"    # never a frozen result
@@ -587,9 +716,10 @@ def benchmark_c_projection(trials_per_path: int = 50) -> dict[str, Any]:
              ("fork", 0.60, 0.05, "row_dispersed")]
     started = time.perf_counter()
     for schedule, e, theta, dist in worst:
-        run_c_path(schedule, e, theta, dist,
-                   n_trials=trials_per_path,
-                   _seed_domain=_THROWAWAY_DOMAIN)
+        throwaway = am.seed(_THROWAWAY_DOMAIN,
+                            am.c_path_key(schedule, e, theta, dist))
+        run_c_path(schedule, e, theta, dist, path_seed=throwaway,
+                   n_trials=trials_per_path)
     elapsed = time.perf_counter() - started
     per_trial = elapsed / (len(worst) * trials_per_path)
     projected_minutes = per_trial * 48 * am.C_OUTER_TRIALS / 60.0
@@ -597,3 +727,66 @@ def benchmark_c_projection(trials_per_path: int = 50) -> dict[str, Any]:
             "projected_full_c_minutes": projected_minutes,
             "budget_minutes": 30,
             "within_budget": projected_minutes <= 30.0}
+
+
+# --- §4.6 production reporting (166_s finding 4) --------------------------------
+
+INVERSION_RULE_ID = "grid1001-plus-phat-bisect80-outer-v1"
+
+
+def qualification_look_report(j_matrix: np.ndarray,
+                              k_matrix: np.ndarray, schedule: str, *,
+                              structural: bool) -> dict[str, Any]:
+    """The COMPLETE §4.6 per-look report for qualification surfaces
+    and D6-D8 records: the frozen decision record plus the descriptive
+    values the compact C counting rows omit — equal-cluster and
+    renderer-conditioned rates — and the explicit implementation/
+    version and inversion-rule binding.
+
+    Inputs are RENDERER-LEVEL (N x m) 0/1 matrices: `k_matrix[c, r]`
+    = renderer row r of cluster c is eligible; `j_matrix[c, r]` = that
+    row retains the old answer. Renderer rows travel with their
+    cluster by construction. No descriptive value replaces p_hat or
+    the interval (§4.6)."""
+    import scipy
+    j_matrix = np.asarray(j_matrix)
+    k_matrix = np.asarray(k_matrix)
+    if j_matrix.shape != k_matrix.shape or j_matrix.ndim != 2 or \
+            j_matrix.shape[1] != M:
+        raise InfrastructureError(f"renderer matrices must be (N, {M})")
+    if not (np.issubdtype(j_matrix.dtype, np.integer)
+            and np.issubdtype(k_matrix.dtype, np.integer)):
+        raise InfrastructureError("renderer matrices must be integer")
+    if np.any((k_matrix != 0) & (k_matrix != 1)) or \
+            np.any((j_matrix != 0) & (j_matrix != 1)):
+        raise InfrastructureError("renderer entries must be 0/1")
+    if np.any(j_matrix > k_matrix):
+        raise InfrastructureError("a row persists only if eligible")
+    j_rows = j_matrix.sum(axis=1).astype(np.int64)
+    k_rows = k_matrix.sum(axis=1).astype(np.int64)
+    record = look_decision(j_rows, k_rows, schedule,
+                           structural=structural)
+    # equal-cluster descriptive rate: mean over K_c > 0 of J_c / K_c
+    # (the frozen SECONDARY quantity; never replaces p_hat)
+    eligible = k_rows > 0
+    if int(eligible.sum()) > 0:
+        ratios = j_rows[eligible] / k_rows[eligible]
+        equal_cluster = repr(float(ratios.mean()))
+    else:
+        equal_cluster = "n/a"
+    from .types import RENDERER_IDS
+    renderer_rates = {
+        renderer: {"J": int(j_matrix[:, idx].sum()),
+                   "K": int(k_matrix[:, idx].sum())}
+        for idx, renderer in enumerate(RENDERER_IDS)}
+    record.update({
+        "equal_cluster_rate": equal_cluster,
+        "eligible_cluster_count": int(eligible.sum()),
+        "renderer_rates": renderer_rates,
+        "student_t_impl": am.STUDENT_T_IMPL,
+        "scipy_version": scipy.__version__,
+        "numpy_version": np.__version__,
+        "inversion_rule": INVERSION_RULE_ID,
+        "bisection_iterations": am.BISECTION_ITERATIONS,
+    })
+    return record
