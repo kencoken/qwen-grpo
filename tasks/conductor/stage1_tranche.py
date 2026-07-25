@@ -605,6 +605,7 @@ def aggregate_amend1_verdict(a_artifact: Mapping[str, Any],
     if bundle.get("environment_manifest_sha256") != env_sha:
         raise TrancheError(
             "bundle does not bind this environment manifest")
+    am.check_bundle_env_provenance(bundle, env_manifest)
 
     reg = expected_result_keys()
     a = load_artifact(a_artifact, "A",
@@ -709,6 +710,32 @@ A_BUDGET_SECONDS = 30 * 60
 D68_BUDGET_SECONDS = 30 * 60
 TOTAL_BUDGET_SECONDS = 12 * 3600
 
+# 175_s finding 1: the FROZEN pre-lock measured per-outer literal
+# (§5.4 10,000-inner worst-case benchmark, 173_f §3 item 3) CONTROLS
+# the formal D1-D5 deadline; the live benchmark at execution is a
+# persisted SANITY check only.
+MEASURED_SECONDS_PER_OUTER_X1E6 = 951_551
+D_SCENARIO_DEADLINE_SECONDS = (
+    SCENARIO_ABORT_FACTOR * MEASURED_SECONDS_PER_OUTER_X1E6
+    * sv.COVERAGE_OUTER_TRIALS) // 1_000_000          # 19,031 s
+BENCHMARK_SANITY_FACTOR = 4
+
+
+def benchmark_sanity_check(measured_seconds_per_outer: float) -> None:
+    """174_f §6 / 175_s finding 1: an execution-time measurement
+    grossly inconsistent with the frozen literal — outside the
+    INCLUSIVE band [literal/4, literal*4] — is an infrastructure
+    signal to abort and investigate, never grounds to proceed or to
+    move the frozen deadline."""
+    frozen = MEASURED_SECONDS_PER_OUTER_X1E6 / 1e6
+    lo = frozen / BENCHMARK_SANITY_FACTOR
+    hi = frozen * BENCHMARK_SANITY_FACTOR
+    if not lo <= measured_seconds_per_outer <= hi:
+        raise TrancheError(
+            f"live worst-case benchmark {measured_seconds_per_outer!r}"
+            f" s/outer outside the sanity band [{lo!r}, {hi!r}] around"
+            f" the frozen literal — infrastructure abort (175_s)")
+
 
 def _d_scenario_deadline(base_deadline: float, total_elapsed: float,
                          d68_elapsed: float | None) -> float:
@@ -758,6 +785,7 @@ def run_amend1_tranche(bundle: Mapping[str, Any],
             env["execution_manifest_sha256"]:
         raise TrancheError("bundle does not bind the current "
                            "environment manifest")
+    am.check_bundle_env_provenance(bundle, env)
     out_dir = am.claim_run_root(am.AMEND1_VALIDATION_RUN_ROOT)
 
     record: dict[str, Any] = {"status": "running", "stages": [],
@@ -779,13 +807,18 @@ def run_amend1_tranche(bundle: Mapping[str, Any],
         det = run_deterministic_equivalence_set(seed_registry)
         _persist("deterministic_equivalence", det)
 
+        # 175_s finding 1: the FROZEN literal controls the formal
+        # deadline; the live measurement is persisted and
+        # sanity-banded only
         bench = sv.benchmark_worst_case()
-        d_deadline = SCENARIO_ABORT_FACTOR * \
-            bench["seconds_per_outer_trial"] * sv.COVERAGE_OUTER_TRIALS
+        benchmark_sanity_check(bench["seconds_per_outer_trial"])
+        d_deadline = float(D_SCENARIO_DEADLINE_SECONDS)
         _persist("benchmark", {
             "seconds_per_outer_trial_x1e6":
                 int(bench["seconds_per_outer_trial"] * 1e6),
-            "d_scenario_deadline_seconds": int(d_deadline)})
+            "frozen_seconds_per_outer_x1e6":
+                MEASURED_SECONDS_PER_OUTER_X1E6,
+            "d_scenario_deadline_seconds": D_SCENARIO_DEADLINE_SECONDS})
 
         a_started = time.monotonic()
         a_results: dict[str, dict[str, int]] = {}
@@ -977,6 +1010,7 @@ def finalize_amend1_run(bundle: Mapping[str, Any],
         if validate_env_manifest(persisted_env) != env_sha:
             raise TrancheError(
                 f"{dir_} env manifest is not the one the bundle binds")
+        am.check_bundle_env_provenance(bundle, persisted_env)
         run_record = json.loads(_read(dir_, "run_record.json"))
         if run_record.get("status") != "complete":
             raise TrancheError(

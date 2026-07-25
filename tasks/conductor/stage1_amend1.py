@@ -709,3 +709,86 @@ def current_git_commit() -> str:
     return subprocess.run(["git", "rev-parse", "HEAD"],
                           capture_output=True, text=True,
                           check=True).stdout.strip()
+
+
+def check_bundle_env_provenance(bundle: Mapping[str, Any],
+                                env: Mapping[str, Any]) -> None:
+    """175_s finding 2: every consumer that holds BOTH the bundle and
+    a VALIDATED environment manifest cross-checks the git/source
+    provenance — a bundle whose commit or source digest disagrees
+    with the environment it claims to bind refuses."""
+    if bundle.get("git_commit") != env.get("git_commit"):
+        raise InfrastructureError(
+            "bundle git_commit != the validated environment "
+            "manifest's git_commit (175_s)")
+    if bundle.get("source_digest") != env.get("stage1_source_sha256"):
+        raise InfrastructureError(
+            "bundle source_digest != the validated environment "
+            "manifest's stage1_source_sha256 (175_s)")
+
+
+def build_lock_bundle(*, prereg_path: Path | str,
+                      lock_record_path: Path | str,
+                      allow_dirty: bool = False,
+                      _support_ids=None) -> tuple[dict[str, Any],
+                                                  dict[str, int],
+                                                  dict[str, Any]]:
+    """The ONE formal lock-time constructor (175_s finding 2): every
+    provenance field is DERIVED from bytes or repository state, never
+    caller-typed —
+
+    - `amendment_prereg_sha256`: SHA-256 of the reviewed successor
+      preregistration file's bytes;
+    - `lock_record_sha256`: SHA-256 of the COMMITTED lock record's
+      bytes (the lock record is committed first; nothing is written
+      back into it — the bundle exists only in the run roots);
+    - `git_commit`: the current HEAD (a dirty tree refuses through
+      the environment manifest unless `allow_dirty`, which formal
+      locks never pass);
+    - `source_digest`: `stage1_source_digest()` recomputed now;
+    - `environment_manifest_sha256`: a freshly BUILT and validated
+      manifest;
+    - the registry trio: rederived from the AUTHORITATIVE support ids
+      (`build_smoke_rows`), verified canonical (`_support_ids` is a
+      test-only injection point).
+
+    Returns (bundle, seed_registry, env_manifest); the bundle has
+    already passed `validate_execution_bundle` and the env
+    provenance cross-check."""
+    from .stage1_manifest import (build_stage1_env_manifest,
+                                  stage1_source_digest,
+                                  validate_env_manifest)
+    env = build_stage1_env_manifest(allow_dirty=allow_dirty)
+    validate_env_manifest(env)
+    if _support_ids is None:
+        from .grpo_task import build_smoke_rows
+        _support_ids = sorted(row["observation_id"]
+                              for row in build_smoke_rows())
+    registry = finalize_seed_registry(_support_ids)
+    verify_registry_canonical(registry)
+    fields = {
+        "amendment_prereg_sha256": hashlib.sha256(
+            Path(prereg_path).read_bytes()).hexdigest(),
+        "lock_record_sha256": hashlib.sha256(
+            Path(lock_record_path).read_bytes()).hexdigest(),
+        "git_commit": current_git_commit(),
+        "source_digest": stage1_source_digest(),
+        "environment_manifest_sha256":
+            env["execution_manifest_sha256"],
+        "v1_evidence_manifest_sha256": V1_EVIDENCE_MANIFEST_SHA256,
+        "scenario_grid_sha256": scenario_grid_digest(),
+        "request_contract_sha256": request_contract_digest(),
+        "artifact_schema_sha256": artifact_schema_digest(),
+        "expected_file_set_sha256": expected_file_set_digest(),
+        "prompt_sha256s": [stage1.PROMPT_FEWSHOT_SHA256,
+                           stage1.PROMPT_SCHEMA_ONLY_SHA256],
+        "artifact_tags": [AMEND1_VALIDATION_TAG, AMEND1_REPLAY_TAG,
+                          AMEND1_ARTIFACT_TAG],
+        "run_roots": [AMEND1_VALIDATION_RUN_ROOT,
+                      AMEND1_REPLAY_RUN_ROOT],
+        "attempt_id": ATTEMPT_ID,
+    }
+    bundle = build_execution_bundle(fields, seed_registry=registry)
+    validate_execution_bundle(bundle, seed_registry=registry)
+    check_bundle_env_provenance(bundle, env)
+    return bundle, registry, env

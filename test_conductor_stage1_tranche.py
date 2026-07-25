@@ -23,12 +23,13 @@ from tasks.conductor.types import InfrastructureError
 FEW = sr.REPLAY_CONTRACT["prompt_fewshot_sha256"]
 SO = sr.REPLAY_CONTRACT["prompt_schema_only_sha256"]
 
-def _env_manifest():
+def _env_manifest(git_commit="t" * 40):
     import hashlib
     from tasks.conductor.profiles import canonical_json
     from tasks.conductor.stage1_manifest import (stage1_source_digest,
                                                  stage1_source_files)
-    body = {"manifest": "stage1-environment-v2", "git_commit": "t" * 40,
+    body = {"manifest": "stage1-environment-v2",
+            "git_commit": git_commit,
             "git_dirty": 0, "uv_lock_sha256": "u" * 64,
             "stage1_source_sha256": stage1_source_digest(),
             "stage1_source_files": list(stage1_source_files()),
@@ -302,11 +303,14 @@ def _amend1_bundle(registry=None):
 
 
 def _bundle_fields_amend1():
+    from tasks.conductor.stage1_manifest import stage1_source_digest
+    # git/source provenance must agree with the ENV fixture — the
+    # 175_s cross-check refuses mismatches at every consumer
     return {
         "amendment_prereg_sha256": "a" * 64,
         "lock_record_sha256": "b" * 64,
-        "git_commit": "c" * 40,
-        "source_digest": "d" * 64,
+        "git_commit": "t" * 40,
+        "source_digest": stage1_source_digest(),
         "environment_manifest_sha256": ENV["execution_manifest_sha256"],
         "v1_evidence_manifest_sha256":
             am_mod.V1_EVIDENCE_MANIFEST_SHA256,
@@ -885,16 +889,19 @@ def test_finalize_amend1_run_fail_closed(tmp_path):
 
 def _amend1_replay_setup(tmp_path, monkeypatch):
     import tasks.conductor.stage1_manifest as sm
+    # bundle fields derive the live source digest (git) — build them
+    # BEFORE leaving the repository working directory
+    fields = _bundle_fields_amend1()
+    bundle = am_mod.build_execution_bundle(fields,
+                                           seed_registry=_REGISTRY_S)
+    b = _b_evidence()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sm, "build_stage1_env_manifest",
                         lambda allow_dirty=False: dict(ENV))
-    bundle = am_mod.build_execution_bundle(_bundle_fields_amend1(),
-                                           seed_registry=_REGISTRY_S)
-    b = _b_evidence()
     surface, rows, rr = b["loader"]()
     inputs = {"surface": surface, "rows": rows, "messages": {},
               "rr_hashes": rr, "tokenizer": None}
-    return bundle, inputs, b
+    return bundle, inputs, b, fields
 
 
 def test_run_amend1_replay_success(tmp_path, monkeypatch):
@@ -902,7 +909,7 @@ def test_run_amend1_replay_success(tmp_path, monkeypatch):
     # amended root/tag, registered-seed consumption end-to-end
     from pathlib import Path
     repo_root = Path.cwd()
-    bundle, inputs, b = _amend1_replay_setup(tmp_path, monkeypatch)
+    bundle, inputs, b, _ = _amend1_replay_setup(tmp_path, monkeypatch)
     exec_sha = bundle["execution_bundle_sha256"]
     monkeypatch.setattr(sr, "_build_replay_model", lambda: None)
     seen = []
@@ -964,7 +971,8 @@ def test_run_amend1_replay_success(tmp_path, monkeypatch):
 
 
 def test_run_amend1_replay_aborts_and_refusals(tmp_path, monkeypatch):
-    bundle, inputs, _ = _amend1_replay_setup(tmp_path, monkeypatch)
+    bundle, inputs, _, fields = _amend1_replay_setup(tmp_path,
+                                                     monkeypatch)
 
     # registry/support mismatch refuses BEFORE claiming the root
     rows2 = dict(inputs["rows"])
@@ -999,9 +1007,154 @@ def test_run_amend1_replay_aborts_and_refusals(tmp_path, monkeypatch):
     tampered = dict(_REGISTRY_S)
     tampered[next(iter(am_mod.DETSET_KEYS))] ^= 1
     evil_bundle = am_mod.build_execution_bundle(
-        _bundle_fields_amend1(), seed_registry=tampered)
+        dict(fields), seed_registry=tampered)
     with pytest.raises(InfrastructureError, match="canonical"):
         sr.run_amend1_replay(evil_bundle, tampered, _inputs=inputs)
+
+
+# --- 175_s findings 1-3: lock-readiness probes -------------------------------------
+
+def test_frozen_deadline_literal_controls_and_sanity_band():
+    # 175_s finding 1: the FROZEN literal is source, the deadline
+    # derives from it, and the live-benchmark band is INCLUSIVE
+    assert st.MEASURED_SECONDS_PER_OUTER_X1E6 == 951_551
+    assert st.D_SCENARIO_DEADLINE_SECONDS == 19_031
+    frozen = st.MEASURED_SECONDS_PER_OUTER_X1E6 / 1e6
+    st.benchmark_sanity_check(frozen)
+    st.benchmark_sanity_check(frozen / st.BENCHMARK_SANITY_FACTOR)
+    st.benchmark_sanity_check(frozen * st.BENCHMARK_SANITY_FACTOR)
+    with pytest.raises(st.TrancheError, match="sanity band"):
+        st.benchmark_sanity_check(
+            frozen / st.BENCHMARK_SANITY_FACTOR - 1e-9)
+    with pytest.raises(st.TrancheError, match="sanity band"):
+        st.benchmark_sanity_check(
+            frozen * st.BENCHMARK_SANITY_FACTOR + 1e-6)
+
+
+def test_bundle_env_provenance_cross_check():
+    # 175_s finding 2: consumers refuse a bundle whose git/source
+    # provenance disagrees with the VALIDATED environment manifest,
+    # even though the bundle itself is format-valid and self-hashed
+    fields = dict(_bundle_fields_amend1(), git_commit="u" * 40)
+    bundle = am_mod.build_execution_bundle(fields,
+                                           seed_registry=_REGISTRY_S)
+    _, a, c, d, b = _amend1_artifacts()
+    exec_sha = bundle["execution_bundle_sha256"]
+    a2 = st.finalize_artifact("A", exec_sha,
+                              {k: dict(v) for k, v
+                               in a["results"].items()},
+                              tag=am_mod.AMEND1_ARTIFACT_TAG)
+    with pytest.raises(InfrastructureError, match="git_commit"):
+        st.aggregate_amend1_verdict(
+            a2, c, d, b, env_manifest=ENV, bundle=bundle,
+            seed_registry=_REGISTRY_S, b_pinned_loader=b["loader"])
+    with pytest.raises(InfrastructureError, match="source_digest"):
+        am_mod.check_bundle_env_provenance(
+            dict(_bundle_fields_amend1(), source_digest="d" * 64), ENV)
+
+
+def test_build_lock_bundle_derives_everything(tmp_path, monkeypatch):
+    # 175_s finding 2: the formal lock-time constructor derives every
+    # provenance field from bytes/repository state — no caller-typed
+    # hashes exist in its signature
+    import hashlib
+    import inspect
+    import tasks.conductor.stage1_manifest as sm
+    head = am_mod.current_git_commit()
+    env = _env_manifest(git_commit=head)
+    monkeypatch.setattr(sm, "build_stage1_env_manifest",
+                        lambda allow_dirty=False: dict(env))
+    prereg = tmp_path / "prereg.md"
+    prereg.write_bytes(b"PREREG BYTES")
+    lock = tmp_path / "lock.md"
+    lock.write_bytes(b"LOCK BYTES")
+    bundle, registry, env_out = am_mod.build_lock_bundle(
+        prereg_path=prereg, lock_record_path=lock,
+        _support_ids=sorted(_support_rows()))
+    assert bundle["amendment_prereg_sha256"] == \
+        hashlib.sha256(b"PREREG BYTES").hexdigest()
+    assert bundle["lock_record_sha256"] == \
+        hashlib.sha256(b"LOCK BYTES").hexdigest()
+    assert bundle["git_commit"] == head
+    assert bundle["source_digest"] == sm.stage1_source_digest()
+    assert bundle["environment_manifest_sha256"] == \
+        env["execution_manifest_sha256"]
+    assert bundle["seed_registry_entries"] == 49_342
+    am_mod.validate_execution_bundle(bundle, seed_registry=registry)
+    params = inspect.signature(am_mod.build_lock_bundle).parameters
+    assert "fields" not in params    # nothing caller-typed
+
+
+def test_archive_evidence_roundtrip_and_refusals(tmp_path):
+    # 175_s finding 3: the concrete archive command — byte copy of
+    # both roots, manifest, byte-for-byte verification, immutability
+    from tasks.conductor import stage1_amend1_run as sar
+    bundle, a, c, d, b = _amend1_artifacts()
+    val, rep = _write_amend1_run_dirs(tmp_path, bundle, a, c, d, b)
+    out = sar.archive_evidence(validation_dir=val, replay_dir=rep,
+                               evidence_parent=tmp_path / "evidence")
+    from pathlib import Path
+    dest = Path(out["evidence_dir"])
+    manifest = json.loads(
+        (dest / "evidence_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["execution_bundle_sha256"] == \
+        bundle["execution_bundle_sha256"]
+    assert manifest["validation_status"] == "complete"
+    n_val = len(list(val.iterdir()))
+    n_rep = len(list(rep.iterdir()))
+    assert out["files"] == n_val + n_rep
+    for rel, entry in manifest["files"].items():
+        assert (dest / rel).stat().st_size == entry["bytes"]
+    # immutable: refuses the existing destination
+    with pytest.raises(InfrastructureError, match="immutable"):
+        sar.archive_evidence(validation_dir=val, replay_dir=rep,
+                             evidence_parent=tmp_path / "evidence")
+    # a tampered persisted bundle refuses before any copy
+    val2 = tmp_path / "val2"
+    val2.mkdir()
+    evil = dict(bundle, git_commit="u" * 40)
+    (val2 / "execution_bundle_manifest.json").write_text(
+        json.dumps(evil), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="self-hash"):
+        sar.archive_evidence(validation_dir=val2, replay_dir=rep,
+                             evidence_parent=tmp_path / "evidence2")
+    # differing bundles across the two roots refuse
+    other = am_mod.build_execution_bundle(
+        dict(_bundle_fields_amend1(), lock_record_sha256="e" * 64),
+        seed_registry=_REGISTRY_S)
+    (val2 / "execution_bundle_manifest.json").write_text(
+        json.dumps(other), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="different"):
+        sar.archive_evidence(validation_dir=val2, replay_dir=rep,
+                             evidence_parent=tmp_path / "evidence2")
+
+
+def test_prelock_probe_recipe_and_lock_record_discovery(tmp_path,
+                                                        monkeypatch):
+    # 175_s finding 3: the committed §5.4 probe recipe is executable
+    # (tiny parameters here; the formal record uses the defaults)
+    from tasks.conductor import stage1_amend1_run as sar
+    out = sar.run_prelock_probes(n_cases=12, trials_per_path=2,
+                                 outer_trials=1)
+    assert out["reference_agreement"]["cases_checked"] >= 1
+    assert out["frozen_literal_x1e6"] == 951_551
+    assert out["frozen_d_scenario_deadline_seconds"] == 19_031
+    assert isinstance(out["measured_within_sanity_band"], bool)
+    assert "cpu_tranche_worst_case_bound_hours" in out
+    # the lock record is discovered from the repository and must be
+    # unique
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "plans" / "conductor").mkdir(parents=True)
+    with pytest.raises(InfrastructureError, match="exactly one"):
+        sar.locate_lock_record()
+    one = (tmp_path / "plans" / "conductor" /
+           "199_f_stage_1_amend1_lock.md")
+    one.write_text("lock", encoding="utf-8")
+    assert sar.locate_lock_record() == one.relative_to(tmp_path)
+    (tmp_path / "plans" / "conductor" /
+     "200_f_stage_1_amend1_lock.md").write_text("x", encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="exactly one"):
+        sar.locate_lock_record()
 
 
 def test_run_replay_finalization_failure_writes_aborted(tmp_path,

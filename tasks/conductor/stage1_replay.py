@@ -798,6 +798,7 @@ def run_amend1_replay(bundle: Mapping[str, Any],
             env["execution_manifest_sha256"]:
         raise InfrastructureError(
             "bundle does not bind the current environment manifest")
+    am.check_bundle_env_provenance(bundle, env)
 
     inputs = _inputs or _load_replay_inputs_full()
     surface, rows = inputs["surface"], inputs["rows"]
