@@ -291,9 +291,14 @@ def test_load_rejects_mixed_executions():
 
 # --- fail-closed aggregate verdict -------------------------------------------------
 
-def _amend1_bundle():
-    return am_mod.build_execution_bundle(_bundle_fields_amend1(),
-                                         seed_registry=_REGISTRY_A)
+def _amend1_bundle(registry=None):
+    # 171_s finding 1: the aggregate binds B evidence to the support
+    # implied by the registry's B keys, so the canonical fixture
+    # registry is the one over the ACTUAL support ids (_REGISTRY_S)
+    return am_mod.build_execution_bundle(
+        _bundle_fields_amend1(),
+        seed_registry=registry if registry is not None
+        else _REGISTRY_S)
 
 
 def _bundle_fields_amend1():
@@ -320,9 +325,9 @@ def _bundle_fields_amend1():
     }
 
 
-def _amend1_artifacts(c_pass=True, d_pass=True, b_k=30):
+def _amend1_artifacts(c_pass=True, d_pass=True, b_k=30, registry=None):
     from tasks.conductor import stage1_persistence as sp_mod
-    bundle = _amend1_bundle()
+    bundle = _amend1_bundle(registry)
     exec_sha = bundle["execution_bundle_sha256"]
     reg = st.expected_result_keys()
     a_res = {k: {"pass_count": 9_500, "fail_count": 0,
@@ -367,7 +372,7 @@ def test_amend1_verdict_confirm_c2_provisional():
     bundle, a, c, d, b = _amend1_artifacts()
     v = st.aggregate_amend1_verdict(
         a, c, d, b, env_manifest=ENV, bundle=bundle,
-        seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
+        seed_registry=_REGISTRY_S, b_pinned_loader=b["loader"])
     assert v["decision"] == "confirm_c2_provisional"
     assert v["C2_preCE1_available"] is True
     assert v["B_supports_C2"] is True
@@ -383,7 +388,7 @@ def test_amend1_verdict_c1_only_on_not_demonstrated():
                     tag=am_mod.AMEND1_REPLAY_TAG)
     v = st.aggregate_amend1_verdict(
         a, c, d, b, env_manifest=ENV, bundle=bundle,
-        seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
+        seed_registry=_REGISTRY_S, b_pinned_loader=b["loader"])
     assert v["decision"] == "confirm_c1_only"
     assert v["C2_preCE1_available"] is False
     assert v["B_supports_C2"] is False
@@ -395,7 +400,7 @@ def test_amend1_verdict_scientific_stop():
     bundle, a, c, d, b = _amend1_artifacts(c_pass=False)
     v = st.aggregate_amend1_verdict(
         a, c, d, b, env_manifest=ENV, bundle=bundle,
-        seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
+        seed_registry=_REGISTRY_S, b_pinned_loader=b["loader"])
     assert v["decision"] == "scientific_stop"
     assert v["C_hard_path_failures"]
     # 169_s finding 6: B support alone can never make C2 available on
@@ -406,7 +411,7 @@ def test_amend1_verdict_scientific_stop():
     bundle2, a2, c2, d2, b2 = _amend1_artifacts(d_pass=False)
     v2 = st.aggregate_amend1_verdict(
         a2, c2, d2, b2, env_manifest=ENV, bundle=bundle2,
-        seed_registry=_REGISTRY_A, b_pinned_loader=b2["loader"])
+        seed_registry=_REGISTRY_S, b_pinned_loader=b2["loader"])
     assert v2["decision"] == "scientific_stop"
     assert len(v2["D_failing"]) == 8
 
@@ -422,7 +427,7 @@ def test_amend1_verdict_infrastructure_abort():
     with pytest.raises(InfrastructureError):
         st.aggregate_amend1_verdict(
             a, c, d, tampered, env_manifest=ENV, bundle=bundle,
-            seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
+            seed_registry=_REGISTRY_S, b_pinned_loader=b["loader"])
     # a bundle validated against the wrong registry refuses
     other = am_mod.finalize_seed_registry(
         [f"z{i:02d}" for i in range(18)])
@@ -443,7 +448,7 @@ def test_amend1_verdict_infrastructure_abort():
                               tag=am_mod.AMEND1_ARTIFACT_TAG)
     v3 = st.aggregate_amend1_verdict(
         a3, c3, d3, b3, env_manifest=ENV, bundle=bundle3,
-        seed_registry=_REGISTRY_A, b_pinned_loader=b3["loader"])
+        seed_registry=_REGISTRY_S, b_pinned_loader=b3["loader"])
     assert "D8_branch_support" in v3["D_failing"]
     assert v3["decision"] == "scientific_stop"
 
@@ -654,6 +659,18 @@ def test_run_replay_model_load_failure_writes_aborted(tmp_path,
 _REGISTRY_S = am_mod.finalize_seed_registry(sorted(_support_rows()))
 
 
+def test_amend1_verdict_refuses_foreign_support_registry():
+    # 171_s finding 1: 170_f's aggregate fixtures demonstrated the
+    # bypass — a bundle/registry over o00..o17 while B is scored over
+    # different render-instance ids, and confirmation succeeded. The
+    # same inputs must now refuse at CONSUMPTION.
+    bundle, a, c, d, b = _amend1_artifacts(registry=_REGISTRY_A)
+    with pytest.raises(InfrastructureError, match="support"):
+        st.aggregate_amend1_verdict(
+            a, c, d, b, env_manifest=ENV, bundle=bundle,
+            seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
+
+
 def test_amend1_verdict_refuses_legacy_tagged_b():
     # 169_s finding 1: a legacy-tagged B artifact refuses at the
     # amended boundary even when it carries the bundle identity
@@ -662,7 +679,7 @@ def test_amend1_verdict_refuses_legacy_tagged_b():
     with pytest.raises(st.TrancheError, match="tag"):
         st.aggregate_amend1_verdict(
             a, c, d, legacy, env_manifest=ENV, bundle=bundle,
-            seed_registry=_REGISTRY_A, b_pinned_loader=legacy["loader"])
+            seed_registry=_REGISTRY_S, b_pinned_loader=legacy["loader"])
 
 
 def test_amend1_branch_telemetry_exact_set():
@@ -686,7 +703,7 @@ def test_amend1_branch_telemetry_exact_set():
     with pytest.raises(st.TrancheError, match="exact per-look"):
         st.aggregate_amend1_verdict(
             a, c, d_missing, b, env_manifest=ENV, bundle=bundle,
-            seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
+            seed_registry=_REGISTRY_S, b_pinned_loader=b["loader"])
     extra = dict(branch)
     extra["D1_seq_null_ordinary_div3|look100"] = {
         "zero_branch": 0, "positive_branch": 5_000,
@@ -697,7 +714,7 @@ def test_amend1_branch_telemetry_exact_set():
     with pytest.raises(st.TrancheError, match="exact per-look"):
         st.aggregate_amend1_verdict(
             a, c, d_extra, b, env_manifest=ENV, bundle=bundle,
-            seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
+            seed_registry=_REGISTRY_S, b_pinned_loader=b["loader"])
 
 
 def test_registered_seed_consumption():
@@ -759,8 +776,17 @@ def _write_amend1_run_dirs(tmp_path, bundle, a, c, d, b):
     _w(val, "artifact_A.json", a)
     _w(val, "artifact_C.json", c)
     _w(val, "artifact_D.json", d)
-    for d_id in am_mod.AMEND1_D_IDS:
-        _w(val, f"partial_D_{d_id}.json", {"scenario": d_id})
+    for scen in st.D_SCENARIOS:
+        sid = scen["id"]
+        partial = {"scenario": sid,
+                   "execution_bundle_sha256":
+                       bundle["execution_bundle_sha256"],
+                   **d["results"][sid]}
+        if scen["kind"] == "persistence":
+            partial["branch_counts"] = {
+                k: v for k, v in d["branch_counts"].items()
+                if k.startswith(f"{sid}|")}
+        _w(val, f"partial_D_{sid}.json", partial)
     _w(val, "run_record.json", {"status": "complete", "stages": []})
     _w(rep, "execution_bundle_manifest.json", dict(bundle))
     _w(rep, "env_manifest.json", ENV)
@@ -777,7 +803,7 @@ def test_finalize_amend1_run(tmp_path):
     # aggregate, updates run_record.json, and checks both exact sets
     bundle, a, c, d, b = _amend1_artifacts()
     val, rep = _write_amend1_run_dirs(tmp_path, bundle, a, c, d, b)
-    v = st.finalize_amend1_run(bundle, _REGISTRY_A,
+    v = st.finalize_amend1_run(bundle, _REGISTRY_S,
                                b_pinned_loader=b["loader"],
                                validation_dir=val, replay_dir=rep)
     assert v["decision"] == "confirm_c2_provisional"
@@ -791,6 +817,12 @@ def test_finalize_amend1_run(tmp_path):
     # the completed lifecycle satisfies the frozen contract exactly
     am_mod.verify_run_file_set(val, am_mod.AMEND1_VALIDATION_RUN_ROOT)
     am_mod.verify_run_file_set(rep, am_mod.AMEND1_REPLAY_RUN_ROOT)
+    # 171_s finding 2: a run finalizes ONCE — the second call refuses
+    # at preflight rather than overwriting the aggregate
+    with pytest.raises(st.TrancheError, match="already holds"):
+        st.finalize_amend1_run(bundle, _REGISTRY_S,
+                               b_pinned_loader=b["loader"],
+                               validation_dir=val, replay_dir=rep)
 
 
 def test_finalize_amend1_run_fail_closed(tmp_path):
@@ -800,7 +832,7 @@ def test_finalize_amend1_run_fail_closed(tmp_path):
     (rep / "run_record.json").write_text(
         json.dumps({"status": "aborted"}), encoding="utf-8")
     with pytest.raises(st.TrancheError, match="complete"):
-        st.finalize_amend1_run(bundle, _REGISTRY_A,
+        st.finalize_amend1_run(bundle, _REGISTRY_S,
                                b_pinned_loader=b["loader"],
                                validation_dir=val, replay_dir=rep)
     (rep / "run_record.json").write_text(
@@ -809,26 +841,44 @@ def test_finalize_amend1_run_fail_closed(tmp_path):
     other_fields = dict(_bundle_fields_amend1(),
                         lock_record_sha256="e" * 64)
     other = am_mod.build_execution_bundle(other_fields,
-                                          seed_registry=_REGISTRY_A)
+                                          seed_registry=_REGISTRY_S)
     (val / "execution_bundle_manifest.json").write_text(
         json.dumps(dict(other), indent=1), encoding="utf-8")
     with pytest.raises(st.TrancheError, match="bundle"):
-        st.finalize_amend1_run(bundle, _REGISTRY_A,
+        st.finalize_amend1_run(bundle, _REGISTRY_S,
                                b_pinned_loader=b["loader"],
                                validation_dir=val, replay_dir=rep)
     (val / "execution_bundle_manifest.json").write_text(
         json.dumps(dict(bundle), indent=1), encoding="utf-8")
-    # a stray file breaks the exact-set check AFTER a clean aggregate
+    # 171_s finding 2: a stray file refuses at PREFLIGHT — before any
+    # mutation, so no apparently-successful aggregate is left behind
     (val / "stray.json").write_text("{}", encoding="utf-8")
-    with pytest.raises(InfrastructureError, match="extra"):
-        st.finalize_amend1_run(bundle, _REGISTRY_A,
+    with pytest.raises(st.TrancheError, match="extra"):
+        st.finalize_amend1_run(bundle, _REGISTRY_S,
                                b_pinned_loader=b["loader"],
                                validation_dir=val, replay_dir=rep)
+    assert not (val / "aggregate.json").exists()
     (val / "stray.json").unlink()
-    # a missing artifact refuses before any aggregation
+    # a partial-D record that does not reconcile with artifact_D
+    # refuses (tampered error count), still pre-mutation
+    sid = "D1_seq_null_ordinary_div3"
+    partial = json.loads((val / f"partial_D_{sid}.json").read_text(
+        encoding="utf-8"))
+    partial["error_count"] += 1
+    (val / f"partial_D_{sid}.json").write_text(
+        json.dumps(partial, indent=1), encoding="utf-8")
+    with pytest.raises(st.TrancheError, match="reconcile"):
+        st.finalize_amend1_run(bundle, _REGISTRY_S,
+                               b_pinned_loader=b["loader"],
+                               validation_dir=val, replay_dir=rep)
+    assert not (val / "aggregate.json").exists()
+    partial["error_count"] -= 1
+    (val / f"partial_D_{sid}.json").write_text(
+        json.dumps(partial, indent=1), encoding="utf-8")
+    # a missing artifact refuses at preflight too
     (val / "artifact_D.json").unlink()
     with pytest.raises(st.TrancheError, match="missing"):
-        st.finalize_amend1_run(bundle, _REGISTRY_A,
+        st.finalize_amend1_run(bundle, _REGISTRY_S,
                                b_pinned_loader=b["loader"],
                                validation_dir=val, replay_dir=rep)
 
@@ -891,13 +941,26 @@ def test_run_amend1_replay_success(tmp_path, monkeypatch):
     summary = sr.verify_replay_evidence(
         art, env_manifest=ENV, replay_manifest=manifest,
         raw_completions_text=raw_text, pinned_loader=b["loader"],
-        execution_identity=exec_sha)
+        execution_identity=exec_sha, seed_registry=_REGISTRY_S)
     assert set(summary["directions"]) == {"2", "3"}
-    # ...and refuses at the LEGACY boundary (tag/identity mismatch)
+    # ...refuses at the LEGACY boundary (tag/identity mismatch)...
     with pytest.raises(st.TrancheError, match="tag"):
         sr.verify_replay_evidence(
             art, env_manifest=ENV, replay_manifest=manifest,
             raw_completions_text=raw_text, pinned_loader=b["loader"])
+    # ...refuses amended consumption WITHOUT the registry (171_s)...
+    with pytest.raises(InfrastructureError, match="registry"):
+        sr.verify_replay_evidence(
+            art, env_manifest=ENV, replay_manifest=manifest,
+            raw_completions_text=raw_text, pinned_loader=b["loader"],
+            execution_identity=exec_sha)
+    # ...and refuses a registry implying a DIFFERENT support (171_s
+    # finding 1: the generation-time check repeats at consumption)
+    with pytest.raises(InfrastructureError, match="support"):
+        sr.verify_replay_evidence(
+            art, env_manifest=ENV, replay_manifest=manifest,
+            raw_completions_text=raw_text, pinned_loader=b["loader"],
+            execution_identity=exec_sha, seed_registry=_REGISTRY_A)
 
 
 def test_run_amend1_replay_aborts_and_refusals(tmp_path, monkeypatch):

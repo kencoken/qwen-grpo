@@ -354,7 +354,8 @@ def verify_replay_evidence(artifact: Mapping[str, Any], *,
                            replay_manifest: Mapping[str, Any],
                            raw_completions_text: str,
                            pinned_loader=None,
-                           execution_identity: str | None = None
+                           execution_identity: str | None = None,
+                           seed_registry: Mapping[str, int] | None = None
                            ) -> dict[str, Any]:
     """THE consuming boundary for B evidence (148_s finding 3; hardened
     per 151_s finding 2): the pinned surface, support rows and
@@ -374,15 +375,29 @@ def verify_replay_evidence(artifact: Mapping[str, Any], *,
     # (158_s §9.1) — the caller passes it, the env manifest is still
     # fully validated either way. The amended boundary also requires
     # the amend1 replay TAG, so a legacy-tagged artifact refuses
-    # (169_s finding 1).
+    # (169_s finding 1), AND the finalized registry, whose B keys must
+    # imply exactly the support the evidence is scored over (171_s
+    # finding 1: the same check the amended driver makes at
+    # generation time is repeated where persisted evidence is
+    # CONSUMED, closing the bundle→registry→support chain).
     exec_sha = execution_identity if execution_identity is not None \
         else env_sha
+    if execution_identity is not None and seed_registry is None:
+        raise InfrastructureError(
+            "amended B consumption requires the finalized seed "
+            "registry (171_s finding 1)")
     b = load_b_artifact(artifact, exec_sha,
                         tag=am.AMEND1_REPLAY_TAG
                         if execution_identity is not None else None)
 
     loader = pinned_loader or load_pinned_replay_inputs
     surface, support_rows, regenerated_rr = loader()
+    if seed_registry is not None and \
+            am._registry_support_ids(seed_registry) != \
+            sorted(support_rows):
+        raise InfrastructureError(
+            "the registry's B keys do not imply exactly the support "
+            "ids this evidence is scored over (171_s finding 1)")
     cell_of = {oid: row["cell_id"] for oid, row in support_rows.items()}
     derived_table = pair_table_from_surface(surface, cell_of)
     expected_manifest = build_replay_manifest(

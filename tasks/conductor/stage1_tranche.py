@@ -664,7 +664,8 @@ def aggregate_amend1_verdict(a_artifact: Mapping[str, Any],
         replay_manifest=b_evidence["replay_manifest"],
         raw_completions_text=b_evidence["raw_completions_text"],
         pinned_loader=b_pinned_loader,
-        execution_identity=exec_sha)     # the bundle identity (§9.1)
+        execution_identity=exec_sha,     # the bundle identity (§9.1)
+        seed_registry=seed_registry)     # support binding (171_s)
     directions = summary["directions"]
     if set(directions) != {"2", "3"}:
         raise TrancheError("B summary must cover exactly directions "
@@ -810,10 +811,22 @@ def run_amend1_tranche(bundle: Mapping[str, Any],
         a_art = finalize_artifact("A", exec_sha, a_results,
                                   tag=am.AMEND1_ARTIFACT_TAG)
         _persist("artifact_A", a_art)
+        # 171_s finding 2: every artifact is RELOADED from its
+        # persisted bytes through the same fail-closed loader the
+        # aggregate uses, before the run may complete
+        reg = expected_result_keys()
+
+        def _reload(name: str) -> dict[str, Any]:
+            return json.loads((out_dir / f"{name}.json").read_text(
+                encoding="utf-8"))
+        load_artifact(_reload("artifact_A"), "A",
+                      reg["A_position"] | reg["A_router"], exec_sha,
+                      tag=am.AMEND1_ARTIFACT_TAG)
 
         path_rows, marginal_rows = sp.run_amended_c(seed_registry)
         c_art = sp.build_c_artifact(exec_sha, path_rows, marginal_rows)
         _persist("artifact_C", c_art)
+        sp.load_amended_c_artifact(_reload("artifact_C"), exec_sha)
 
         d_results: dict[str, dict[str, int]] = {}
         d_branches: dict[str, dict[str, int]] = {}
@@ -850,6 +863,15 @@ def run_amend1_tranche(bundle: Mapping[str, Any],
                                      in sorted(d_branches.items())}},
             tag=am.AMEND1_ARTIFACT_TAG)
         _persist("artifact_D", d_art)
+        d_reloaded = load_artifact(_reload("artifact_D"), "D",
+                                   frozenset(am.AMEND1_D_IDS),
+                                   exec_sha,
+                                   tag=am.AMEND1_ARTIFACT_TAG)
+        am.validate_amend1_rows("D_branch",
+                                d_reloaded["branch_counts"])
+        if set(d_reloaded["branch_counts"]) != expected_branch_keys():
+            raise TrancheError("persisted D branch telemetry != the "
+                               "exact per-look key set")
 
         if time.monotonic() - started > TOTAL_BUDGET_SECONDS:
             raise TrancheError("the amended CPU tranche exceeded 12h")
@@ -876,21 +898,65 @@ def finalize_amend1_run(bundle: Mapping[str, Any],
                         b_pinned_loader=None,
                         validation_dir=None,
                         replay_dir=None) -> dict[str, Any]:
-    """The post-B finalizer (169_s finding 4): once BOTH runs exist
-    under the SAME execution bundle, reload and re-verify the persisted
-    evidence from disk, compute and persist `aggregate.json`, update
-    the existing `run_record.json`, and check both run roots against
-    the frozen §9.4 exact file sets. Returns the verdict the reviewed
-    §12 terminal decision consumes — nothing further is automated."""
+    """The post-B finalizer (169_s finding 4; hardened per 171_s
+    finding 2): once BOTH runs exist under the SAME execution bundle —
+
+    1. PREFLIGHT before any mutation: the replay root must hold its
+       exact frozen file set; the validation root must hold exactly
+       the frozen set MINUS `aggregate.json` (a present aggregate
+       means an earlier finalization — refuse rather than overwrite);
+    2. both persisted bundle manifests must equal the supplied
+       (validated) bundle; both env manifests are FULLY validated —
+       recomputed content hash, never a trusted field — and must be
+       the one manifest the bundle binds; both run records complete;
+    3. every `partial_D_*` record is reconciled against `artifact_D`
+       (scenario id, execution identity, error/trial counts, and —
+       persistence rows — exact per-scenario branch counts);
+    4. the evidence is reloaded through `aggregate_amend1_verdict`
+       (all loader/verifier gates re-run, B support bound to the
+       registry);
+    5. `aggregate.json` and the updated `run_record.json` are written
+       atomically (temp file + rename), then both roots are checked
+       against the frozen exact file sets.
+
+    Returns the verdict the reviewed §12 terminal decision consumes —
+    nothing further is automated."""
     import json
+    import os
     from pathlib import Path
+
+    from .stage1_manifest import validate_env_manifest
 
     val_dir = Path(validation_dir
                    if validation_dir is not None
                    else am.AMEND1_VALIDATION_RUN_ROOT)
     rep_dir = Path(replay_dir if replay_dir is not None
                    else am.AMEND1_REPLAY_RUN_ROOT)
-    am.validate_execution_bundle(bundle, seed_registry=seed_registry)
+    exec_sha = am.validate_execution_bundle(bundle,
+                                            seed_registry=seed_registry)
+    am.verify_registry_canonical(seed_registry)
+
+    # --- 1. preflight: nothing is written unless BOTH roots are in
+    # exactly the expected pre-aggregate state
+    am.verify_run_file_set(rep_dir, am.AMEND1_REPLAY_RUN_ROOT)
+    if (val_dir / "aggregate.json").exists():
+        raise TrancheError(
+            f"{val_dir} already holds aggregate.json — a run is "
+            "finalized once; refusing to overwrite")
+    expected_pre = set(
+        am.EXPECTED_RUN_FILES[am.AMEND1_VALIDATION_RUN_ROOT]) \
+        - {"aggregate.json"}
+    entries = list(val_dir.iterdir())
+    subdirs = sorted(p.name for p in entries if not p.is_file())
+    if subdirs:
+        raise TrancheError(
+            f"{val_dir}: unexpected non-file entries {subdirs}")
+    got = {p.name for p in entries}
+    if got != expected_pre:
+        raise TrancheError(
+            f"{val_dir}: pre-aggregate file set != the frozen "
+            f"contract (missing {sorted(expected_pre - got)}, "
+            f"extra {sorted(got - expected_pre)})")
 
     def _read(dir_: Path, name: str) -> str:
         path = dir_ / name
@@ -899,6 +965,7 @@ def finalize_amend1_run(bundle: Mapping[str, Any],
                                "frozen lifecycle is incomplete")
         return path.read_text(encoding="utf-8")
 
+    # --- 2. identity and completion gates
     env_sha = bundle["environment_manifest_sha256"]
     for dir_ in (val_dir, rep_dir):
         persisted = json.loads(
@@ -907,7 +974,7 @@ def finalize_amend1_run(bundle: Mapping[str, Any],
             raise TrancheError(
                 f"{dir_} was not produced under this execution bundle")
         persisted_env = json.loads(_read(dir_, "env_manifest.json"))
-        if persisted_env.get("execution_manifest_sha256") != env_sha:
+        if validate_env_manifest(persisted_env) != env_sha:
             raise TrancheError(
                 f"{dir_} env manifest is not the one the bundle binds")
         run_record = json.loads(_read(dir_, "run_record.json"))
@@ -921,6 +988,40 @@ def finalize_amend1_run(bundle: Mapping[str, Any],
     a = json.loads(_read(val_dir, "artifact_A.json"))
     c = json.loads(_read(val_dir, "artifact_C.json"))
     d = json.loads(_read(val_dir, "artifact_D.json"))
+
+    # --- 3. partial-D reconciliation against the finalized artifact
+    for scen in D_SCENARIOS:
+        sid = scen["id"]
+        partial = json.loads(_read(val_dir, f"partial_D_{sid}.json"))
+        expected_fields = {"scenario", "execution_bundle_sha256",
+                           "error_count", "trials"}
+        if scen["kind"] == "persistence":
+            expected_fields.add("branch_counts")
+        if set(partial) != expected_fields:
+            raise TrancheError(
+                f"partial_D_{sid}: field set {sorted(partial)} != "
+                f"expected {sorted(expected_fields)}")
+        if partial["scenario"] != sid or \
+                partial["execution_bundle_sha256"] != exec_sha:
+            raise TrancheError(
+                f"partial_D_{sid}: scenario/execution identity does "
+                "not match this run")
+        row = {"error_count": partial["error_count"],
+               "trials": partial["trials"]}
+        if row != d["results"].get(sid):
+            raise TrancheError(
+                f"partial_D_{sid}: counts do not reconcile with "
+                "artifact_D")
+        if scen["kind"] == "persistence":
+            scen_branches = {k: v for k, v
+                             in d.get("branch_counts", {}).items()
+                             if k.startswith(f"{sid}|")}
+            if partial["branch_counts"] != scen_branches:
+                raise TrancheError(
+                    f"partial_D_{sid}: branch counts do not reconcile "
+                    "with artifact_D")
+
+    # --- 4. the aggregate (all loader/verifier gates re-run)
     b_evidence = {
         "artifact": json.loads(_read(rep_dir, "artifact_B.json")),
         "replay_manifest": json.loads(
@@ -931,13 +1032,18 @@ def finalize_amend1_run(bundle: Mapping[str, Any],
         a, c, d, b_evidence, env_manifest=env, bundle=bundle,
         seed_registry=seed_registry, b_pinned_loader=b_pinned_loader)
 
-    (val_dir / "aggregate.json").write_text(
-        json.dumps(verdict, indent=1), encoding="utf-8")
+    # --- 5. atomic persistence, then the final exact-set check
     record = json.loads(_read(val_dir, "run_record.json"))
     record["stages"].append("aggregate")
     record["aggregate_decision"] = verdict["decision"]
-    (val_dir / "run_record.json").write_text(
-        json.dumps(record, indent=1), encoding="utf-8")
+
+    def _write_atomic(path: Path, obj: Any) -> None:
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(obj, indent=1), encoding="utf-8")
+        os.replace(tmp, path)
+
+    _write_atomic(val_dir / "aggregate.json", verdict)
+    _write_atomic(val_dir / "run_record.json", record)
 
     am.verify_run_file_set(val_dir, am.AMEND1_VALIDATION_RUN_ROOT)
     am.verify_run_file_set(rep_dir, am.AMEND1_REPLAY_RUN_ROOT)
