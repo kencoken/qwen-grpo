@@ -1,6 +1,6 @@
 Not ready to lock yet. The production launch and CPU-first bundle flow are fixed, but the archive boundary still has two defects.
 
-1. **[P1] Success archival accepts invalid finalized evidence.**  
+1. **[P1] Success archival accepts invalid finalized evidence.**
    [archive_evidence()](/Users/ken/Documents/Codex/2026-07-15/kencoken-qwen-grpo-https-github-com/review-stage1/tasks/conductor/stage1_amend1_run.py:297) checks provenance, statuses, and filenames, but never reloads the artifacts or re-derives the verdict. The new test explicitly writes `aggregate.json` as `{}`—alongside foreign environment/artifact fixtures—and successfully archives it at [test_conductor_stage1_tranche.py:1176](/Users/ken/Documents/Codex/2026-07-15/kencoken-qwen-grpo-https-github-com/review-stage1/test_conductor_stage1_tranche.py:1176).
 
    Extract a read-only finalized-run verifier from `finalize_amend1_run` and call it before success archival. It should:
