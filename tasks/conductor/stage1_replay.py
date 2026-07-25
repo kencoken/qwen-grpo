@@ -265,14 +265,17 @@ def build_replay_manifest(execution_manifest_sha256: str,
 
 
 def load_b_artifact(artifact: Mapping[str, Any],
-                    execution_manifest_sha256: str) -> dict[str, Any]:
+                    execution_manifest_sha256: str,
+                    tag: str | None = None) -> dict[str, Any]:
     """Structural B loader: content hash, execution identity, embedded
     pair table/meta, exact count-row key set, n == 256, count
     identities. STRUCTURAL ONLY — formal consumption goes through
     `verify_replay_evidence`, which re-derives the pair table from the
     pinned surface and reparses the raw completions (148_s finding 3);
-    this loader alone cannot authenticate the counts."""
-    from .stage1_tranche import load_artifact
+    this loader alone cannot authenticate the counts. `tag` defaults to
+    the v1 tag; the AMENDED boundary passes the amend1 replay tag so a
+    legacy artifact refuses there and vice versa (169_s finding 1)."""
+    from .stage1_tranche import TRANCHE_ARTIFACT_TAG, load_artifact
     for field in ("pair_table", "obs_meta", "replay_manifest_sha256",
                   "raw_completions_sha256"):
         if field not in artifact:
@@ -281,7 +284,9 @@ def load_b_artifact(artifact: Mapping[str, Any],
     expected = expected_count_keys(pair_table)
     return load_artifact(artifact, "B", expected,
                          execution_manifest_sha256,
-                         b_n=REPLAY_COMPLETIONS)
+                         b_n=REPLAY_COMPLETIONS,
+                         tag=tag if tag is not None
+                         else TRANCHE_ARTIFACT_TAG)
 
 
 def _sanitized_pair_table(pair_table: Mapping[str, Mapping[str, Any]]
@@ -361,15 +366,20 @@ def verify_replay_evidence(artifact: Mapping[str, Any], *,
     completions are hash-matched, accounted, and REPARSED to exact
     count reproduction. `pinned_loader` exists for tests only and
     defaults to the authoritative loader."""
+    from . import stage1_amend1 as am
     from .stage1_manifest import validate_env_manifest
     env_sha = validate_env_manifest(env_manifest)
     # v1 binds artifacts to the environment identity; the AMENDED
     # tranche binds every artifact to the execution-BUNDLE identity
     # (158_s §9.1) — the caller passes it, the env manifest is still
-    # fully validated either way
+    # fully validated either way. The amended boundary also requires
+    # the amend1 replay TAG, so a legacy-tagged artifact refuses
+    # (169_s finding 1).
     exec_sha = execution_identity if execution_identity is not None \
         else env_sha
-    b = load_b_artifact(artifact, exec_sha)
+    b = load_b_artifact(artifact, exec_sha,
+                        tag=am.AMEND1_REPLAY_TAG
+                        if execution_identity is not None else None)
 
     loader = pinned_loader or load_pinned_replay_inputs
     surface, support_rows, regenerated_rr = loader()
@@ -681,11 +691,14 @@ def run_replay(*, allow_dirty: bool = False,
 
 
 def _generate(model, tokenizer, rows, messages, pair_table, raw,
-              counts) -> None:
+              counts, *, seed_of=completion_seed) -> None:
     """The generation loop, isolated so the driver's abort handling
     wraps exactly the GPU work. Note the frozen RNG semantics: the
     GLOBAL CPU and CUDA RNG state is reset per singleton draw from the
-    preregistered seed — there is no per-draw generator object."""
+    preregistered seed — there is no per-draw generator object.
+    `seed_of` defaults to the frozen derivation; the AMENDED driver
+    passes a lookup into the verified-canonical registry so the seeds
+    consumed ARE the registered values (169_s finding 2)."""
     import torch
     from .parser import ActionSchemaError, parse_routing_action
     from .grpo_task import positional_to_semantic
@@ -702,7 +715,7 @@ def _generate(model, tokenizer, rows, messages, pair_table, raw,
                 # full unsigned 64-bit seed, EXACTLY as preregistered —
                 # no modulus (148_s finding 1); the pinned torch build
                 # accepts the full range
-                seed = completion_seed(oid, sha, i)
+                seed = seed_of(oid, sha, i)
                 torch.manual_seed(seed)
                 torch.cuda.manual_seed_all(seed)
                 with torch.no_grad():
@@ -731,4 +744,129 @@ def _generate(model, tokenizer, rows, messages, pair_table, raw,
             if pair is not None:
                 counts[key] = {"k2": k2, "k3": k3,
                                "n": REPLAY_COMPLETIONS}
+
+
+# --- the AMENDED GPU driver (158_s §9/§11; 169_s finding 1) -----------------------
+
+def run_amend1_replay(bundle: Mapping[str, Any],
+                      seed_registry: Mapping[str, int], *,
+                      allow_dirty: bool = False,
+                      _inputs: Mapping[str, Any] | None = None
+                      ) -> dict[str, Any]:
+    """The amended B entry point: the SAME frozen replay contract and
+    generation loop as `run_replay`, executed under the amend-once
+    identity layer —
+
+    - the common execution BUNDLE is validated against the FINALIZED
+      registry and its self-hash is the identity every manifest and
+      artifact binds (158_s §9.1);
+    - the registry is verified CANONICAL and its B keys must imply
+      exactly the authoritative support ids; the generation loop
+      consumes the REGISTERED seed values directly (169_s finding 2);
+    - the amended run root is claimed atomically and receives the
+      frozen §9.4 file set (bundle manifest included);
+    - the artifact carries the amend1 replay tag — a legacy artifact
+      refuses at the amended loader and vice versa.
+
+    Abort contract as in `run_replay` (154_s): once the `running`
+    record exists, everything from model construction through artifact
+    reload runs inside the abort handler."""
+    from . import stage1_amend1 as am
+    from .stage1_manifest import build_stage1_env_manifest
+    from .stage1_tranche import finalize_artifact
+
+    exec_sha = am.validate_execution_bundle(bundle,
+                                            seed_registry=seed_registry)
+    am.verify_registry_canonical(seed_registry)
+    env = build_stage1_env_manifest(allow_dirty=allow_dirty)
+    if bundle.get("environment_manifest_sha256") != \
+            env["execution_manifest_sha256"]:
+        raise InfrastructureError(
+            "bundle does not bind the current environment manifest")
+
+    inputs = _inputs or _load_replay_inputs_full()
+    surface, rows = inputs["surface"], inputs["rows"]
+    messages, rr_hashes = inputs["messages"], inputs["rr_hashes"]
+    tokenizer = inputs["tokenizer"]
+    if am._registry_support_ids(seed_registry) != sorted(rows):
+        raise InfrastructureError(
+            "the registry's B keys do not imply exactly the "
+            "authoritative support ids (169_s finding 1)")
+    cell_of = {oid: row["cell_id"] for oid, row in rows.items()}
+    pair_table = pair_table_from_surface(surface, cell_of)
+    obs_meta = observation_meta(rows)
+    manifest = build_replay_manifest(exec_sha, rows, rr_hashes,
+                                     pair_table)
+
+    def _registered_completion_seed(oid: str, sha: str, i: int) -> int:
+        value = seed_registry.get(f"B|{oid}|{sha}|{i}")
+        if value is None:
+            raise InfrastructureError(
+                f"no registered seed for B|{oid}|{sha}|{i}")
+        return value
+
+    import time as _time
+    out_dir = am.claim_run_root(am.AMEND1_REPLAY_RUN_ROOT)
+    (out_dir / "execution_bundle_manifest.json").write_text(
+        json.dumps(dict(bundle), indent=1), encoding="utf-8")
+    (out_dir / "env_manifest.json").write_text(
+        json.dumps(env, indent=1), encoding="utf-8")
+    (out_dir / "replay_manifest.json").write_text(
+        json.dumps(manifest, indent=1), encoding="utf-8")
+    record: dict[str, Any] = {"status": "running",
+                              "attempt_id": am.ATTEMPT_ID,
+                              "execution_bundle_sha256": exec_sha,
+                              "started_unix": int(_time.time())}
+    started = _time.monotonic()
+    (out_dir / "run_record.json").write_text(
+        json.dumps(record, indent=1), encoding="utf-8")
+
+    def _finish(status: str, error_text: str | None = None) -> None:
+        record["status"] = status
+        record["wall_seconds"] = int(_time.monotonic() - started)
+        if error_text:
+            record["error"] = error_text
+        (out_dir / "run_record.json").write_text(
+            json.dumps(record, indent=1), encoding="utf-8")
+
+    try:
+        model = _build_replay_model()
+        counts: dict[str, dict[str, int]] = {}
+        raw: dict[str, str] = {}
+        _generate(model, tokenizer, rows, messages, pair_table, raw,
+                  counts, seed_of=_registered_completion_seed)
+        expected = expected_completion_keys(rows)
+        if set(raw) != expected:
+            raise InfrastructureError(
+                f"completion accounting incomplete: {len(raw)} != "
+                f"{len(expected)}")
+        raw_blob = json.dumps(dict(sorted(raw.items())),
+                              ensure_ascii=False)
+        raw_sha = hashlib.sha256(raw_blob.encode("utf-8")).hexdigest()
+        (out_dir / "raw_completions.json").write_text(raw_blob,
+                                                      encoding="utf-8")
+        artifact = finalize_artifact(
+            "B", exec_sha, counts,
+            extra={"pair_table": manifest["eligible_pairs"],
+                   "obs_meta": obs_meta,
+                   "replay_manifest_sha256":
+                       manifest["replay_manifest_sha256"],
+                   "raw_completions_sha256": raw_sha},
+            tag=am.AMEND1_REPLAY_TAG)
+        path = out_dir / "artifact_B.json"
+        path.write_text(json.dumps(artifact, indent=1),
+                        encoding="utf-8")
+        reloaded = json.loads(path.read_text(encoding="utf-8"))
+        load_b_artifact(reloaded, exec_sha, tag=am.AMEND1_REPLAY_TAG)
+        _finish("complete")
+        am.verify_run_file_set(out_dir, am.AMEND1_REPLAY_RUN_ROOT)
+    except BaseException as error:
+        _finish("aborted", f"{type(error).__name__}: {error}")
+        raise
+    return {"artifact_path": str(path),
+            "execution_bundle_sha256": exec_sha,
+            "replay_manifest_sha256":
+                manifest["replay_manifest_sha256"],
+            "raw_completions_sha256": raw_sha,
+            "summary": summarize_replay(counts, pair_table, obs_meta)}
 

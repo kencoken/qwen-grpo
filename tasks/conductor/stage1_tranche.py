@@ -222,16 +222,19 @@ D_SCENARIOS: tuple[dict[str, Any], ...] = (
      "error_decision": "pass", "allocated_alpha": 0.05 / 2},
     # 158_s §6: reissued undercoverage rows on the AMENDED statistic
     {"id": "D6_persist_const_theta10", "kind": "persistence",
+     "schedule": "ordinary",
      "dgp": _dgp_amended_persistence("ordinary", 1.00, 0.10,
                                      "cluster_correlated",
                                      structural=True),
      "theta": 0.10, "allocated_alpha": 0.05},
     {"id": "D7_persist_rowdispersed_theta10", "kind": "persistence",
+     "schedule": "ordinary",
      "dgp": _dgp_amended_persistence("ordinary", 0.65, 0.10,
                                      "row_dispersed",
                                      structural=False),
      "theta": 0.10, "allocated_alpha": 0.05},
     {"id": "D8_persist_hybrid_theta01_fork", "kind": "persistence",
+     "schedule": "fork",
      "dgp": _dgp_amended_persistence("fork", 0.60, 0.01,
                                      "cluster_correlated",
                                      structural=False),
@@ -242,9 +245,36 @@ assert len(D_SCENARIOS) <= sv.COVERAGE_SCENARIO_CAP
 assert len({sc["id"] for sc in D_SCENARIOS}) == len(D_SCENARIOS)
 assert tuple(sc["id"] for sc in D_SCENARIOS) == am.AMEND1_D_IDS
 
+
+def expected_branch_keys() -> frozenset[str]:
+    """169_s finding 3: the EXACT branch-telemetry key set — one row
+    per persistence scenario per registered look (D6/D7 at the
+    ordinary looks, D8 at the amended fork looks), nothing else."""
+    keys = set()
+    for scen in D_SCENARIOS:
+        if scen["kind"] != "persistence":
+            continue
+        for look in sv.PERSISTENCE_LOOKS[scen["schedule"]]["looks"]:
+            keys.add(f"{scen['id']}|look{look}")
+    return frozenset(keys)
+
+
+def _registered_seed(seed_registry: Mapping[str, int], key: str) -> int:
+    """Fail-closed lookup of a REGISTERED seed (169_s finding 2): the
+    formal runners consume the verified-canonical registry directly;
+    a missing key refuses instead of falling back to derivation."""
+    value = seed_registry.get(key)
+    if value is None:
+        raise TrancheError(f"no registered seed for {key!r} — the "
+                           "formal runner consumes only registered "
+                           "seeds (169_s)")
+    return value
+
 # --- deterministic equivalence set (production 10k replicates) ----------------
 
-def run_deterministic_equivalence_set() -> dict[str, str]:
+def run_deterministic_equivalence_set(
+        seed_registry: Mapping[str, int] | None = None
+        ) -> dict[str, str]:
     """132_s §8.4D: production (10,000-replicate) inference is first run
     on a small frozen DETERMINISTIC equivalence set with analytically
     known decisions (constant data makes the bootstrap degenerate).
@@ -253,7 +283,10 @@ def run_deterministic_equivalence_set() -> dict[str, str]:
     strict band (|theta| < 0.10; ±0.10 in the null), the degenerate
     interval [±0.10, ±0.10] satisfies the conclusive non-equivalence
     rule (LCB >= band, resp. UCB <= -band), so `fail` — correctly
-    refusing equivalence — is the analytically required decision."""
+    refusing equivalence — is the analytically required decision.
+    Under the amended lock the REGISTERED det-set seeds are consumed
+    (169_s finding 2); the seedless form remains for the standalone
+    diagnostic (identical values by the §9.3 domain construction)."""
     cases = {
         "inside_zero": (0.0, "pass"),
         "boundary_plus": (0.10, "fail"),
@@ -264,11 +297,13 @@ def run_deterministic_equivalence_set() -> dict[str, str]:
     }
     results: dict[str, str] = {}
     for name, (value, expected) in cases.items():
+        key = f"D-detset|{name}"
         rows = [np.full((500, 3), value)]
         got = sv.sequential_equivalence_decision(
             rows, (100, 300, 500), 0.05 / 3,
             sv.COVERAGE_PRODUCTION_REPLICATES,
-            seed=sv.scenario_seed(f"D-detset|{name}"))
+            seed=_registered_seed(seed_registry, key)
+            if seed_registry is not None else sv.scenario_seed(key))
         results[name] = got
         if got != expected:
             raise TrancheError(
@@ -310,7 +345,8 @@ def run_c_grid() -> dict[str, dict[str, int]]:
     return results
 
 
-def run_d_battery(deadline_seconds: float | None = None
+def run_d_battery(deadline_seconds: float | None = None, *,
+                  seed_registry: Mapping[str, int] | None = None
                   ) -> tuple[dict[str, dict[str, int]],
                              dict[str, dict[str, int]]]:
     """All eight amended scenarios at 5,000 outer trials, 10,000
@@ -321,32 +357,41 @@ def run_d_battery(deadline_seconds: float | None = None
     branch_rows: dict[str, dict[str, int]] = {}
     for scen in D_SCENARIOS:
         row, branches = run_d_battery_scenario(
-            scen, deadline_seconds=deadline_seconds)
+            scen, deadline_seconds=deadline_seconds,
+            seed_registry=seed_registry)
         results[scen["id"]] = row
         branch_rows.update(branches)
     return results, branch_rows
 
 
 def run_d_battery_scenario(scen: Mapping[str, Any],
-                           deadline_seconds: float | None = None
+                           deadline_seconds: float | None = None, *,
+                           seed_registry: Mapping[str, int] | None = None
                            ) -> tuple[dict[str, int],
                                       dict[str, dict[str, int]]]:
     """One frozen scenario at 5,000 outer trials with the IN-LOOP
-    deadline (checked every 50 trials; partial error count travels in
-    the abort message). Persistence scenarios additionally return
-    per-look branch rows (158_s §6)."""
+    deadline (checked every 50 trials on the monotonic clock; the
+    formal runner passes the MINIMUM remaining per-scenario/D6-D8/
+    total budget — 169_s finding 5; partial error count travels in
+    the abort message). Trial seeds come from the verified-canonical
+    registry when supplied (169_s finding 2); the seedless derivation
+    remains for standalone diagnostics only. Persistence scenarios
+    additionally return per-look branch rows (158_s §6)."""
     import time
     errors = 0
     branch_counts: dict[int, dict[str, int]] = {}
-    started = time.perf_counter()
+    started = time.monotonic()
     for t in range(sv.COVERAGE_OUTER_TRIALS):
         if deadline_seconds is not None and t % 50 == 0 and \
-                time.perf_counter() - started > deadline_seconds:
+                time.monotonic() - started > deadline_seconds:
             raise TrancheError(
                 f"{scen['id']} exceeded its {deadline_seconds:.0f}s "
                 f"deadline at trial {t}/{sv.COVERAGE_OUTER_TRIALS} "
                 f"(partial errors={errors}) — aborting per 158_s §5.4")
-        trial_seed = sv.scenario_seed(f"{scen['id']}|{t}")
+        trial_seed = (_registered_seed(seed_registry,
+                                       f"{scen['id']}|{t}")
+                      if seed_registry is not None
+                      else sv.scenario_seed(f"{scen['id']}|{t}"))
         if scen["kind"] == "decision":
             decision = scen["dgp"](trial_seed)
             errors += int(decision == scen["error_decision"])
@@ -572,6 +617,11 @@ def aggregate_amend1_verdict(a_artifact: Mapping[str, Any],
         raise TrancheError("amended D artifact carries no "
                            "branch_counts block")
     am.validate_amend1_rows("D_branch", d["branch_counts"])
+    if set(d["branch_counts"]) != expected_branch_keys():
+        raise TrancheError(
+            "D branch telemetry != the exact per-look key set "
+            "(D6/D7 at the ordinary looks, D8 at the amended fork "
+            "looks; no extras — 169_s finding 3)")
 
     a_fail, r_fail = [], []
     for scen, delta, sigma in a_position_cells():
@@ -625,11 +675,11 @@ def aggregate_amend1_verdict(a_artifact: Mapping[str, Any],
                           "unknown"):
             raise TrancheError(f"B direction {u}: bad status "
                                f"{status!r}")
-    c2_available = all(v == "not_ruled_out" for v in statuses.values())
+    b_supports_c2 = all(v == "not_ruled_out" for v in statuses.values())
 
     scientific_pass = not (a_fail or r_fail
                            or not c_verdict["passes"] or d_fail)
-    if scientific_pass and c2_available:
+    if scientific_pass and b_supports_c2:
         decision = "confirm_c2_provisional"
     elif scientific_pass:
         decision = "confirm_c1_only"
@@ -642,7 +692,11 @@ def aggregate_amend1_verdict(a_artifact: Mapping[str, Any],
         "C_hard_path_failures": c_verdict["failures"],
         "D_failing": d_fail,
         "B_direction_statuses": statuses,
-        "C2_preCE1_available": c2_available,
+        # the B-only diagnostic, and the CLAIM availability — which
+        # requires scientific passage too (169_s finding 6: C2 cannot
+        # be available on a scientific stop)
+        "B_supports_C2": b_supports_c2,
+        "C2_preCE1_available": scientific_pass and b_supports_c2,
         "decision": decision,
     }
 
@@ -655,26 +709,49 @@ D68_BUDGET_SECONDS = 30 * 60
 TOTAL_BUDGET_SECONDS = 12 * 3600
 
 
+def _d_scenario_deadline(base_deadline: float, total_elapsed: float,
+                         d68_elapsed: float | None) -> float:
+    """169_s finding 5: the deadline handed to the next D scenario's
+    every-50-trial check is the MINIMUM remaining budget — the
+    per-scenario 4x-measured deadline, the 12-hour total, and (for
+    persistence scenarios) the combined D6-D8 30-minute budget — so
+    the combined and total limits abort IN the loop, not after it.
+    A non-positive remainder refuses before the scenario starts."""
+    remaining = [base_deadline, TOTAL_BUDGET_SECONDS - total_elapsed]
+    if d68_elapsed is not None:
+        remaining.append(D68_BUDGET_SECONDS - d68_elapsed)
+    deadline = min(remaining)
+    if deadline <= 0:
+        raise TrancheError(
+            "no remaining budget for the next D scenario (combined or "
+            "total limit exhausted) — aborting per 158_s §5.4/§11")
+    return deadline
+
+
 def run_amend1_tranche(bundle: Mapping[str, Any],
                        seed_registry: Mapping[str, int], *,
                        allow_dirty: bool = False) -> dict[str, Any]:
     """The single CPU-side AMENDED tranche command in the frozen 158_s
     §11 order: v1 evidence archive verification → bundle/registry/
-    environment validation → atomic run-root claim → deterministic
-    equivalence set → the full-count worst-case benchmark and frozen
-    budgets → fresh-seed A → amended C → all eight D scenarios →
-    amend1 artifacts with staged persistence, wall times, and
-    aborted-run records. B (GPU) runs separately under the same
-    bundle; aggregate_amend1_verdict joins everything."""
+    environment validation (registry verified CANONICAL, then consumed
+    directly by every stage — 169_s finding 2) → atomic run-root claim
+    → deterministic equivalence set → the full-count worst-case
+    benchmark and frozen budgets (min-remaining passed into the D
+    in-loop check on the monotonic clock — 169_s finding 5) →
+    fresh-seed A → amended C → all eight D scenarios → amend1
+    artifacts with staged persistence, wall times, and aborted-run
+    records. B (GPU) runs separately under the same bundle via
+    `run_amend1_replay`; `finalize_amend1_run` joins everything and
+    completes the frozen file set."""
     import json
     import time
-    from pathlib import Path
 
     from .stage1_manifest import build_stage1_env_manifest
 
     am.verify_v1_evidence_archive()          # §11 step 1: entry gate
     exec_sha = am.validate_execution_bundle(
         bundle, seed_registry=seed_registry)
+    am.verify_registry_canonical(seed_registry)
     env = build_stage1_env_manifest(allow_dirty=allow_dirty)
     if bundle.get("environment_manifest_sha256") != \
             env["execution_manifest_sha256"]:
@@ -693,12 +770,12 @@ def run_amend1_tranche(bundle: Mapping[str, Any],
         (out_dir / "run_record.json").write_text(
             json.dumps(record, indent=1), encoding="utf-8")
 
-    started = time.time()
+    started = time.monotonic()
     try:
         _persist("execution_bundle_manifest", dict(bundle))
         _persist("env_manifest", env)
 
-        det = run_deterministic_equivalence_set()
+        det = run_deterministic_equivalence_set(seed_registry)
         _persist("deterministic_equivalence", det)
 
         bench = sv.benchmark_worst_case()
@@ -709,7 +786,7 @@ def run_amend1_tranche(bundle: Mapping[str, Any],
                 int(bench["seconds_per_outer_trial"] * 1e6),
             "d_scenario_deadline_seconds": int(d_deadline)})
 
-        a_started = time.time()
+        a_started = time.monotonic()
         a_results: dict[str, dict[str, int]] = {}
         for scen, delta, sigma in a_position_cells():
             key = _a_key(scen, delta, sigma)
@@ -728,7 +805,7 @@ def run_amend1_tranche(bundle: Mapping[str, Any],
                 "pass_count": out["pass_count"], "fail_count": 0,
                 "unresolved_count": out["trials"] - out["pass_count"],
                 "trials": out["trials"]}
-        if time.time() - a_started > A_BUDGET_SECONDS:
+        if time.monotonic() - a_started > A_BUDGET_SECONDS:
             raise TrancheError("A exceeded its 30-minute budget")
         a_art = finalize_artifact("A", exec_sha, a_results,
                                   tag=am.AMEND1_ARTIFACT_TAG)
@@ -743,21 +820,30 @@ def run_amend1_tranche(bundle: Mapping[str, Any],
         d68_started = None
         for scen in D_SCENARIOS:
             if scen["kind"] == "persistence" and d68_started is None:
-                d68_started = time.time()
-            t0 = time.perf_counter()
+                d68_started = time.monotonic()
+            deadline = _d_scenario_deadline(
+                d_deadline, time.monotonic() - started,
+                time.monotonic() - d68_started
+                if d68_started is not None else None)
+            t0 = time.monotonic()
             try:
                 row, branches = run_d_battery_scenario(
-                    scen, deadline_seconds=d_deadline)
+                    scen, deadline_seconds=deadline,
+                    seed_registry=seed_registry)
             finally:
                 record["scenario_wall_seconds"][scen["id"]] = \
-                    int(time.perf_counter() - t0)
+                    int(time.monotonic() - t0)
             d_results[scen["id"]] = row
             d_branches.update(branches)
-            _persist(f"partial_D_{scen['id']}", row)
-            if scen["kind"] == "persistence" and \
-                    time.time() - d68_started > D68_BUDGET_SECONDS:
-                raise TrancheError("D6-D8 exceeded their combined "
-                                   "30-minute budget")
+            # 169_s finding 3: the partial record carries its scenario
+            # and execution identity, and (D6-D8) its branch counts
+            partial: dict[str, Any] = {
+                "scenario": scen["id"],
+                "execution_bundle_sha256": exec_sha, **row}
+            if scen["kind"] == "persistence":
+                partial["branch_counts"] = {
+                    k: dict(v) for k, v in sorted(branches.items())}
+            _persist(f"partial_D_{scen['id']}", partial)
         d_art = finalize_artifact(
             "D", exec_sha, d_results,
             extra={"branch_counts": {k: dict(v) for k, v
@@ -765,19 +851,94 @@ def run_amend1_tranche(bundle: Mapping[str, Any],
             tag=am.AMEND1_ARTIFACT_TAG)
         _persist("artifact_D", d_art)
 
-        if time.time() - started > TOTAL_BUDGET_SECONDS:
+        if time.monotonic() - started > TOTAL_BUDGET_SECONDS:
             raise TrancheError("the amended CPU tranche exceeded 12h")
+        # 169_s finding 4: the run record is UPDATED in place — no
+        # extra file outside the frozen §9.4 set; aggregate.json joins
+        # at finalize_amend1_run once B exists under the same bundle.
         record["status"] = "complete"
-        record["total_wall_seconds"] = int(time.time()
-                                           - record["started_unix"])
-        _persist("run_record_final", record)
+        record["total_wall_seconds"] = int(time.monotonic() - started)
+        (out_dir / "run_record.json").write_text(
+            json.dumps(record, indent=1), encoding="utf-8")
         return {"execution_bundle_sha256": exec_sha,
                 "run_dir": str(out_dir), "record": record}
     except BaseException as error:
         record["status"] = "aborted"
         record["error"] = f"{type(error).__name__}: {error}"
-        record["total_wall_seconds"] = int(time.time()
-                                           - record["started_unix"])
+        record["total_wall_seconds"] = int(time.monotonic() - started)
         (out_dir / "run_record.json").write_text(
             json.dumps(record, indent=1), encoding="utf-8")
         raise
+
+
+def finalize_amend1_run(bundle: Mapping[str, Any],
+                        seed_registry: Mapping[str, int], *,
+                        b_pinned_loader=None,
+                        validation_dir=None,
+                        replay_dir=None) -> dict[str, Any]:
+    """The post-B finalizer (169_s finding 4): once BOTH runs exist
+    under the SAME execution bundle, reload and re-verify the persisted
+    evidence from disk, compute and persist `aggregate.json`, update
+    the existing `run_record.json`, and check both run roots against
+    the frozen §9.4 exact file sets. Returns the verdict the reviewed
+    §12 terminal decision consumes — nothing further is automated."""
+    import json
+    from pathlib import Path
+
+    val_dir = Path(validation_dir
+                   if validation_dir is not None
+                   else am.AMEND1_VALIDATION_RUN_ROOT)
+    rep_dir = Path(replay_dir if replay_dir is not None
+                   else am.AMEND1_REPLAY_RUN_ROOT)
+    am.validate_execution_bundle(bundle, seed_registry=seed_registry)
+
+    def _read(dir_: Path, name: str) -> str:
+        path = dir_ / name
+        if not path.is_file():
+            raise TrancheError(f"missing {name} under {dir_} — the "
+                               "frozen lifecycle is incomplete")
+        return path.read_text(encoding="utf-8")
+
+    env_sha = bundle["environment_manifest_sha256"]
+    for dir_ in (val_dir, rep_dir):
+        persisted = json.loads(
+            _read(dir_, "execution_bundle_manifest.json"))
+        if persisted != dict(bundle):
+            raise TrancheError(
+                f"{dir_} was not produced under this execution bundle")
+        persisted_env = json.loads(_read(dir_, "env_manifest.json"))
+        if persisted_env.get("execution_manifest_sha256") != env_sha:
+            raise TrancheError(
+                f"{dir_} env manifest is not the one the bundle binds")
+        run_record = json.loads(_read(dir_, "run_record.json"))
+        if run_record.get("status") != "complete":
+            raise TrancheError(
+                f"{dir_} run record status is "
+                f"{run_record.get('status')!r} — only complete runs "
+                "may be aggregated")
+
+    env = json.loads(_read(val_dir, "env_manifest.json"))
+    a = json.loads(_read(val_dir, "artifact_A.json"))
+    c = json.loads(_read(val_dir, "artifact_C.json"))
+    d = json.loads(_read(val_dir, "artifact_D.json"))
+    b_evidence = {
+        "artifact": json.loads(_read(rep_dir, "artifact_B.json")),
+        "replay_manifest": json.loads(
+            _read(rep_dir, "replay_manifest.json")),
+        "raw_completions_text": _read(rep_dir, "raw_completions.json"),
+    }
+    verdict = aggregate_amend1_verdict(
+        a, c, d, b_evidence, env_manifest=env, bundle=bundle,
+        seed_registry=seed_registry, b_pinned_loader=b_pinned_loader)
+
+    (val_dir / "aggregate.json").write_text(
+        json.dumps(verdict, indent=1), encoding="utf-8")
+    record = json.loads(_read(val_dir, "run_record.json"))
+    record["stages"].append("aggregate")
+    record["aggregate_decision"] = verdict["decision"]
+    (val_dir / "run_record.json").write_text(
+        json.dumps(record, indent=1), encoding="utf-8")
+
+    am.verify_run_file_set(val_dir, am.AMEND1_VALIDATION_RUN_ROOT)
+    am.verify_run_file_set(rep_dir, am.AMEND1_REPLAY_RUN_ROOT)
+    return verdict

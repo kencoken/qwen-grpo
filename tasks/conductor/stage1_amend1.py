@@ -191,6 +191,20 @@ def seed_registry_digest(registry: Mapping[str, int]) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
+def verify_registry_canonical(registry: Mapping[str, int]) -> None:
+    """169_s finding 2: bundle validation proves the supplied registry
+    equals the one bound at lock, NOT that its values are the frozen
+    derivation. Rederive the COMPLETE registry from the frozen
+    derivation over the support ids implied by the registry's own B
+    keys and require exact equality — every runner calls this before
+    consuming registered seeds."""
+    rederived = finalize_seed_registry(_registry_support_ids(registry))
+    if dict(registry) != rederived:
+        raise InfrastructureError(
+            "seed registry is not the canonical frozen derivation — "
+            "refusing to execute under non-canonical seeds (169_s)")
+
+
 # --- §4 contract: persistence branch constants and serialization ----------------
 
 PERSISTENCE_BOUNDARY_R = 0.10
@@ -255,7 +269,9 @@ AMEND1_ROW_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     # per registered-look marginal: decision counts + branch counts
     # (pass+fail+unresolved == trials; zero+positive == trials;
-    # denominator-unresolved only arises inside the positive branch)
+    # denominator-unresolved only arises inside the positive branch,
+    # always with an unresolved decision, and fails only arise in the
+    # positive branch with a RESOLVED denominator — 169_s)
     "C_marginal": {
         "fields": frozenset({"pass_count", "fail_count",
                              "unresolved_count", "zero_branch",
@@ -266,7 +282,10 @@ AMEND1_ROW_SCHEMAS: dict[str, dict[str, Any]] = {
             r["pass_count"] + r["fail_count"] + r["unresolved_count"]
             == r["trials"]
             and r["zero_branch"] + r["positive_branch"] == r["trials"]
-            and r["denominator_unresolved"] <= r["positive_branch"]),
+            and r["denominator_unresolved"] <= r["positive_branch"]
+            and r["denominator_unresolved"] <= r["unresolved_count"]
+            and r["fail_count"] + r["denominator_unresolved"]
+            <= r["positive_branch"]),
     },
     # per D scenario (unchanged meaning, amended production policy)
     "D": {
@@ -433,6 +452,27 @@ EXPECTED_RUN_FILES: dict[str, tuple[str, ...]] = {
         "artifact_B.json", "run_record.json",
     ),
 }
+
+
+def verify_run_file_set(directory: Path | str, run_root: str) -> None:
+    """169_s finding 4: the successful lifecycle must satisfy the
+    frozen contract EXACTLY — no missing files, no extras, no
+    subdirectories under a run root."""
+    expected = EXPECTED_RUN_FILES.get(run_root)
+    if expected is None:
+        raise InfrastructureError(f"unknown run root {run_root!r}")
+    directory = Path(directory)
+    entries = list(directory.iterdir())
+    subdirs = sorted(p.name for p in entries if not p.is_file())
+    if subdirs:
+        raise InfrastructureError(
+            f"{directory}: unexpected non-file entries {subdirs}")
+    got = {p.name for p in entries}
+    if got != set(expected):
+        raise InfrastructureError(
+            f"{directory}: run file set != the frozen contract "
+            f"(missing {sorted(set(expected) - got)}, "
+            f"extra {sorted(got - set(expected))})")
 
 
 def request_contract_digest() -> str:

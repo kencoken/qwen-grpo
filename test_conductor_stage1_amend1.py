@@ -200,6 +200,17 @@ def test_amend1_row_schemas_fail_closed():
                            denominator_unresolved=500)}
     with pytest.raises(InfrastructureError, match="impossible"):
         am.validate_amend1_rows("C_marginal", bad_denom)
+    # 169_s: denominator-unresolved looks are always unresolved
+    # decisions, so den_unres <= unresolved_count...
+    bad_unres = {"k": dict(ok_marg["k"], denominator_unresolved=1_001)}
+    with pytest.raises(InfrastructureError, match="impossible"):
+        am.validate_amend1_rows("C_marginal", bad_unres)
+    # ...and fails only arise in the positive branch with a RESOLVED
+    # denominator, so fail + den_unres <= positive_branch
+    bad_fail = {"k": dict(ok_marg["k"], zero_branch=9_000,
+                          positive_branch=1_000)}
+    with pytest.raises(InfrastructureError, match="impossible"):
+        am.validate_amend1_rows("C_marginal", bad_fail)
     ok_dbr = {"k": {"zero_branch": 2_736, "positive_branch": 2_264,
                     "denominator_unresolved": 3, "trials": 5_000}}
     am.validate_amend1_rows("D_branch", ok_dbr)
@@ -365,6 +376,43 @@ def test_expected_file_sets_frozen():
     assert sum(1 for f in val if f.startswith("partial_D_")) == 8
     assert "raw_completions.json" in rep and "artifact_B.json" in rep
     assert len(am.expected_file_set_digest()) == 64
+
+
+def test_verify_run_file_set(tmp_path):
+    # 169_s finding 4: the frozen file sets are checked EXACTLY
+    for name in am.EXPECTED_RUN_FILES[am.AMEND1_REPLAY_RUN_ROOT]:
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+    am.verify_run_file_set(tmp_path, am.AMEND1_REPLAY_RUN_ROOT)
+    (tmp_path / "stray.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="extra"):
+        am.verify_run_file_set(tmp_path, am.AMEND1_REPLAY_RUN_ROOT)
+    (tmp_path / "stray.json").unlink()
+    (tmp_path / "artifact_B.json").unlink()
+    with pytest.raises(InfrastructureError, match="missing"):
+        am.verify_run_file_set(tmp_path, am.AMEND1_REPLAY_RUN_ROOT)
+    (tmp_path / "artifact_B.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "sub").mkdir()
+    with pytest.raises(InfrastructureError, match="non-file"):
+        am.verify_run_file_set(tmp_path, am.AMEND1_REPLAY_RUN_ROOT)
+    with pytest.raises(InfrastructureError, match="unknown run root"):
+        am.verify_run_file_set(tmp_path, "runs/bogus")
+
+
+def test_verify_registry_canonical():
+    # 169_s finding 2: value-level canonicality, not just digest
+    # equality with the lock
+    am.verify_registry_canonical(_REGISTRY)
+    tampered = dict(_REGISTRY)
+    tampered[am.DETSET_KEYS[0]] ^= 1
+    with pytest.raises(InfrastructureError, match="canonical"):
+        am.verify_registry_canonical(tampered)
+    extra = dict(_REGISTRY)
+    extra["Dx_smuggled|0"] = 7
+    with pytest.raises(InfrastructureError, match="canonical|entries"):
+        am.verify_registry_canonical(extra)
+    # a partial registry (no B keys => no support ids) refuses
+    with pytest.raises(InfrastructureError):
+        am.verify_registry_canonical(am.build_seed_registry())
 
 
 # --- §9: old-artifact refusal ----------------------------------------------------------------

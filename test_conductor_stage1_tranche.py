@@ -81,17 +81,11 @@ def _surface(rows):
     return surface
 
 
-def _b_evidence(k2=30, k3=30, exec_sha=None):
-    """A complete, self-consistent B evidence bundle whose raw
-    completions genuinely reparse to the counts."""
-    import hashlib
-    exec_sha = exec_sha or EXEC_SHA
-    rows = _support_rows()
-    surface = _surface(rows)
-    cell_of = {o: m["cell_id"] for o, m in rows.items()}
-    table = sr.pair_table_from_surface(surface, cell_of)
-    meta = sr.observation_meta(rows)
-    raw, counts = {}, {}
+def _fill_raw_counts(rows, table, raw, counts, k2=30, k3=30):
+    """Populate raw completions/counts that genuinely reparse: k2 w2
+    assignments, k3 w3 assignments, the rest malformed (in the
+    denominator). Shared by the evidence fixture and the amended
+    replay driver probe."""
     for oid, m in sorted(rows.items()):
         pair = table.get(oid)
         for p in (FEW, SO):
@@ -108,6 +102,22 @@ def _b_evidence(k2=30, k3=30, exec_sha=None):
             if pair is not None:
                 counts[f"{oid}|{p}"] = {"k2": k2, "k3": k3,
                                         "n": sr.REPLAY_COMPLETIONS}
+
+
+def _b_evidence(k2=30, k3=30, exec_sha=None, tag=None):
+    """A complete, self-consistent B evidence bundle whose raw
+    completions genuinely reparse to the counts. `tag` defaults to the
+    v1 artifact tag; amended-boundary fixtures pass the amend1 replay
+    tag (169_s finding 1)."""
+    import hashlib
+    exec_sha = exec_sha or EXEC_SHA
+    rows = _support_rows()
+    surface = _surface(rows)
+    cell_of = {o: m["cell_id"] for o, m in rows.items()}
+    table = sr.pair_table_from_surface(surface, cell_of)
+    meta = sr.observation_meta(rows)
+    raw, counts = {}, {}
+    _fill_raw_counts(rows, table, raw, counts, k2=k2, k3=k3)
     raw_text = json.dumps(dict(sorted(raw.items())), ensure_ascii=False)
     raw_sha = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
     rr = {f"{o}|{p}": "a" * 64 for o in sorted(rows)
@@ -119,7 +129,8 @@ def _b_evidence(k2=30, k3=30, exec_sha=None):
                "obs_meta": meta,
                "replay_manifest_sha256":
                    manifest["replay_manifest_sha256"],
-               "raw_completions_sha256": raw_sha})
+               "raw_completions_sha256": raw_sha},
+        **({"tag": tag} if tag is not None else {}))
     def loader():
         return surface, rows, rr
     return {"artifact": artifact, "replay_manifest": manifest,
@@ -347,7 +358,8 @@ def _amend1_artifacts(c_pass=True, d_pass=True, b_k=30):
     d = st.finalize_artifact("D", exec_sha, d_res,
                              extra={"branch_counts": branch},
                              tag=am_mod.AMEND1_ARTIFACT_TAG)
-    b = _b_evidence(k2=b_k, k3=b_k, exec_sha=exec_sha)
+    b = _b_evidence(k2=b_k, k3=b_k, exec_sha=exec_sha,
+                    tag=am_mod.AMEND1_REPLAY_TAG)
     return bundle, a, c, d, b
 
 
@@ -358,6 +370,7 @@ def test_amend1_verdict_confirm_c2_provisional():
         seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
     assert v["decision"] == "confirm_c2_provisional"
     assert v["C2_preCE1_available"] is True
+    assert v["B_supports_C2"] is True
     assert v["D_failing"] == []
 
 
@@ -366,12 +379,14 @@ def test_amend1_verdict_c1_only_on_not_demonstrated():
     # freezes C2 unavailable and the C1-only branch continues
     bundle, a, c, d, _ = _amend1_artifacts()
     b = _b_evidence(k2=0, k3=0,
-                    exec_sha=bundle["execution_bundle_sha256"])
+                    exec_sha=bundle["execution_bundle_sha256"],
+                    tag=am_mod.AMEND1_REPLAY_TAG)
     v = st.aggregate_amend1_verdict(
         a, c, d, b, env_manifest=ENV, bundle=bundle,
         seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
     assert v["decision"] == "confirm_c1_only"
     assert v["C2_preCE1_available"] is False
+    assert v["B_supports_C2"] is False
     assert set(v["B_direction_statuses"].values()) == \
         {"not_demonstrated"}
 
@@ -383,6 +398,10 @@ def test_amend1_verdict_scientific_stop():
         seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
     assert v["decision"] == "scientific_stop"
     assert v["C_hard_path_failures"]
+    # 169_s finding 6: B support alone can never make C2 available on
+    # a scientific stop — the diagnostic and the claim flag separate
+    assert v["B_supports_C2"] is True
+    assert v["C2_preCE1_available"] is False
     # D failures also stop scientifically
     bundle2, a2, c2, d2, b2 = _amend1_artifacts(d_pass=False)
     v2 = st.aggregate_amend1_verdict(
@@ -628,6 +647,298 @@ def test_run_replay_model_load_failure_writes_aborted(tmp_path,
     run_dir = tmp_path / "stage1-replay"
     assert (run_dir / "env_manifest.json").exists()
     assert (run_dir / "replay_manifest.json").exists()
+
+
+# --- 169_s findings 1-6: amended execution-integrity probes ------------------------
+
+_REGISTRY_S = am_mod.finalize_seed_registry(sorted(_support_rows()))
+
+
+def test_amend1_verdict_refuses_legacy_tagged_b():
+    # 169_s finding 1: a legacy-tagged B artifact refuses at the
+    # amended boundary even when it carries the bundle identity
+    bundle, a, c, d, _ = _amend1_artifacts()
+    legacy = _b_evidence(exec_sha=bundle["execution_bundle_sha256"])
+    with pytest.raises(st.TrancheError, match="tag"):
+        st.aggregate_amend1_verdict(
+            a, c, d, legacy, env_manifest=ENV, bundle=bundle,
+            seed_registry=_REGISTRY_A, b_pinned_loader=legacy["loader"])
+
+
+def test_amend1_branch_telemetry_exact_set():
+    # 169_s finding 3: exactly eight branch rows — D6/D7 at the
+    # ordinary looks, D8 at the amended fork looks
+    assert st.expected_branch_keys() == frozenset(
+        [f"D6_persist_const_theta10|look{n}" for n in (100, 300, 500)]
+        + [f"D7_persist_rowdispersed_theta10|look{n}"
+           for n in (100, 300, 500)]
+        + ["D8_persist_hybrid_theta01_fork|look100",
+           "D8_persist_hybrid_theta01_fork|look500"])
+    bundle, a, c, d0, b = _amend1_artifacts()
+    exec_sha = bundle["execution_bundle_sha256"]
+    d_res = {k: dict(v) for k, v in d0["results"].items()}
+    branch = {k: dict(v) for k, v in d0["branch_counts"].items()}
+    missing = dict(branch)
+    missing.pop("D6_persist_const_theta10|look300")
+    d_missing = st.finalize_artifact(
+        "D", exec_sha, d_res, extra={"branch_counts": missing},
+        tag=am_mod.AMEND1_ARTIFACT_TAG)
+    with pytest.raises(st.TrancheError, match="exact per-look"):
+        st.aggregate_amend1_verdict(
+            a, c, d_missing, b, env_manifest=ENV, bundle=bundle,
+            seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
+    extra = dict(branch)
+    extra["D1_seq_null_ordinary_div3|look100"] = {
+        "zero_branch": 0, "positive_branch": 5_000,
+        "denominator_unresolved": 0, "trials": 5_000}
+    d_extra = st.finalize_artifact(
+        "D", exec_sha, d_res, extra={"branch_counts": extra},
+        tag=am_mod.AMEND1_ARTIFACT_TAG)
+    with pytest.raises(st.TrancheError, match="exact per-look"):
+        st.aggregate_amend1_verdict(
+            a, c, d_extra, b, env_manifest=ENV, bundle=bundle,
+            seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
+
+
+def test_registered_seed_consumption():
+    # 169_s finding 2: the formal D runner consumes the supplied
+    # registry values directly; a missing key refuses, never derives
+    seen = []
+    scen = {"id": "Dx_probe", "kind": "decision",
+            "dgp": lambda s: seen.append(s) or "fail",
+            "error_decision": "pass", "allocated_alpha": 0.05}
+    registry = {f"Dx_probe|{t}": t * 7 + 1
+                for t in range(sv.COVERAGE_OUTER_TRIALS)}
+    row, branches = st.run_d_battery_scenario(scen,
+                                              seed_registry=registry)
+    assert row == {"error_count": 0,
+                   "trials": sv.COVERAGE_OUTER_TRIALS}
+    assert branches == {}
+    assert seen == [t * 7 + 1 for t in range(sv.COVERAGE_OUTER_TRIALS)]
+    with pytest.raises(st.TrancheError, match="registered seed"):
+        st.run_d_battery_scenario(scen, seed_registry={})
+    with pytest.raises(st.TrancheError, match="registered seed"):
+        st.run_deterministic_equivalence_set({})
+    # the registered D/B-domain values ARE the v1 derivation (§9.3),
+    # so direct consumption changes no frozen seed
+    for key in am_mod.DETSET_KEYS:
+        assert _REGISTRY_A[key] == sv.scenario_seed(key)
+
+
+def test_d_scenario_deadline_minimum():
+    # 169_s finding 5: the in-loop deadline is the MINIMUM remaining
+    # per-scenario / D6-D8 / total budget
+    assert st._d_scenario_deadline(100.0, 0.0, None) == 100.0
+    assert st._d_scenario_deadline(
+        1e9, st.TOTAL_BUDGET_SECONDS - 5.0, None) == pytest.approx(5.0)
+    assert st._d_scenario_deadline(
+        1e9, 0.0, st.D68_BUDGET_SECONDS - 3.0) == pytest.approx(3.0)
+    with pytest.raises(st.TrancheError, match="remaining budget"):
+        st._d_scenario_deadline(100.0, st.TOTAL_BUDGET_SECONDS + 1.0,
+                                None)
+    with pytest.raises(st.TrancheError, match="remaining budget"):
+        st._d_scenario_deadline(100.0, 0.0,
+                                float(st.D68_BUDGET_SECONDS))
+
+
+def _write_amend1_run_dirs(tmp_path, bundle, a, c, d, b):
+    """Materialize both run roots exactly as the amended runners leave
+    them (pre-aggregate)."""
+    val = tmp_path / "stage1-validation-amend1"
+    rep = tmp_path / "stage1-replay-amend1"
+    val.mkdir()
+    rep.mkdir()
+
+    def _w(dir_, name, obj):
+        (dir_ / name).write_text(json.dumps(obj, indent=1),
+                                 encoding="utf-8")
+    _w(val, "execution_bundle_manifest.json", dict(bundle))
+    _w(val, "env_manifest.json", ENV)
+    _w(val, "deterministic_equivalence.json", {})
+    _w(val, "benchmark.json", {})
+    _w(val, "artifact_A.json", a)
+    _w(val, "artifact_C.json", c)
+    _w(val, "artifact_D.json", d)
+    for d_id in am_mod.AMEND1_D_IDS:
+        _w(val, f"partial_D_{d_id}.json", {"scenario": d_id})
+    _w(val, "run_record.json", {"status": "complete", "stages": []})
+    _w(rep, "execution_bundle_manifest.json", dict(bundle))
+    _w(rep, "env_manifest.json", ENV)
+    _w(rep, "replay_manifest.json", b["replay_manifest"])
+    (rep / "raw_completions.json").write_text(
+        b["raw_completions_text"], encoding="utf-8")
+    _w(rep, "artifact_B.json", b["artifact"])
+    _w(rep, "run_record.json", {"status": "complete"})
+    return val, rep
+
+
+def test_finalize_amend1_run(tmp_path):
+    # 169_s finding 4: the post-B finalizer computes/persists the
+    # aggregate, updates run_record.json, and checks both exact sets
+    bundle, a, c, d, b = _amend1_artifacts()
+    val, rep = _write_amend1_run_dirs(tmp_path, bundle, a, c, d, b)
+    v = st.finalize_amend1_run(bundle, _REGISTRY_A,
+                               b_pinned_loader=b["loader"],
+                               validation_dir=val, replay_dir=rep)
+    assert v["decision"] == "confirm_c2_provisional"
+    persisted = json.loads((val / "aggregate.json").read_text(
+        encoding="utf-8"))
+    assert persisted["decision"] == "confirm_c2_provisional"
+    record = json.loads((val / "run_record.json").read_text(
+        encoding="utf-8"))
+    assert record["stages"] == ["aggregate"]
+    assert record["aggregate_decision"] == "confirm_c2_provisional"
+    # the completed lifecycle satisfies the frozen contract exactly
+    am_mod.verify_run_file_set(val, am_mod.AMEND1_VALIDATION_RUN_ROOT)
+    am_mod.verify_run_file_set(rep, am_mod.AMEND1_REPLAY_RUN_ROOT)
+
+
+def test_finalize_amend1_run_fail_closed(tmp_path):
+    bundle, a, c, d, b = _amend1_artifacts()
+    val, rep = _write_amend1_run_dirs(tmp_path, bundle, a, c, d, b)
+    # an incomplete (aborted/running) run refuses to aggregate
+    (rep / "run_record.json").write_text(
+        json.dumps({"status": "aborted"}), encoding="utf-8")
+    with pytest.raises(st.TrancheError, match="complete"):
+        st.finalize_amend1_run(bundle, _REGISTRY_A,
+                               b_pinned_loader=b["loader"],
+                               validation_dir=val, replay_dir=rep)
+    (rep / "run_record.json").write_text(
+        json.dumps({"status": "complete"}), encoding="utf-8")
+    # a foreign bundle manifest on disk refuses
+    other_fields = dict(_bundle_fields_amend1(),
+                        lock_record_sha256="e" * 64)
+    other = am_mod.build_execution_bundle(other_fields,
+                                          seed_registry=_REGISTRY_A)
+    (val / "execution_bundle_manifest.json").write_text(
+        json.dumps(dict(other), indent=1), encoding="utf-8")
+    with pytest.raises(st.TrancheError, match="bundle"):
+        st.finalize_amend1_run(bundle, _REGISTRY_A,
+                               b_pinned_loader=b["loader"],
+                               validation_dir=val, replay_dir=rep)
+    (val / "execution_bundle_manifest.json").write_text(
+        json.dumps(dict(bundle), indent=1), encoding="utf-8")
+    # a stray file breaks the exact-set check AFTER a clean aggregate
+    (val / "stray.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="extra"):
+        st.finalize_amend1_run(bundle, _REGISTRY_A,
+                               b_pinned_loader=b["loader"],
+                               validation_dir=val, replay_dir=rep)
+    (val / "stray.json").unlink()
+    # a missing artifact refuses before any aggregation
+    (val / "artifact_D.json").unlink()
+    with pytest.raises(st.TrancheError, match="missing"):
+        st.finalize_amend1_run(bundle, _REGISTRY_A,
+                               b_pinned_loader=b["loader"],
+                               validation_dir=val, replay_dir=rep)
+
+
+def _amend1_replay_setup(tmp_path, monkeypatch):
+    import tasks.conductor.stage1_manifest as sm
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sm, "build_stage1_env_manifest",
+                        lambda allow_dirty=False: dict(ENV))
+    bundle = am_mod.build_execution_bundle(_bundle_fields_amend1(),
+                                           seed_registry=_REGISTRY_S)
+    b = _b_evidence()
+    surface, rows, rr = b["loader"]()
+    inputs = {"surface": surface, "rows": rows, "messages": {},
+              "rr_hashes": rr, "tokenizer": None}
+    return bundle, inputs, b
+
+
+def test_run_amend1_replay_success(tmp_path, monkeypatch):
+    # 169_s finding 1: the amended B entry point — bundle identity,
+    # amended root/tag, registered-seed consumption end-to-end
+    from pathlib import Path
+    repo_root = Path.cwd()
+    bundle, inputs, b = _amend1_replay_setup(tmp_path, monkeypatch)
+    exec_sha = bundle["execution_bundle_sha256"]
+    monkeypatch.setattr(sr, "_build_replay_model", lambda: None)
+    seen = []
+
+    def fake_generate(model, tok, rows, msgs, table, raw, counts, *,
+                      seed_of):
+        seen.append(seed_of(min(rows), FEW, 0))
+        _fill_raw_counts(rows, table, raw, counts)
+    monkeypatch.setattr(sr, "_generate", fake_generate)
+    out = sr.run_amend1_replay(bundle, _REGISTRY_S, _inputs=inputs)
+    assert out["execution_bundle_sha256"] == exec_sha
+    # the seed consumed IS the registered value
+    key = f"B|{min(inputs['rows'])}|{FEW}|0"
+    assert seen == [_REGISTRY_S[key]]
+    run_dir = tmp_path / "runs" / "stage1-replay-amend1"
+    art = json.loads((run_dir / "artifact_B.json").read_text(
+        encoding="utf-8"))
+    assert art["tag"] == am_mod.AMEND1_REPLAY_TAG
+    assert art["execution_manifest_sha256"] == exec_sha
+    record = json.loads((run_dir / "run_record.json").read_text(
+        encoding="utf-8"))
+    assert record["status"] == "complete"
+    assert record["execution_bundle_sha256"] == exec_sha
+    am_mod.verify_run_file_set(run_dir, am_mod.AMEND1_REPLAY_RUN_ROOT)
+    # a second invocation cannot reuse the claimed root
+    with pytest.raises(InfrastructureError, match="already exists"):
+        sr.run_amend1_replay(bundle, _REGISTRY_S, _inputs=inputs)
+    # the produced evidence verifies at the amended boundary (back in
+    # the repo root: env-manifest validation recomputes the source
+    # digest via git)...
+    monkeypatch.chdir(repo_root)
+    manifest = json.loads((run_dir / "replay_manifest.json").read_text(
+        encoding="utf-8"))
+    raw_text = (run_dir / "raw_completions.json").read_text(
+        encoding="utf-8")
+    summary = sr.verify_replay_evidence(
+        art, env_manifest=ENV, replay_manifest=manifest,
+        raw_completions_text=raw_text, pinned_loader=b["loader"],
+        execution_identity=exec_sha)
+    assert set(summary["directions"]) == {"2", "3"}
+    # ...and refuses at the LEGACY boundary (tag/identity mismatch)
+    with pytest.raises(st.TrancheError, match="tag"):
+        sr.verify_replay_evidence(
+            art, env_manifest=ENV, replay_manifest=manifest,
+            raw_completions_text=raw_text, pinned_loader=b["loader"])
+
+
+def test_run_amend1_replay_aborts_and_refusals(tmp_path, monkeypatch):
+    bundle, inputs, _ = _amend1_replay_setup(tmp_path, monkeypatch)
+
+    # registry/support mismatch refuses BEFORE claiming the root
+    rows2 = dict(inputs["rows"])
+    victim = min(rows2)
+    rows2["zzz:worker_dev:99999:ffffffff:goal_first:private"] = \
+        rows2.pop(victim)
+    with pytest.raises(InfrastructureError, match="support ids"):
+        sr.run_amend1_replay(bundle, _REGISTRY_S,
+                             _inputs=dict(inputs, rows=rows2))
+    assert not (tmp_path / "runs" / "stage1-replay-amend1").exists()
+
+    # a model-construction failure aborts WITH the §9.4 pre-model
+    # files and an aborted record in place
+    def boom():
+        raise RuntimeError("CUDA out of memory (probe)")
+    monkeypatch.setattr(sr, "_build_replay_model", boom)
+    with pytest.raises(RuntimeError, match="probe"):
+        sr.run_amend1_replay(bundle, _REGISTRY_S, _inputs=inputs)
+    run_dir = tmp_path / "runs" / "stage1-replay-amend1"
+    record = json.loads((run_dir / "run_record.json").read_text(
+        encoding="utf-8"))
+    assert record["status"] == "aborted"
+    assert "RuntimeError" in record["error"]
+    for name in ("execution_bundle_manifest.json", "env_manifest.json",
+                 "replay_manifest.json"):
+        assert (run_dir / name).exists()
+
+    # a NON-CANONICAL registry refuses even when the bundle was built
+    # from it — the digest proves lock-equality, verify_registry_
+    # canonical proves the values are the frozen derivation (169_s
+    # finding 2)
+    tampered = dict(_REGISTRY_S)
+    tampered[next(iter(am_mod.DETSET_KEYS))] ^= 1
+    evil_bundle = am_mod.build_execution_bundle(
+        _bundle_fields_amend1(), seed_registry=tampered)
+    with pytest.raises(InfrastructureError, match="canonical"):
+        sr.run_amend1_replay(evil_bundle, tampered, _inputs=inputs)
 
 
 def test_run_replay_finalization_failure_writes_aborted(tmp_path,
