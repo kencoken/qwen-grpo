@@ -31,7 +31,8 @@ def _env_manifest():
             "git_dirty": 0, "uv_lock_sha256": "u" * 64,
             "stage1_source_sha256": stage1_source_digest(),
             "stage1_source_files": list(stage1_source_files()),
-            "gpu": "test-gpu", "torch": "test"}
+            "gpu": "test-gpu", "torch": "test",
+            "numpy": "test", "scipy": "test"}
     sha = hashlib.sha256(
         canonical_json(body).encode("utf-8")).hexdigest()
     return {**body, "execution_manifest_sha256": sha}

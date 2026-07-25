@@ -14,12 +14,15 @@ historical checkout — it was first committed at Unit A, 2b2b6dc; only
 the MODULES it imports must be at the v1 commit):
 
     git worktree add /tmp/v1-checkout da8424b
-    cd /tmp/v1-checkout && uv run python \
+    cd /tmp/v1-checkout && PYTHONPATH=/tmp/v1-checkout uv run python \
         /home/ken/qwen-grpo/plans/conductor/evidence/\
 stage1_pre_ce1_v1_ae26ba5d/agreement_diagnostic_script.py
 
 i.e. run this script by absolute path from a worktree of commit
-da8424b, so `tasks.conductor.*` resolve to the exact v1 bytes.
+da8424b, with PYTHONPATH pointing at that worktree (163_s: python puts
+the SCRIPT'S directory on sys.path, not the cwd, so without PYTHONPATH
+`tasks.conductor.*` fail to import), so the modules resolve to the
+exact v1 bytes.
 """
 
 import numpy as np

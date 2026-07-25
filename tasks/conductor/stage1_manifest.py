@@ -169,7 +169,10 @@ def validate_env_manifest(env: Mapping[str, Any]) -> str:
             "environment manifest hash mismatch — the execution "
             "identity is not the hash of this manifest")
     for field in ("git_commit", "uv_lock_sha256", "stage1_source_sha256",
-                  "stage1_source_files", "gpu", "torch"):
+                  "stage1_source_files", "gpu", "torch",
+                  # 163_s: the numerical stack is load-bearing for the
+                  # amended statistics — absence refuses
+                  "numpy", "scipy"):
         if field not in env:
             raise ManifestError(f"environment manifest missing "
                                 f"{field!r}")

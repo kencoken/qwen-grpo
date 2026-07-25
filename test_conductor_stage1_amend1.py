@@ -122,11 +122,10 @@ def test_finalized_registry_is_the_only_bundle_input():
     # wrong support size refuses
     with pytest.raises(InfrastructureError, match="18"):
         am.finalize_seed_registry(obs[:17])
-    # a bundle refuses a partial registry count
-    fields = _bundle_fields()
-    fields["seed_registry_entries"] = len(am.build_seed_registry())
+    # a bundle refuses a partial registry outright (163_s)
     with pytest.raises(InfrastructureError, match="FINALIZED"):
-        am.build_execution_bundle(fields)
+        am.build_execution_bundle(_bundle_fields(),
+                                  seed_registry=am.build_seed_registry())
 
 
 def test_c_path_registry_cardinalities():
@@ -234,18 +233,24 @@ def test_frozen_root_literals():
 
 # --- §9.1: execution bundle ---------------------------------------------------------------
 
+_OBS = tuple(f"o{i:02d}" for i in range(18))
+_REGISTRY = am.finalize_seed_registry(_OBS)
+
+
 def _bundle_fields():
+    # provenance digests are authoritative-derived (163_s); the
+    # registry trio is computed by the builder itself
     return {
         "amendment_prereg_sha256": "a" * 64,
         "lock_record_sha256": "b" * 64,
         "git_commit": "c" * 40,
         "source_digest": "d" * 64,
         "environment_manifest_sha256": "e" * 64,
-        "v1_evidence_manifest_sha256": "f" * 64,
-        "seed_registry_sha256": "1" * 64,
-        "scenario_grid_sha256": "2" * 64,
-        "b_support_sha256": "3" * 64,
-        "seed_registry_entries": am.FULL_SEED_REGISTRY_ENTRIES,
+        "v1_evidence_manifest_sha256": am.V1_EVIDENCE_MANIFEST_SHA256,
+        "scenario_grid_sha256": am.scenario_grid_digest(),
+        "request_contract_sha256": am.request_contract_digest(),
+        "artifact_schema_sha256": am.artifact_schema_digest(),
+        "expected_file_set_sha256": am.expected_file_set_digest(),
         "prompt_sha256s": [stage1.PROMPT_FEWSHOT_SHA256,
                            stage1.PROMPT_SCHEMA_ONLY_SHA256],
         "artifact_tags": [am.AMEND1_VALIDATION_TAG,
@@ -257,38 +262,78 @@ def _bundle_fields():
     }
 
 
+def _build_bundle(**overrides):
+    fields = dict(_bundle_fields(), **overrides)
+    return am.build_execution_bundle(fields, seed_registry=_REGISTRY)
+
+
 def test_execution_bundle_roundtrip():
-    bundle = am.build_execution_bundle(_bundle_fields())
-    identity = am.validate_execution_bundle(bundle)
+    bundle = _build_bundle()
+    identity = am.validate_execution_bundle(bundle,
+                                            seed_registry=_REGISTRY)
     assert identity == bundle["execution_bundle_sha256"]
     assert am.validate_execution_bundle(
-        json.loads(json.dumps(bundle))) == identity
+        json.loads(json.dumps(bundle)),
+        seed_registry=_REGISTRY) == identity
+    # the builder derived the registry trio itself
+    assert bundle["seed_registry_entries"] == \
+        am.FULL_SEED_REGISTRY_ENTRIES
+    assert bundle["seed_registry_sha256"] == \
+        am.seed_registry_digest(_REGISTRY)
+    assert bundle["b_support_sha256"] == am.b_support_digest(_OBS)
 
 
 def test_execution_bundle_fail_closed():
     fields = _bundle_fields()
     missing = dict(fields)
-    del missing["seed_registry_sha256"]
+    del missing["lock_record_sha256"]
     with pytest.raises(InfrastructureError, match="missing"):
-        am.build_execution_bundle(missing)
-    wrong_attempt = dict(fields, attempt_id="attempt-2")
+        am.build_execution_bundle(missing, seed_registry=_REGISTRY)
     with pytest.raises(InfrastructureError, match="attempt id"):
-        am.build_execution_bundle(wrong_attempt)
-    wrong_tags = dict(fields, artifact_tags=["v1"])
+        _build_bundle(attempt_id="attempt-2")
     with pytest.raises(InfrastructureError, match="tags"):
-        am.build_execution_bundle(wrong_tags)
-    bundle = am.build_execution_bundle(fields)
+        _build_bundle(artifact_tags=["v1"])
+    bundle = _build_bundle()
     tampered = dict(bundle, git_commit="x" * 40)
     with pytest.raises(InfrastructureError, match="hash mismatch"):
-        am.validate_execution_bundle(tampered)
+        am.validate_execution_bundle(tampered, seed_registry=_REGISTRY)
+
+
+def test_bundle_provenance_is_authoritative_not_caller_asserted():
+    # 163_s reproductions: fabricated evidence-manifest hash and a
+    # partial registry (with or without a claimed full count) refuse
+    with pytest.raises(InfrastructureError, match="pinned"):
+        _build_bundle(v1_evidence_manifest_sha256="f" * 64)
+    with pytest.raises(InfrastructureError, match="REPLAY_CONTRACT"):
+        _build_bundle(request_contract_sha256="0" * 64)
+    with pytest.raises(InfrastructureError, match="schemas"):
+        _build_bundle(artifact_schema_sha256="0" * 64)
+    with pytest.raises(InfrastructureError, match="file"):
+        _build_bundle(expected_file_set_sha256="0" * 64)
+    with pytest.raises(InfrastructureError, match="grids"):
+        _build_bundle(scenario_grid_sha256="0" * 64)
+    partial = am.build_seed_registry()
+    with pytest.raises(InfrastructureError, match="FINALIZED"):
+        am.build_execution_bundle(_bundle_fields(),
+                                  seed_registry=partial)
+    # a caller-supplied registry field disagreeing with the derivation
+    with pytest.raises(InfrastructureError, match="disagrees"):
+        am.build_execution_bundle(
+            dict(_bundle_fields(), seed_registry_sha256="1" * 64),
+            seed_registry=_REGISTRY)
+    # validating against a DIFFERENT registry than the bundle bound
+    bundle = _build_bundle()
+    other = am.finalize_seed_registry([f"x{i:02d}" for i in range(18)])
+    with pytest.raises(InfrastructureError, match="digest"):
+        am.validate_execution_bundle(bundle, seed_registry=other)
 
 
 def test_execution_bundle_self_rehash_attack_refuses():
-    # 161_s finding 1 reproduction: change frozen literals, RECOMPUTE
-    # the self-hash — validation must still refuse on semantics
+    # 161_s finding 1 + 163_s: change frozen literals or provenance,
+    # RECOMPUTE the self-hash — validation must refuse on semantics
     import hashlib as _h
     from tasks.conductor.profiles import canonical_json
-    bundle = am.build_execution_bundle(_bundle_fields())
+    bundle = _build_bundle()
 
     def rehash(body):
         body = dict(body)
@@ -297,21 +342,29 @@ def test_execution_bundle_self_rehash_attack_refuses():
             canonical_json(body).encode("utf-8")).hexdigest()
         return body
 
-    evil_tags = rehash(dict(bundle, artifact_tags=["v1-tag"]))
-    with pytest.raises(InfrastructureError, match="tags"):
-        am.validate_execution_bundle(evil_tags)
-    evil_roots = rehash(dict(bundle, run_roots=["runs/other"]))
-    with pytest.raises(InfrastructureError, match="roots"):
-        am.validate_execution_bundle(evil_roots)
-    evil_prompt = rehash(dict(bundle, prompt_sha256s=["a" * 64]))
-    with pytest.raises(InfrastructureError, match="prompt"):
-        am.validate_execution_bundle(evil_prompt)
-    evil_extra = rehash(dict(bundle, smuggled="x"))
-    with pytest.raises(InfrastructureError, match="field set"):
-        am.validate_execution_bundle(evil_extra)
-    evil_count = rehash(dict(bundle, seed_registry_entries=42))
-    with pytest.raises(InfrastructureError, match="FINALIZED"):
-        am.validate_execution_bundle(evil_count)
+    cases = [
+        (dict(bundle, artifact_tags=["v1-tag"]), "tags"),
+        (dict(bundle, run_roots=["runs/other"]), "roots"),
+        (dict(bundle, prompt_sha256s=["a" * 64]), "prompt"),
+        (dict(bundle, smuggled="x"), "field set"),
+        (dict(bundle, seed_registry_entries=42), "FINALIZED"),
+        (dict(bundle, v1_evidence_manifest_sha256="f" * 64), "pinned"),
+        (dict(bundle, request_contract_sha256="0" * 64),
+         "REPLAY_CONTRACT"),
+    ]
+    for evil, pattern in cases:
+        with pytest.raises(InfrastructureError, match=pattern):
+            am.validate_execution_bundle(rehash(evil),
+                                         seed_registry=_REGISTRY)
+
+
+def test_expected_file_sets_frozen():
+    val = am.EXPECTED_RUN_FILES[am.AMEND1_VALIDATION_RUN_ROOT]
+    rep = am.EXPECTED_RUN_FILES[am.AMEND1_REPLAY_RUN_ROOT]
+    assert "artifact_D.json" in val and "aggregate.json" in val
+    assert sum(1 for f in val if f.startswith("partial_D_")) == 8
+    assert "raw_completions.json" in rep and "artifact_B.json" in rep
+    assert len(am.expected_file_set_digest()) == 64
 
 
 # --- §9: old-artifact refusal ----------------------------------------------------------------

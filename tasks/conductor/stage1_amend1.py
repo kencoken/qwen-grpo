@@ -317,7 +317,7 @@ V1_EVIDENCE_DIR = Path(
 # script joins the frozen table (as corrected at Unit-A repair), and
 # the complete identity block + exact file set are validated.
 V1_EVIDENCE_MANIFEST_SHA256 = (
-    "4ae0fb83ed48b1a0630a6281eafa71d8073ee0f7c3bf041f058fbcbe7910c51d")
+    "b01b706084c235f2024c6c3fd32e8054fb93c22bd1a96c5bc9dcfa588f0b2baa")
 V1_IDENTITY = {
     "preregistration_153f_sha256":
         "235acb78d9b875999ab90ca50a37e9fbe4c208fa2fa92a285c3229ec01748572",
@@ -348,7 +348,7 @@ V1_EVIDENCE_HASHES = {
     "agreement_diagnostic.txt":
         "34ec1caa5b7e0e11ec8d5fe5b7fad1da3a65e85db963144ca894dfd2068eb754",
     "agreement_diagnostic_script.py":
-        "f816b43ea05b811c04c67eb6f94e810363b8cbabef245143bb4ca53b9ad0d43b",
+        "85f7f26bc2f3a24cbc29529c4634900138b3183e7007c78ea96b81442dcfcf05",
 }
 
 
@@ -419,17 +419,104 @@ def claim_run_root(root: Path | str) -> Path:
 
 # --- §9.1: the one lock-specific execution bundle ---------------------------------
 
+# 158_s §11 / §9.4: the exact expected file sets per run root, frozen.
+EXPECTED_RUN_FILES: dict[str, tuple[str, ...]] = {
+    AMEND1_VALIDATION_RUN_ROOT: (
+        "execution_bundle_manifest.json", "env_manifest.json",
+        "deterministic_equivalence.json", "benchmark.json",
+        "artifact_A.json", "artifact_C.json", "artifact_D.json",
+    ) + tuple(f"partial_D_{d_id}.json" for d_id in AMEND1_D_IDS)
+      + ("aggregate.json", "run_record.json"),
+    AMEND1_REPLAY_RUN_ROOT: (
+        "execution_bundle_manifest.json", "env_manifest.json",
+        "replay_manifest.json", "raw_completions.json",
+        "artifact_B.json", "run_record.json",
+    ),
+}
+
+
+def request_contract_digest() -> str:
+    """Digest of the frozen B replay contract — derived from the
+    authoritative literal, never caller-supplied (163_s)."""
+    from .stage1_replay import REPLAY_CONTRACT
+    return hashlib.sha256(
+        canonical_json(dict(REPLAY_CONTRACT)).encode("utf-8")).hexdigest()
+
+
+def artifact_schema_digest() -> str:
+    """Digest of a canonical DESCRIPTION of every frozen amended
+    schema: row field sets and trial counts (identities are code,
+    reviewed with the source digest), the persistence branch field
+    tuples, and the version tags."""
+    description = {
+        "tags": [AMEND1_VALIDATION_TAG, AMEND1_REPLAY_TAG,
+                 AMEND1_ARTIFACT_TAG],
+        "rows": {kind: {"fields": sorted(schema["fields"]),
+                        "trials": schema["trials"]}
+                 for kind, schema in AMEND1_ROW_SCHEMAS.items()},
+        "persistence_zero": list(PERSISTENCE_ZERO_BRANCH_FIELDS),
+        "persistence_positive": list(PERSISTENCE_POSITIVE_BRANCH_FIELDS),
+    }
+    return hashlib.sha256(
+        canonical_json(description).encode("utf-8")).hexdigest()
+
+
+def expected_file_set_digest() -> str:
+    description = {root: list(files)
+                   for root, files in EXPECTED_RUN_FILES.items()}
+    return hashlib.sha256(
+        canonical_json(description).encode("utf-8")).hexdigest()
+
+
+def scenario_grid_digest() -> str:
+    """Digest of the complete amended scenario grids (A cells, router
+    cells, C paths and marginals, D ids and alphas as strings)."""
+    description = {
+        "A": [f"A|{sc}|{d}|{sg}|{sv.POWER_TRIALS}"
+              for sc in sv.POSITION_SCENARIOS
+              for d in sv.POWER_DELTAS for sg in sv.POWER_SIGMAS],
+        "router": [f"A-router|{m}|{e}|{sg}|{sv.POWER_TRIALS}"
+                   for m in sv.ROUTER_MIXTURES
+                   for e in sv.ROUTER_EFFECTS for sg in sv.POWER_SIGMAS],
+        "C_paths": [c_path_key(*cell) for cell in c_path_cells()],
+        "C_marginals": sorted(c_marginal_keys()),
+        "D": {d_id: repr(AMEND1_D_ALPHAS[d_id])
+              for d_id in AMEND1_D_IDS},
+    }
+    return hashlib.sha256(
+        canonical_json(description).encode("utf-8")).hexdigest()
+
+
+def b_support_digest(observation_ids) -> str:
+    return hashlib.sha256(canonical_json(
+        sorted(observation_ids)).encode("utf-8")).hexdigest()
+
+
+def _registry_support_ids(registry: Mapping[str, int]) -> list[str]:
+    """The observation ids IMPLIED by the registry's B keys — used to
+    bind b_support_sha256 to the registry itself."""
+    ids = set()
+    for key in registry:
+        if key.startswith("B|"):
+            ids.add(key.split("|", 2)[1])
+    return sorted(ids)
+
+
 _BUNDLE_REQUIRED = (
     "amendment_prereg_sha256", "lock_record_sha256", "git_commit",
     "source_digest", "environment_manifest_sha256",
     "v1_evidence_manifest_sha256", "seed_registry_sha256",
     "seed_registry_entries", "scenario_grid_sha256", "b_support_sha256",
+    "request_contract_sha256", "artifact_schema_sha256",
+    "expected_file_set_sha256",
     "prompt_sha256s", "artifact_tags", "run_roots", "attempt_id",
 )
 _BUNDLE_HEX64_FIELDS = (
     "amendment_prereg_sha256", "lock_record_sha256", "source_digest",
     "environment_manifest_sha256", "v1_evidence_manifest_sha256",
     "seed_registry_sha256", "scenario_grid_sha256", "b_support_sha256",
+    "request_contract_sha256", "artifact_schema_sha256",
+    "expected_file_set_sha256",
 )
 _HEX = frozenset("0123456789abcdef")
 
@@ -478,19 +565,68 @@ def _check_bundle_semantics(body: Mapping[str, Any]) -> None:
             f"{body['seed_registry_entries']!r} != authoritative "
             f"{FULL_SEED_REGISTRY_ENTRIES} — a bundle may only bind the "
             "FINALIZED full registry (161_s finding 3)")
+    # 163_s: provenance fields are DERIVED or PINNED, never trusted as
+    # valid-looking hashes
+    if body["v1_evidence_manifest_sha256"] != \
+            V1_EVIDENCE_MANIFEST_SHA256:
+        raise InfrastructureError(
+            "v1_evidence_manifest_sha256 != the pinned archive manifest "
+            "hash — fabricated evidence provenance refuses (163_s)")
+    if body["request_contract_sha256"] != request_contract_digest():
+        raise InfrastructureError(
+            "request_contract_sha256 != the digest of the frozen "
+            "REPLAY_CONTRACT")
+    if body["artifact_schema_sha256"] != artifact_schema_digest():
+        raise InfrastructureError(
+            "artifact_schema_sha256 != the digest of the frozen amended "
+            "schemas")
+    if body["expected_file_set_sha256"] != expected_file_set_digest():
+        raise InfrastructureError(
+            "expected_file_set_sha256 != the digest of the frozen "
+            "expected run-file sets")
+    if body["scenario_grid_sha256"] != scenario_grid_digest():
+        raise InfrastructureError(
+            "scenario_grid_sha256 != the digest of the frozen amended "
+            "scenario grids")
 
 
-def build_execution_bundle(fields: Mapping[str, Any]) -> dict[str, Any]:
+def build_execution_bundle(fields: Mapping[str, Any], *,
+                           seed_registry: Mapping[str, int]
+                           ) -> dict[str, Any]:
     """Canonical execution-bundle manifest; its self-hash is the
     amended execution identity consumed by every runner, artifact,
-    loader and the aggregate. All required fields must be present and
-    the attempt id / tags / roots must be the frozen literals."""
-    missing = [f for f in _BUNDLE_REQUIRED if f not in fields]
+    loader and the aggregate.
+
+    163_s: the registry-derived fields (`seed_registry_sha256`,
+    `seed_registry_entries`, `b_support_sha256`) are COMPUTED here from
+    the supplied FINALIZED registry — a caller cannot pair a partial
+    registry's digest with a claimed full count. The remaining
+    provenance digests are checked against pinned/derived authoritative
+    values by the shared semantic check."""
+    if len(seed_registry) != FULL_SEED_REGISTRY_ENTRIES:
+        raise InfrastructureError(
+            f"bundle construction requires the FINALIZED registry "
+            f"({FULL_SEED_REGISTRY_ENTRIES} entries), got "
+            f"{len(seed_registry)} (163_s)")
+    derived = {
+        "seed_registry_sha256": seed_registry_digest(seed_registry),
+        "seed_registry_entries": len(seed_registry),
+        "b_support_sha256": b_support_digest(
+            _registry_support_ids(seed_registry)),
+    }
+    supplied = dict(fields)
+    for key, value in derived.items():
+        if key in supplied and supplied[key] != value:
+            raise InfrastructureError(
+                f"bundle field {key!r} disagrees with the value derived "
+                "from the finalized registry (163_s)")
+        supplied[key] = value
+    missing = [f for f in _BUNDLE_REQUIRED if f not in supplied]
     if missing:
         raise InfrastructureError(
             f"execution bundle missing fields: {missing}")
     body = {"manifest": "stage1-execution-bundle-amend1-v1"}
-    body.update({k: fields[k] for k in _BUNDLE_REQUIRED})
+    body.update({k: supplied[k] for k in _BUNDLE_REQUIRED})
     _check_bundle_semantics(body)
     digest = hashlib.sha256(
         canonical_json(body).encode("utf-8")).hexdigest()
@@ -499,18 +635,33 @@ def build_execution_bundle(fields: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-def validate_execution_bundle(bundle: Mapping[str, Any]) -> str:
-    """Recompute the self-hash and check the frozen literals; returns
-    the amended execution identity."""
+def validate_execution_bundle(bundle: Mapping[str, Any], *,
+                              seed_registry: Mapping[str, int]) -> str:
+    """Recompute the self-hash, reapply every semantic check (161_s),
+    and verify the registry-derived provenance against the FINALIZED
+    registry the consumer holds (163_s: the registry is regenerable
+    deterministically, so every consumer can and must supply it).
+    Returns the amended execution identity."""
     body = {k: v for k, v in bundle.items()
             if k != "execution_bundle_sha256"}
     digest = hashlib.sha256(
         canonical_json(body).encode("utf-8")).hexdigest()
     if digest != bundle.get("execution_bundle_sha256"):
         raise InfrastructureError("execution bundle hash mismatch")
-    # 161_s finding 1: reapply EVERY semantic check at load — a
-    # self-rehashed bundle with altered frozen literals must refuse
     _check_bundle_semantics(body)
+    if len(seed_registry) != FULL_SEED_REGISTRY_ENTRIES:
+        raise InfrastructureError(
+            "bundle validation requires the FINALIZED registry (163_s)")
+    if body["seed_registry_sha256"] != \
+            seed_registry_digest(seed_registry):
+        raise InfrastructureError(
+            "bundle seed_registry_sha256 != the finalized registry's "
+            "digest")
+    if body["b_support_sha256"] != b_support_digest(
+            _registry_support_ids(seed_registry)):
+        raise InfrastructureError(
+            "bundle b_support_sha256 != the support implied by the "
+            "finalized registry")
     return digest
 
 
