@@ -1,0 +1,440 @@
+{
+ "artifact": "A",
+ "tag": "stage1-tranche-artifact-amend1-v1",
+ "execution_manifest_sha256": "9b5f1ab85f26c256897f7619b5386ddd776e00683cc9f800c3e24158635bd195",
+ "results": {
+  "A-router|core_fork|0.05|0.25|10000": {
+   "pass_count": 9999,
+   "fail_count": 0,
+   "unresolved_count": 1,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.05|0.5|10000": {
+   "pass_count": 7074,
+   "fail_count": 0,
+   "unresolved_count": 2926,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.05|0.75|10000": {
+   "pass_count": 3723,
+   "fail_count": 0,
+   "unresolved_count": 6277,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.05|0.95|10000": {
+   "pass_count": 2501,
+   "fail_count": 0,
+   "unresolved_count": 7499,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.15|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.15|0.5|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.15|0.75|10000": {
+   "pass_count": 9988,
+   "fail_count": 0,
+   "unresolved_count": 12,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.15|0.95|10000": {
+   "pass_count": 9694,
+   "fail_count": 0,
+   "unresolved_count": 306,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.1|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.1|0.5|10000": {
+   "pass_count": 9993,
+   "fail_count": 0,
+   "unresolved_count": 7,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.1|0.75|10000": {
+   "pass_count": 9194,
+   "fail_count": 0,
+   "unresolved_count": 806,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.1|0.95|10000": {
+   "pass_count": 7402,
+   "fail_count": 0,
+   "unresolved_count": 2598,
+   "trials": 10000
+  },
+  "A-router|core|0.05|0.25|10000": {
+   "pass_count": 9995,
+   "fail_count": 0,
+   "unresolved_count": 5,
+   "trials": 10000
+  },
+  "A-router|core|0.05|0.5|10000": {
+   "pass_count": 6272,
+   "fail_count": 0,
+   "unresolved_count": 3728,
+   "trials": 10000
+  },
+  "A-router|core|0.05|0.75|10000": {
+   "pass_count": 3068,
+   "fail_count": 0,
+   "unresolved_count": 6932,
+   "trials": 10000
+  },
+  "A-router|core|0.05|0.95|10000": {
+   "pass_count": 2221,
+   "fail_count": 0,
+   "unresolved_count": 7779,
+   "trials": 10000
+  },
+  "A-router|core|0.15|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A-router|core|0.15|0.5|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A-router|core|0.15|0.75|10000": {
+   "pass_count": 9942,
+   "fail_count": 0,
+   "unresolved_count": 58,
+   "trials": 10000
+  },
+  "A-router|core|0.15|0.95|10000": {
+   "pass_count": 9388,
+   "fail_count": 0,
+   "unresolved_count": 612,
+   "trials": 10000
+  },
+  "A-router|core|0.1|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A-router|core|0.1|0.5|10000": {
+   "pass_count": 9976,
+   "fail_count": 0,
+   "unresolved_count": 24,
+   "trials": 10000
+  },
+  "A-router|core|0.1|0.75|10000": {
+   "pass_count": 8523,
+   "fail_count": 0,
+   "unresolved_count": 1477,
+   "trials": 10000
+  },
+  "A-router|core|0.1|0.95|10000": {
+   "pass_count": 6391,
+   "fail_count": 0,
+   "unresolved_count": 3609,
+   "trials": 10000
+  },
+  "A|fork_div3|0.15|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|fork_div3|0.15|0.5|10000": {
+   "pass_count": 9916,
+   "fail_count": 0,
+   "unresolved_count": 84,
+   "trials": 10000
+  },
+  "A|fork_div3|0.15|0.75|10000": {
+   "pass_count": 9346,
+   "fail_count": 0,
+   "unresolved_count": 654,
+   "trials": 10000
+  },
+  "A|fork_div3|0.15|0.95|10000": {
+   "pass_count": 8719,
+   "fail_count": 2,
+   "unresolved_count": 1279,
+   "trials": 10000
+  },
+  "A|fork_div3|0.1|0.25|10000": {
+   "pass_count": 6482,
+   "fail_count": 0,
+   "unresolved_count": 3518,
+   "trials": 10000
+  },
+  "A|fork_div3|0.1|0.5|10000": {
+   "pass_count": 6056,
+   "fail_count": 1,
+   "unresolved_count": 3943,
+   "trials": 10000
+  },
+  "A|fork_div3|0.1|0.75|10000": {
+   "pass_count": 5398,
+   "fail_count": 3,
+   "unresolved_count": 4599,
+   "trials": 10000
+  },
+  "A|fork_div3|0.1|0.95|10000": {
+   "pass_count": 5153,
+   "fail_count": 1,
+   "unresolved_count": 4846,
+   "trials": 10000
+  },
+  "A|fork_div3|0.2|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|fork_div3|0.2|0.5|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|fork_div3|0.2|0.75|10000": {
+   "pass_count": 9992,
+   "fail_count": 0,
+   "unresolved_count": 8,
+   "trials": 10000
+  },
+  "A|fork_div3|0.2|0.95|10000": {
+   "pass_count": 9875,
+   "fail_count": 0,
+   "unresolved_count": 125,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.15|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.15|0.5|10000": {
+   "pass_count": 9955,
+   "fail_count": 0,
+   "unresolved_count": 45,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.15|0.75|10000": {
+   "pass_count": 9572,
+   "fail_count": 0,
+   "unresolved_count": 428,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.15|0.95|10000": {
+   "pass_count": 9034,
+   "fail_count": 2,
+   "unresolved_count": 964,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.1|0.25|10000": {
+   "pass_count": 6843,
+   "fail_count": 0,
+   "unresolved_count": 3157,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.1|0.5|10000": {
+   "pass_count": 6887,
+   "fail_count": 0,
+   "unresolved_count": 3113,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.1|0.75|10000": {
+   "pass_count": 6505,
+   "fail_count": 10,
+   "unresolved_count": 3485,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.1|0.95|10000": {
+   "pass_count": 5842,
+   "fail_count": 12,
+   "unresolved_count": 4146,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.2|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.2|0.5|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.2|0.75|10000": {
+   "pass_count": 9992,
+   "fail_count": 0,
+   "unresolved_count": 8,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.2|0.95|10000": {
+   "pass_count": 9939,
+   "fail_count": 0,
+   "unresolved_count": 61,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.15|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.15|0.5|10000": {
+   "pass_count": 9947,
+   "fail_count": 0,
+   "unresolved_count": 53,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.15|0.75|10000": {
+   "pass_count": 9536,
+   "fail_count": 0,
+   "unresolved_count": 464,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.15|0.95|10000": {
+   "pass_count": 8844,
+   "fail_count": 0,
+   "unresolved_count": 1156,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.1|0.25|10000": {
+   "pass_count": 6951,
+   "fail_count": 0,
+   "unresolved_count": 3049,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.1|0.5|10000": {
+   "pass_count": 6692,
+   "fail_count": 1,
+   "unresolved_count": 3307,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.1|0.75|10000": {
+   "pass_count": 6129,
+   "fail_count": 4,
+   "unresolved_count": 3867,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.1|0.95|10000": {
+   "pass_count": 5408,
+   "fail_count": 3,
+   "unresolved_count": 4589,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.2|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.2|0.5|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.2|0.75|10000": {
+   "pass_count": 9993,
+   "fail_count": 0,
+   "unresolved_count": 7,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.2|0.95|10000": {
+   "pass_count": 9901,
+   "fail_count": 0,
+   "unresolved_count": 99,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.15|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.15|0.5|10000": {
+   "pass_count": 9928,
+   "fail_count": 0,
+   "unresolved_count": 72,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.15|0.75|10000": {
+   "pass_count": 9466,
+   "fail_count": 0,
+   "unresolved_count": 534,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.15|0.95|10000": {
+   "pass_count": 8632,
+   "fail_count": 3,
+   "unresolved_count": 1365,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.1|0.25|10000": {
+   "pass_count": 6983,
+   "fail_count": 0,
+   "unresolved_count": 3017,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.1|0.5|10000": {
+   "pass_count": 6514,
+   "fail_count": 0,
+   "unresolved_count": 3486,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.1|0.75|10000": {
+   "pass_count": 5945,
+   "fail_count": 0,
+   "unresolved_count": 4055,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.1|0.95|10000": {
+   "pass_count": 4690,
+   "fail_count": 1,
+   "unresolved_count": 5309,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.2|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.2|0.5|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.2|0.75|10000": {
+   "pass_count": 9995,
+   "fail_count": 0,
+   "unresolved_count": 5,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.2|0.95|10000": {
+   "pass_count": 9823,
+   "fail_count": 0,
+   "unresolved_count": 177,
+   "trials": 10000
+  }
+ },
+ "artifact_sha256": "6c0cc0797aaecf746fd771b0e934de0a37281e2002dd1cc5830790447d2444df"
+}

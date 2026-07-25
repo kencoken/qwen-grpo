@@ -1,0 +1,90 @@
+{
+ "artifact": "D",
+ "tag": "stage1-tranche-artifact-amend1-v1",
+ "execution_manifest_sha256": "9b5f1ab85f26c256897f7619b5386ddd776e00683cc9f800c3e24158635bd195",
+ "results": {
+  "D1_seq_null_ordinary_div3": {
+   "error_count": 12,
+   "trials": 5000
+  },
+  "D2_seq_null_fork_div3": {
+   "error_count": 15,
+   "trials": 5000
+  },
+  "D3_equiv_boundary_plus": {
+   "error_count": 81,
+   "trials": 5000
+  },
+  "D4_equiv_boundary_minus": {
+   "error_count": 101,
+   "trials": 5000
+  },
+  "D5_pilot_hetero_unequal": {
+   "error_count": 157,
+   "trials": 5000
+  },
+  "D6_persist_const_theta10": {
+   "error_count": 208,
+   "trials": 5000
+  },
+  "D7_persist_rowdispersed_theta10": {
+   "error_count": 199,
+   "trials": 5000
+  },
+  "D8_persist_hybrid_theta01_fork": {
+   "error_count": 0,
+   "trials": 5000
+  }
+ },
+ "branch_counts": {
+  "D6_persist_const_theta10|look100": {
+   "zero_branch": 0,
+   "positive_branch": 5000,
+   "denominator_unresolved": 0,
+   "trials": 5000
+  },
+  "D6_persist_const_theta10|look300": {
+   "zero_branch": 0,
+   "positive_branch": 5000,
+   "denominator_unresolved": 0,
+   "trials": 5000
+  },
+  "D6_persist_const_theta10|look500": {
+   "zero_branch": 0,
+   "positive_branch": 5000,
+   "denominator_unresolved": 0,
+   "trials": 5000
+  },
+  "D7_persist_rowdispersed_theta10|look100": {
+   "zero_branch": 0,
+   "positive_branch": 5000,
+   "denominator_unresolved": 0,
+   "trials": 5000
+  },
+  "D7_persist_rowdispersed_theta10|look300": {
+   "zero_branch": 0,
+   "positive_branch": 5000,
+   "denominator_unresolved": 0,
+   "trials": 5000
+  },
+  "D7_persist_rowdispersed_theta10|look500": {
+   "zero_branch": 0,
+   "positive_branch": 5000,
+   "denominator_unresolved": 0,
+   "trials": 5000
+  },
+  "D8_persist_hybrid_theta01_fork|look100": {
+   "zero_branch": 2782,
+   "positive_branch": 2218,
+   "denominator_unresolved": 0,
+   "trials": 5000
+  },
+  "D8_persist_hybrid_theta01_fork|look500": {
+   "zero_branch": 257,
+   "positive_branch": 4743,
+   "denominator_unresolved": 0,
+   "trials": 5000
+  }
+ },
+ "artifact_sha256": "3afcd6727baebb5270c10eb92e579ca17e5af3a482085f13c8149163594f9683"
+}

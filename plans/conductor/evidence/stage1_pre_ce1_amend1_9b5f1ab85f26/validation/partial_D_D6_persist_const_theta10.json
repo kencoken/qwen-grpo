@@ -1,0 +1,26 @@
+{
+ "scenario": "D6_persist_const_theta10",
+ "execution_bundle_sha256": "9b5f1ab85f26c256897f7619b5386ddd776e00683cc9f800c3e24158635bd195",
+ "error_count": 208,
+ "trials": 5000,
+ "branch_counts": {
+  "D6_persist_const_theta10|look100": {
+   "zero_branch": 0,
+   "positive_branch": 5000,
+   "denominator_unresolved": 0,
+   "trials": 5000
+  },
+  "D6_persist_const_theta10|look300": {
+   "zero_branch": 0,
+   "positive_branch": 5000,
+   "denominator_unresolved": 0,
+   "trials": 5000
+  },
+  "D6_persist_const_theta10|look500": {
+   "zero_branch": 0,
+   "positive_branch": 5000,
+   "denominator_unresolved": 0,
+   "trials": 5000
+  }
+ }
+}

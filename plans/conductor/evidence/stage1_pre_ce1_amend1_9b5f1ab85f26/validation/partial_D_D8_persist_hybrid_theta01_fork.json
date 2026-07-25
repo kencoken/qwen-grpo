@@ -1,0 +1,20 @@
+{
+ "scenario": "D8_persist_hybrid_theta01_fork",
+ "execution_bundle_sha256": "9b5f1ab85f26c256897f7619b5386ddd776e00683cc9f800c3e24158635bd195",
+ "error_count": 0,
+ "trials": 5000,
+ "branch_counts": {
+  "D8_persist_hybrid_theta01_fork|look100": {
+   "zero_branch": 2782,
+   "positive_branch": 2218,
+   "denominator_unresolved": 0,
+   "trials": 5000
+  },
+  "D8_persist_hybrid_theta01_fork|look500": {
+   "zero_branch": 257,
+   "positive_branch": 4743,
+   "denominator_unresolved": 0,
+   "trials": 5000
+  }
+ }
+}

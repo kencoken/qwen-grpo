@@ -1,0 +1,8 @@
+{
+ "inside_zero": "pass",
+ "boundary_plus": "fail",
+ "boundary_minus": "fail",
+ "outside_plus": "fail",
+ "outside_minus": "fail",
+ "inside_edge": "pass"
+}

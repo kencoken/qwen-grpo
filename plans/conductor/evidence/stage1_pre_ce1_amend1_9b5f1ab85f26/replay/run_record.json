@@ -1,0 +1,8 @@
+{
+ "status": "aborted",
+ "attempt_id": "stage1-pre-ce1-amend1-attempt-1",
+ "execution_bundle_sha256": "9b5f1ab85f26c256897f7619b5386ddd776e00683cc9f800c3e24158635bd195",
+ "started_unix": 1785018754,
+ "wall_seconds": 1,
+ "error": "AttributeError: "
+}

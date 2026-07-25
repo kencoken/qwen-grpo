@@ -1,0 +1,1378 @@
+{
+ "artifact": "C",
+ "tag": "stage1-tranche-artifact-amend1-v1",
+ "execution_manifest_sha256": "9b5f1ab85f26c256897f7619b5386ddd776e00683cc9f800c3e24158635bd195",
+ "results": {
+  "C|fork|0.65|0.05|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 9391,
+   "first_fail": 0,
+   "cap_unresolved": 609,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.05|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.0|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.0|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.1|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 544,
+   "first_fail": 82,
+   "cap_unresolved": 9374,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.1|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 505,
+   "first_fail": 109,
+   "cap_unresolved": 9386,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.05|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 9310,
+   "first_fail": 0,
+   "cap_unresolved": 690,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.05|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 9999,
+   "first_fail": 0,
+   "cap_unresolved": 1,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.0|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.0|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.1|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 769,
+   "first_fail": 80,
+   "cap_unresolved": 9151,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.1|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 414,
+   "first_fail": 121,
+   "cap_unresolved": 9465,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.05|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 9727,
+   "first_fail": 0,
+   "cap_unresolved": 273,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.05|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.0|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.0|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.1|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 564,
+   "first_fail": 82,
+   "cap_unresolved": 9354,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.1|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 399,
+   "first_fail": 131,
+   "cap_unresolved": 9470,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.05|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 9901,
+   "first_fail": 0,
+   "cap_unresolved": 99,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.05|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.0|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.0|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.1|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 701,
+   "first_fail": 112,
+   "cap_unresolved": 9187,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.1|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 364,
+   "first_fail": 146,
+   "cap_unresolved": 9490,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.05|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 9250,
+   "first_fail": 0,
+   "cap_unresolved": 750,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.05|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.0|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.0|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.1|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 577,
+   "first_fail": 53,
+   "cap_unresolved": 9370,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.1|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 372,
+   "first_fail": 110,
+   "cap_unresolved": 9518,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.05|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 9123,
+   "first_fail": 0,
+   "cap_unresolved": 877,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.05|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 9998,
+   "first_fail": 0,
+   "cap_unresolved": 2,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.0|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.0|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.1|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 718,
+   "first_fail": 62,
+   "cap_unresolved": 9220,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.1|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 381,
+   "first_fail": 101,
+   "cap_unresolved": 9518,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.05|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 9608,
+   "first_fail": 0,
+   "cap_unresolved": 392,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.05|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.0|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.0|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.1|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 512,
+   "first_fail": 67,
+   "cap_unresolved": 9421,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.1|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 423,
+   "first_fail": 93,
+   "cap_unresolved": 9484,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.05|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 9901,
+   "first_fail": 0,
+   "cap_unresolved": 99,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.05|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.0|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.0|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 10000,
+   "first_fail": 0,
+   "cap_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.1|cluster_correlated|10000|coupled-path-v1": {
+   "first_pass": 457,
+   "first_fail": 99,
+   "cap_unresolved": 9444,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.1|row_dispersed|10000|coupled-path-v1": {
+   "first_pass": 379,
+   "first_fail": 125,
+   "cap_unresolved": 9496,
+   "trials": 10000
+  }
+ },
+ "marginals": {
+  "C|fork|0.65|0.05|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 3178,
+   "fail_count": 0,
+   "unresolved_count": 6822,
+   "zero_branch": 386,
+   "positive_branch": 9614,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.05|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 9337,
+   "fail_count": 0,
+   "unresolved_count": 663,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.05|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 7915,
+   "fail_count": 0,
+   "unresolved_count": 2085,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.05|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.0|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 0,
+   "fail_count": 0,
+   "unresolved_count": 10000,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.0|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.0|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 0,
+   "fail_count": 0,
+   "unresolved_count": 10000,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.0|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.1|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 332,
+   "fail_count": 13,
+   "unresolved_count": 9655,
+   "zero_branch": 12,
+   "positive_branch": 9988,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.1|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 263,
+   "fail_count": 74,
+   "unresolved_count": 9663,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.1|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 370,
+   "fail_count": 51,
+   "unresolved_count": 9579,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.65|0.1|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 185,
+   "fail_count": 70,
+   "unresolved_count": 9745,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.05|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 3703,
+   "fail_count": 0,
+   "unresolved_count": 6297,
+   "zero_branch": 459,
+   "positive_branch": 9541,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.05|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 9210,
+   "fail_count": 0,
+   "unresolved_count": 790,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.05|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 7042,
+   "fail_count": 0,
+   "unresolved_count": 2958,
+   "zero_branch": 1,
+   "positive_branch": 9999,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.05|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 9999,
+   "fail_count": 0,
+   "unresolved_count": 1,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.0|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 0,
+   "fail_count": 0,
+   "unresolved_count": 10000,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.0|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.0|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 0,
+   "fail_count": 0,
+   "unresolved_count": 10000,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.0|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.1|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 516,
+   "fail_count": 17,
+   "unresolved_count": 9467,
+   "zero_branch": 24,
+   "positive_branch": 9976,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.1|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 318,
+   "fail_count": 67,
+   "unresolved_count": 9615,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.1|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 247,
+   "fail_count": 42,
+   "unresolved_count": 9711,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.6|0.1|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 197,
+   "fail_count": 85,
+   "unresolved_count": 9718,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.05|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 4280,
+   "fail_count": 0,
+   "unresolved_count": 5720,
+   "zero_branch": 141,
+   "positive_branch": 9859,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.05|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 9701,
+   "fail_count": 0,
+   "unresolved_count": 299,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.05|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 8471,
+   "fail_count": 0,
+   "unresolved_count": 1529,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.05|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.0|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.0|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.0|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.0|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.1|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 388,
+   "fail_count": 17,
+   "unresolved_count": 9595,
+   "zero_branch": 2,
+   "positive_branch": 9998,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.1|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 233,
+   "fail_count": 67,
+   "unresolved_count": 9700,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.1|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 263,
+   "fail_count": 52,
+   "unresolved_count": 9685,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|0.8|0.1|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 172,
+   "fail_count": 87,
+   "unresolved_count": 9741,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.05|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 6155,
+   "fail_count": 0,
+   "unresolved_count": 3845,
+   "zero_branch": 72,
+   "positive_branch": 9928,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.05|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 9871,
+   "fail_count": 0,
+   "unresolved_count": 129,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.05|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 9125,
+   "fail_count": 0,
+   "unresolved_count": 875,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.05|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.0|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.0|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.0|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.0|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.1|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 550,
+   "fail_count": 45,
+   "unresolved_count": 9405,
+   "zero_branch": 2,
+   "positive_branch": 9998,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.1|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 198,
+   "fail_count": 73,
+   "unresolved_count": 9729,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.1|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 226,
+   "fail_count": 58,
+   "unresolved_count": 9716,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|fork|1.0|0.1|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 169,
+   "fail_count": 94,
+   "unresolved_count": 9737,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.05|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 3330,
+   "fail_count": 0,
+   "unresolved_count": 6670,
+   "zero_branch": 366,
+   "positive_branch": 9634,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.05|cluster_correlated|10000|coupled-path-v1|look300": {
+   "pass_count": 7247,
+   "fail_count": 0,
+   "unresolved_count": 2753,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.05|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 9048,
+   "fail_count": 0,
+   "unresolved_count": 952,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.05|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 7289,
+   "fail_count": 0,
+   "unresolved_count": 2711,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.05|row_dispersed|10000|coupled-path-v1|look300": {
+   "pass_count": 9947,
+   "fail_count": 0,
+   "unresolved_count": 53,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.05|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.0|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 0,
+   "fail_count": 0,
+   "unresolved_count": 10000,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.0|cluster_correlated|10000|coupled-path-v1|look300": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.0|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.0|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 0,
+   "fail_count": 0,
+   "unresolved_count": 10000,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.0|row_dispersed|10000|coupled-path-v1|look300": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.0|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.1|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 335,
+   "fail_count": 10,
+   "unresolved_count": 9655,
+   "zero_branch": 15,
+   "positive_branch": 9985,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.1|cluster_correlated|10000|coupled-path-v1|look300": {
+   "pass_count": 211,
+   "fail_count": 17,
+   "unresolved_count": 9772,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.1|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 152,
+   "fail_count": 32,
+   "unresolved_count": 9816,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.1|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 202,
+   "fail_count": 36,
+   "unresolved_count": 9762,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.1|row_dispersed|10000|coupled-path-v1|look300": {
+   "pass_count": 134,
+   "fail_count": 43,
+   "unresolved_count": 9823,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.65|0.1|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 118,
+   "fail_count": 47,
+   "unresolved_count": 9835,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.05|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 3781,
+   "fail_count": 0,
+   "unresolved_count": 6219,
+   "zero_branch": 440,
+   "positive_branch": 9560,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.05|cluster_correlated|10000|coupled-path-v1|look300": {
+   "pass_count": 7059,
+   "fail_count": 0,
+   "unresolved_count": 2941,
+   "zero_branch": 2,
+   "positive_branch": 9998,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.05|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 8801,
+   "fail_count": 0,
+   "unresolved_count": 1199,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.05|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 6868,
+   "fail_count": 0,
+   "unresolved_count": 3132,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.05|row_dispersed|10000|coupled-path-v1|look300": {
+   "pass_count": 9896,
+   "fail_count": 0,
+   "unresolved_count": 104,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.05|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 9997,
+   "fail_count": 0,
+   "unresolved_count": 3,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.0|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 0,
+   "fail_count": 0,
+   "unresolved_count": 10000,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.0|cluster_correlated|10000|coupled-path-v1|look300": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.0|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.0|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 0,
+   "fail_count": 0,
+   "unresolved_count": 10000,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.0|row_dispersed|10000|coupled-path-v1|look300": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.0|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.1|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 486,
+   "fail_count": 9,
+   "unresolved_count": 9505,
+   "zero_branch": 13,
+   "positive_branch": 9987,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.1|cluster_correlated|10000|coupled-path-v1|look300": {
+   "pass_count": 231,
+   "fail_count": 16,
+   "unresolved_count": 9753,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.1|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 161,
+   "fail_count": 46,
+   "unresolved_count": 9793,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.1|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 201,
+   "fail_count": 29,
+   "unresolved_count": 9770,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.1|row_dispersed|10000|coupled-path-v1|look300": {
+   "pass_count": 136,
+   "fail_count": 43,
+   "unresolved_count": 9821,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.6|0.1|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 128,
+   "fail_count": 45,
+   "unresolved_count": 9827,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.05|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 4244,
+   "fail_count": 0,
+   "unresolved_count": 5756,
+   "zero_branch": 183,
+   "positive_branch": 9817,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.05|cluster_correlated|10000|coupled-path-v1|look300": {
+   "pass_count": 7793,
+   "fail_count": 0,
+   "unresolved_count": 2207,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.05|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 9498,
+   "fail_count": 0,
+   "unresolved_count": 502,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.05|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 8084,
+   "fail_count": 0,
+   "unresolved_count": 1916,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.05|row_dispersed|10000|coupled-path-v1|look300": {
+   "pass_count": 9981,
+   "fail_count": 0,
+   "unresolved_count": 19,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.05|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.0|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.0|cluster_correlated|10000|coupled-path-v1|look300": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.0|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.0|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.0|row_dispersed|10000|coupled-path-v1|look300": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.0|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.1|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 314,
+   "fail_count": 11,
+   "unresolved_count": 9675,
+   "zero_branch": 1,
+   "positive_branch": 9999,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.1|cluster_correlated|10000|coupled-path-v1|look300": {
+   "pass_count": 155,
+   "fail_count": 27,
+   "unresolved_count": 9818,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.1|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 156,
+   "fail_count": 41,
+   "unresolved_count": 9803,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.1|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 220,
+   "fail_count": 23,
+   "unresolved_count": 9757,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.1|row_dispersed|10000|coupled-path-v1|look300": {
+   "pass_count": 153,
+   "fail_count": 39,
+   "unresolved_count": 9808,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|0.8|0.1|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 139,
+   "fail_count": 45,
+   "unresolved_count": 9816,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.05|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 4385,
+   "fail_count": 0,
+   "unresolved_count": 5615,
+   "zero_branch": 74,
+   "positive_branch": 9926,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.05|cluster_correlated|10000|coupled-path-v1|look300": {
+   "pass_count": 8793,
+   "fail_count": 0,
+   "unresolved_count": 1207,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.05|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 9880,
+   "fail_count": 0,
+   "unresolved_count": 120,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.05|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 8859,
+   "fail_count": 0,
+   "unresolved_count": 1141,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.05|row_dispersed|10000|coupled-path-v1|look300": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.05|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.0|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.0|cluster_correlated|10000|coupled-path-v1|look300": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.0|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.0|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.0|row_dispersed|10000|coupled-path-v1|look300": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.0|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "zero_branch": 10000,
+   "positive_branch": 0,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.1|cluster_correlated|10000|coupled-path-v1|look100": {
+   "pass_count": 204,
+   "fail_count": 21,
+   "unresolved_count": 9775,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.1|cluster_correlated|10000|coupled-path-v1|look300": {
+   "pass_count": 170,
+   "fail_count": 52,
+   "unresolved_count": 9778,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.1|cluster_correlated|10000|coupled-path-v1|look500": {
+   "pass_count": 186,
+   "fail_count": 43,
+   "unresolved_count": 9771,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.1|row_dispersed|10000|coupled-path-v1|look100": {
+   "pass_count": 188,
+   "fail_count": 36,
+   "unresolved_count": 9776,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.1|row_dispersed|10000|coupled-path-v1|look300": {
+   "pass_count": 132,
+   "fail_count": 51,
+   "unresolved_count": 9817,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  },
+  "C|ordinary|1.0|0.1|row_dispersed|10000|coupled-path-v1|look500": {
+   "pass_count": 133,
+   "fail_count": 58,
+   "unresolved_count": 9809,
+   "zero_branch": 0,
+   "positive_branch": 10000,
+   "denominator_unresolved": 0,
+   "trials": 10000
+  }
+ },
+ "artifact_sha256": "3952afdf99c6523eadf58a840adfae9be6cd0bb3a7d73abe72c6fe34aa17aeae"
+}

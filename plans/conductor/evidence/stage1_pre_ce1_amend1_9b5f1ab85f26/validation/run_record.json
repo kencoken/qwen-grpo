@@ -1,0 +1,32 @@
+{
+ "status": "complete",
+ "stages": [
+  "execution_bundle_manifest",
+  "env_manifest",
+  "deterministic_equivalence",
+  "benchmark",
+  "artifact_A",
+  "artifact_C",
+  "partial_D_D1_seq_null_ordinary_div3",
+  "partial_D_D2_seq_null_fork_div3",
+  "partial_D_D3_equiv_boundary_plus",
+  "partial_D_D4_equiv_boundary_minus",
+  "partial_D_D5_pilot_hetero_unequal",
+  "partial_D_D6_persist_const_theta10",
+  "partial_D_D7_persist_rowdispersed_theta10",
+  "partial_D_D8_persist_hybrid_theta01_fork",
+  "artifact_D"
+ ],
+ "scenario_wall_seconds": {
+  "D1_seq_null_ordinary_div3": 4586,
+  "D2_seq_null_fork_div3": 809,
+  "D3_equiv_boundary_plus": 1203,
+  "D4_equiv_boundary_minus": 1200,
+  "D5_pilot_hetero_unequal": 1504,
+  "D6_persist_const_theta10": 114,
+  "D7_persist_rowdispersed_theta10": 114,
+  "D8_persist_hybrid_theta01_fork": 29
+ },
+ "started_unix": 1785009030,
+ "total_wall_seconds": 9672
+}
