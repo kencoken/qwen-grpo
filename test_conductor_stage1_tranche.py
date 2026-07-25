@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from tasks.conductor import stage1, stage1_validation as sv
+from tasks.conductor import stage1_amend1 as am_mod
 from tasks.conductor import stage1_replay as sr
 from tasks.conductor import stage1_tranche as st
 from tasks.conductor.grpo_smoke import STAGE0C_LAUNCH_PROFILE
@@ -40,6 +41,8 @@ def _env_manifest():
 
 ENV = _env_manifest()
 EXEC_SHA = ENV["execution_manifest_sha256"]
+_REGISTRY_A = am_mod.finalize_seed_registry(
+    tuple(f"o{i:02d}" for i in range(18)))
 
 
 def _support_rows():
@@ -139,27 +142,57 @@ def test_registry_cardinalities():
     assert not (reg["A_position"] & reg["A_router"])
 
 
-def test_d_registry_frozen_shape():
-    ids = [s["id"] for s in st.D_SCENARIOS]
-    assert len(ids) == 8 <= sv.COVERAGE_SCENARIO_CAP
-    assert ids == sorted(ids)
-    for s in st.D_SCENARIOS:
-        assert s["error_decision"] in ("pass", "undercover")
-        assert 0 < s["allocated_alpha"] < 0.20
-        assert callable(s["dgp"])
-    assert any("seq_null_ordinary" in i for i in ids)
-    assert any("seq_null_fork" in i for i in ids)
-    assert any("equiv_boundary_plus" in i for i in ids)
-    assert any("equiv_boundary_minus" in i for i in ids)
-    assert any("pilot" in i for i in ids)
-    assert sum("persist" in i for i in ids) == 3
+def test_d_registry_amended_shape():
+    from tasks.conductor import stage1_amend1 as am
+    ids = tuple(sc["id"] for sc in st.D_SCENARIOS)
+    assert ids == am.AMEND1_D_IDS
+    for sc in st.D_SCENARIOS:
+        assert sc["kind"] in ("decision", "persistence")
+        assert sc["allocated_alpha"] == pytest.approx(
+            am.AMEND1_D_ALPHAS[sc["id"]])
+        assert callable(sc["dgp"])
+    # D2 uses the AMENDED fork schedule (158_s §5.1)
+    assert st.stage1_fork_schedule() == (100, 500)
+    # D8 carries the both-branches support requirement (158_s §6)
+    d8 = next(sc for sc in st.D_SCENARIOS
+              if sc["id"] == "D8_persist_hybrid_theta01_fork")
+    assert d8["requires_both_branches_each_look"] is True
+    assert d8["theta"] == pytest.approx(0.01)
 
 
 def test_d_scenarios_execute_one_trial_each():
-    for s in st.D_SCENARIOS:
-        decision = s["dgp"](123456789)
-        assert decision in ("pass", "fail", "unresolved", "not_pass",
-                            "cover", "undercover")
+    for sc in st.D_SCENARIOS:
+        out = sc["dgp"](123456789)
+        if sc["kind"] == "decision":
+            assert out in ("pass", "fail", "unresolved", "not_pass")
+        else:
+            undercover, branches = out
+            assert isinstance(undercover, bool)
+            assert branches and all(
+                tag in ("zero", "positive", "denominator_unresolved")
+                for tag in branches.values())
+
+
+def test_no_agreement_machinery_remains():
+    # 158_s §6: no reduced-replicate implementation remains
+    for name in ("run_agreement_gate", "agreement_passes",
+                 "_AGREEMENT_FAMILIES", "_BOOTSTRAP_SCENARIOS"):
+        assert not hasattr(st, name)
+    assert not hasattr(sv, "COVERAGE_INNER_REPLICATES")
+
+
+def test_d8_branch_support_rule():
+    good = {f"D8_persist_hybrid_theta01_fork|look{n}":
+            {"zero_branch": 5, "positive_branch": 4_995,
+             "denominator_unresolved": 0, "trials": 5_000}
+            for n in (100, 500)}
+    assert st.d8_branch_support_ok(good)
+    bad = dict(good)
+    bad["D8_persist_hybrid_theta01_fork|look500"] = {
+        "zero_branch": 0, "positive_branch": 5_000,
+        "denominator_unresolved": 0, "trials": 5_000}
+    assert not st.d8_branch_support_ok(bad)
+    assert not st.d8_branch_support_ok({})
 
 
 def test_dgp_rows_have_cluster_level_variance():
@@ -172,56 +205,6 @@ def test_dgp_rows_have_cluster_level_variance():
     assert np.array_equal(rows[:, 0], rows[:, 2])
     assert rows.mean(axis=1).std(ddof=1) == pytest.approx(0.75,
                                                           abs=0.03)
-
-
-# --- agreement gate (145_s finding 3) -------------------------------------------
-
-def test_agreement_criterion_wilson_999_of_1000():
-    # the frozen criterion: one-sided 95% Wilson LB >= 0.995 on exactly
-    # 1,000 datasets — 999/1000 is the minimum pass; 995/1000 fails
-    assert st.agreement_passes({"agree_count": 1_000,
-                                "datasets": 1_000})
-    assert st.agreement_passes({"agree_count": 999, "datasets": 1_000})
-    assert not st.agreement_passes({"agree_count": 998,
-                                    "datasets": 1_000})
-    assert not st.agreement_passes({"agree_count": 995,
-                                    "datasets": 1_000})
-
-
-def test_agreement_rejects_wrong_sample_sizes():
-    with pytest.raises(st.TrancheError, match="exactly"):
-        st.agreement_passes({"agree_count": 1, "datasets": 1})  # 1/1
-    with pytest.raises(st.TrancheError, match="exactly"):
-        st.agreement_passes({"agree_count": 500, "datasets": 500})
-    with pytest.raises(st.TrancheError, match="malformed"):
-        st.agreement_passes({"agree_count": 1_001, "datasets": 1_000})
-    with pytest.raises(st.TrancheError, match="malformed"):
-        st.agreement_passes({"agree_count": 999.0, "datasets": 1_000})
-
-
-def test_agreement_families_cover_reduced_replicate_scenarios():
-    # the gate's datasets must represent D1-D5 (stake ordinary/fork,
-    # equivalence, pilot-unequal), not only ordinary stakes
-    assert set(st._AGREEMENT_FAMILIES) == {
-        "stake_ordinary", "stake_fork", "equivalence", "pilot_unequal"}
-    # each family's decision function runs (tiny replicates, throwaway)
-    rng = np.random.default_rng(12)
-    assert st._agreement_decision(
-        "stake_ordinary", [st._tp_rows(rng, 0.3, 0.3, 500)], 50, 1) \
-        in ("pass", "fail", "unresolved")
-    assert st._agreement_decision(
-        "equivalence", [st._tp_rows(rng, 0.0, 0.3, 500)], 50, 1) \
-        in ("pass", "fail", "unresolved")
-    assert st._agreement_decision(
-        "pilot_unequal", [st._tp_rows(rng, 0.0, 0.4, n)
-                          for n in (12, 12, 6)], 50, 1) \
-        in ("pass", "not_pass")
-
-
-def test_agreement_gate_blocks_bootstrap_scenarios():
-    bad = {"agree_count": 900, "datasets": 1_000}
-    with pytest.raises(st.TrancheError, match="agreement gate"):
-        st.run_d_battery(bad)
 
 
 def test_deterministic_equivalence_set_passes_production_inference():
@@ -297,203 +280,153 @@ def test_load_rejects_mixed_executions():
 
 # --- fail-closed aggregate verdict -------------------------------------------------
 
-def _full_artifacts(c_power_pass=True, b_k=30):
+def _amend1_bundle():
+    return am_mod.build_execution_bundle(_bundle_fields_amend1(),
+                                         seed_registry=_REGISTRY_A)
+
+
+def _bundle_fields_amend1():
+    return {
+        "amendment_prereg_sha256": "a" * 64,
+        "lock_record_sha256": "b" * 64,
+        "git_commit": "c" * 40,
+        "source_digest": "d" * 64,
+        "environment_manifest_sha256": ENV["execution_manifest_sha256"],
+        "v1_evidence_manifest_sha256":
+            am_mod.V1_EVIDENCE_MANIFEST_SHA256,
+        "scenario_grid_sha256": am_mod.scenario_grid_digest(),
+        "request_contract_sha256": am_mod.request_contract_digest(),
+        "artifact_schema_sha256": am_mod.artifact_schema_digest(),
+        "expected_file_set_sha256": am_mod.expected_file_set_digest(),
+        "prompt_sha256s": [stage1.PROMPT_FEWSHOT_SHA256,
+                           stage1.PROMPT_SCHEMA_ONLY_SHA256],
+        "artifact_tags": [am_mod.AMEND1_VALIDATION_TAG,
+                          am_mod.AMEND1_REPLAY_TAG,
+                          am_mod.AMEND1_ARTIFACT_TAG],
+        "run_roots": [am_mod.AMEND1_VALIDATION_RUN_ROOT,
+                      am_mod.AMEND1_REPLAY_RUN_ROOT],
+        "attempt_id": am_mod.ATTEMPT_ID,
+    }
+
+
+def _amend1_artifacts(c_pass=True, d_pass=True, b_k=30):
+    from tasks.conductor import stage1_persistence as sp_mod
+    bundle = _amend1_bundle()
+    exec_sha = bundle["execution_bundle_sha256"]
     reg = st.expected_result_keys()
     a_res = {k: {"pass_count": 9_500, "fail_count": 0,
                  "unresolved_count": 500, "trials": 10_000}
              for k in reg["A_position"] | reg["A_router"]}
-    c_res = {}
-    for key in reg["C"]:
-        theta = float(key.split("|")[4])
-        n = sv.PERSISTENCE_TRIALS
-        k = n if theta == 0.0 else (9_000 if c_power_pass else 1_440)
-        c_res[key] = {"pass_count": k, "unresolved_count": 0,
-                      "trials": n}
-    d_res = {sc["id"]: {"error_count": 0,
-                        "trials": sv.COVERAGE_OUTER_TRIALS}
+    a = st.finalize_artifact("A", exec_sha, a_res,
+                             tag=am_mod.AMEND1_ARTIFACT_TAG)
+    fp = 10_000 if c_pass else 1_421
+    path_rows = {am_mod.c_path_key(*cell): {
+        "first_pass": fp, "first_fail": 0,
+        "cap_unresolved": 10_000 - fp, "trials": 10_000}
+        for cell in am_mod.c_path_cells()}
+    marginal_rows = {key: {"pass_count": fp, "fail_count": 0,
+                           "unresolved_count": 10_000 - fp,
+                           "zero_branch": 100,
+                           "positive_branch": 9_900,
+                           "denominator_unresolved": 0,
+                           "trials": 10_000}
+                     for key in am_mod.c_marginal_keys()}
+    c = sp_mod.build_c_artifact(exec_sha, path_rows, marginal_rows)
+    err = 0 if d_pass else 5_000
+    d_res = {sc["id"]: {"error_count": err, "trials": 5_000}
              for sc in st.D_SCENARIOS}
-    a = st.finalize_artifact("A", EXEC_SHA, a_res)
-    c = st.finalize_artifact("C", EXEC_SHA, c_res)
-    d = st.finalize_artifact(
-        "D", EXEC_SHA, d_res,
-        extra={"agreement": {"agree_count": 999, "datasets": 1_000}})
-    return a, c, d, _b_evidence(k2=b_k, k3=b_k)
+    branch = {f"{sid}|look{n}": {"zero_branch": 100,
+                                 "positive_branch": 4_900,
+                                 "denominator_unresolved": 0,
+                                 "trials": 5_000}
+              for sid in ("D6_persist_const_theta10",
+                          "D7_persist_rowdispersed_theta10",
+                          "D8_persist_hybrid_theta01_fork")
+              for n in ((100, 300, 500) if "fork" not in sid
+                        else (100, 500))}
+    d = st.finalize_artifact("D", exec_sha, d_res,
+                             extra={"branch_counts": branch},
+                             tag=am_mod.AMEND1_ARTIFACT_TAG)
+    b = _b_evidence(k2=b_k, k3=b_k, exec_sha=exec_sha)
+    return bundle, a, c, d, b
 
 
-def test_aggregate_verdict_confirm_path():
-    a, c, d, b = _full_artifacts()
-    v = st.aggregate_verdict(a, c, d, b, env_manifest=ENV,
-                         b_pinned_loader=b['loader'])
-    assert v["confirm_possible"] is True
+def test_amend1_verdict_confirm_c2_provisional():
+    bundle, a, c, d, b = _amend1_artifacts()
+    v = st.aggregate_amend1_verdict(
+        a, c, d, b, env_manifest=ENV, bundle=bundle,
+        seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
+    assert v["decision"] == "confirm_c2_provisional"
+    assert v["C2_preCE1_available"] is True
     assert v["D_failing"] == []
-    assert v["B_directions_blocking"] == []
 
 
-def test_aggregate_verdict_c_failure_predicted_path():
-    a, c, d, b = _full_artifacts(c_power_pass=False)
-    v = st.aggregate_verdict(a, c, d, b, env_manifest=ENV,
-                         b_pinned_loader=b['loader'])
-    assert v["confirm_possible"] is False
-    assert len(v["C_power_failing"]) == 2
+def test_amend1_verdict_c1_only_on_not_demonstrated():
+    # 158_s §7: B not_demonstrated does NOT block confirmation — it
+    # freezes C2 unavailable and the C1-only branch continues
+    bundle, a, c, d, _ = _amend1_artifacts()
+    b = _b_evidence(k2=0, k3=0,
+                    exec_sha=bundle["execution_bundle_sha256"])
+    v = st.aggregate_amend1_verdict(
+        a, c, d, b, env_manifest=ENV, bundle=bundle,
+        seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
+    assert v["decision"] == "confirm_c1_only"
+    assert v["C2_preCE1_available"] is False
+    assert set(v["B_direction_statuses"].values()) == \
+        {"not_demonstrated"}
 
 
-def test_aggregate_verdict_requires_valid_env_manifest():
-    # 148_s finding 3: the identity must be the hash of a valid
-    # environment manifest, not a bare matching string
-    a, c, d, b = _full_artifacts()
-    from tasks.conductor.stage1_manifest import ManifestError
-    with pytest.raises(ManifestError, match="environment"):
-        st.aggregate_verdict(a, c, d, b, env_manifest={
-            **ENV, "execution_manifest_sha256": "e" * 64})
-    with pytest.raises(ManifestError, match="stage1-environment-v2"):
-        st.aggregate_verdict(a, c, d, b,
-                             env_manifest={"manifest": "bogus"})
+def test_amend1_verdict_scientific_stop():
+    bundle, a, c, d, b = _amend1_artifacts(c_pass=False)
+    v = st.aggregate_amend1_verdict(
+        a, c, d, b, env_manifest=ENV, bundle=bundle,
+        seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
+    assert v["decision"] == "scientific_stop"
+    assert v["C_hard_path_failures"]
+    # D failures also stop scientifically
+    bundle2, a2, c2, d2, b2 = _amend1_artifacts(d_pass=False)
+    v2 = st.aggregate_amend1_verdict(
+        a2, c2, d2, b2, env_manifest=ENV, bundle=bundle2,
+        seed_registry=_REGISTRY_A, b_pinned_loader=b2["loader"])
+    assert v2["decision"] == "scientific_stop"
+    assert len(v2["D_failing"]) == 8
 
 
-def test_aggregate_verdict_empty_or_partial_b_refuses():
-    a, c, d, b = _full_artifacts()
-    with pytest.raises(st.TrancheError, match="missing"):
-        st.aggregate_verdict(a, c, d, {}, env_manifest=ENV,
-                             b_pinned_loader=b["loader"])
-    truncated = dict(b)
+def test_amend1_verdict_infrastructure_abort():
+    # malformed/unreproducible B evidence RAISES (infrastructure
+    # abort), never a scientific decision
+    bundle, a, c, d, b = _amend1_artifacts()
     raw = json.loads(b["raw_completions_text"])
     raw.pop(next(iter(raw)))
-    truncated["raw_completions_text"] = json.dumps(
-        dict(sorted(raw.items())), ensure_ascii=False)
-    with pytest.raises(InfrastructureError, match="hash"):
-        st.aggregate_verdict(a, c, d, truncated, env_manifest=ENV,
-                             b_pinned_loader=b["loader"])
-
-
-def test_aggregate_verdict_self_rehashed_b_refuses():
-    # the 148_s attack: re-finalize the artifact with tampered counts
-    # (valid self-hash) — the raw-completion recount must refuse it
-    a, c, d, b = _full_artifacts()
-    art = b["artifact"]
-    tampered_counts = {k: {"k2": 0, "k3": 0, "n": sr.REPLAY_COMPLETIONS}
-                       for k in art["results"]}
-    rehashed = st.finalize_artifact(
-        "B", EXEC_SHA, tampered_counts,
-        extra={"pair_table": art["pair_table"],
-               "obs_meta": art["obs_meta"],
-               "replay_manifest_sha256": art["replay_manifest_sha256"],
-               "raw_completions_sha256":
-                   art["raw_completions_sha256"]})
-    evil = dict(b, artifact=rehashed)
-    with pytest.raises(InfrastructureError, match="reproduce"):
-        st.aggregate_verdict(a, c, d, evil, env_manifest=ENV,
-                             b_pinned_loader=b["loader"])
-
-
-def test_aggregate_verdict_b_not_demonstrated_blocks():
-    a, c, d, _ = _full_artifacts()
-    b = _b_evidence(k2=0, k3=0)
-    v = st.aggregate_verdict(a, c, d, b, env_manifest=ENV,
-                         b_pinned_loader=b['loader'])
-    assert v["B_directions_blocking"] == ["2", "3"]
-    assert v["confirm_possible"] is False
-
-
-def test_aggregate_verdict_mixed_executions_refuse():
-    a, c, d, _ = _full_artifacts()
-    foreign = _b_evidence(exec_sha="f" * 64)
-    with pytest.raises((st.TrancheError, InfrastructureError)):
-        st.aggregate_verdict(a, c, d, foreign, env_manifest=ENV,
-                             b_pinned_loader=foreign["loader"])
-
-
-def test_aggregate_verdict_d_agreement_failure():
-    a, c, d, b = _full_artifacts()
-    d_bad = st.finalize_artifact(
-        "D", EXEC_SHA, {k: dict(v) for k, v in d["results"].items()},
-        extra={"agreement": {"agree_count": 995, "datasets": 1_000}})
-    v = st.aggregate_verdict(a, c, d_bad, b, env_manifest=ENV,
-                             b_pinned_loader=b["loader"])
-    assert "agreement" in v["D_failing"]
-    assert v["confirm_possible"] is False
-
-
-def test_verify_replay_evidence_regenerates_the_manifest():
-    b = _b_evidence()
-    # wrong contract inside a REHASHED replay manifest refuses: the
-    # verifier regenerates the complete expected manifest internally
-    bad = json.loads(json.dumps(b["replay_manifest"]))
-    bad["contract"] = dict(bad["contract"], total_completions=2_304)
-    body = {k: v for k, v in bad.items()
-            if k != "replay_manifest_sha256"}
-    import hashlib as _h
-    from tasks.conductor.profiles import canonical_json
-    bad["replay_manifest_sha256"] = _h.sha256(
-        canonical_json(body).encode("utf-8")).hexdigest()
-    with pytest.raises(InfrastructureError, match="authoritative"):
-        sr.verify_replay_evidence(
-            b["artifact"], env_manifest=ENV, replay_manifest=bad,
-            raw_completions_text=b["raw_completions_text"],
-            pinned_loader=b["loader"])
-    # 151_s probe: a rehashed manifest with ONE altered request hash
-    # is refused against the regenerated authoritative values
-    bad2 = json.loads(json.dumps(b["replay_manifest"]))
-    rr_key = next(iter(bad2["rendered_request_sha256"]))
-    bad2["rendered_request_sha256"][rr_key] = "b" * 64
-    body2 = {k: v for k, v in bad2.items()
-             if k != "replay_manifest_sha256"}
-    bad2["replay_manifest_sha256"] = _h.sha256(
-        canonical_json(body2).encode("utf-8")).hexdigest()
-    with pytest.raises(InfrastructureError, match="authoritative"):
-        sr.verify_replay_evidence(
-            b["artifact"], env_manifest=ENV, replay_manifest=bad2,
-            raw_completions_text=b["raw_completions_text"],
-            pinned_loader=b["loader"])
-    # a pinned surface that rederives a different pair table refuses
-    surface2 = dict(b["surface"])
-    key = next(k for k in surface2
-               if k[0].startswith("code_atomic")
-               and surface2[k] == 1.0)   # flip the w3 win -> direction
-    surface2[key] = 0.0
-    rows = b["support_rows"]
-
-    def loader2():
-        rr = {f"{o}|{p}": "a" * 64 for o in sorted(rows)
-              for p in (FEW, SO)}
-        return surface2, rows, rr
-    with pytest.raises(InfrastructureError, match="authoritative"):
-        sr.verify_replay_evidence(
-            b["artifact"], env_manifest=ENV,
-            replay_manifest=b["replay_manifest"],
-            raw_completions_text=b["raw_completions_text"],
-            pinned_loader=loader2)
-
-
-def test_recount_handles_real_build_smoke_rows():
-    # 151_s finding 1: positions arrive as JSON text from the REAL
-    # support rows; the recount must parse them
-    from tasks.conductor.grpo_task import build_smoke_rows
-    rows = {r["observation_id"]: r for r in build_smoke_rows()}
-    assert len(rows) == 18
-    code_obs = next(o for o, r in rows.items()
-                    if r["cell_id"] == "fork_join")
-    meta = rows[code_obs]
-    assert isinstance(meta["positions"], str)  # JSON text, the trap
-    pair = sr.family_correct_variants("fork_join")
-    positions = json.loads(meta["positions"])
-    # craft one parseable completion selecting the w2 variant in the
-    # REAL positional order
-    by_node = dict(zip(sorted(positions), pair[0]))
-    positional = [by_node[n] for n in positions]
-    table = {code_obs: {"cell_id": "fork_join",
-                        "assignment_w2": pair[0],
-                        "assignment_w3": pair[1],
-                        "distinct_payoff": 1, "direction": 2}}
-    raw = {}
-    for p in (FEW, SO):
-        for i in range(sr.REPLAY_COMPLETIONS):
-            raw[f"{code_obs}|{p}|{i:03d}"] = (
-                json.dumps({"worker_ids": positional}) if i < 7
-                else "malformed")
-    counts = sr.recount_from_raw(raw, table, rows)
-    for p in (FEW, SO):
-        assert counts[f"{code_obs}|{p}"] == {
-            "k2": 7, "k3": 0, "n": sr.REPLAY_COMPLETIONS}
+    tampered = dict(b, raw_completions_text=json.dumps(
+        dict(sorted(raw.items())), ensure_ascii=False))
+    with pytest.raises(InfrastructureError):
+        st.aggregate_amend1_verdict(
+            a, c, d, tampered, env_manifest=ENV, bundle=bundle,
+            seed_registry=_REGISTRY_A, b_pinned_loader=b["loader"])
+    # a bundle validated against the wrong registry refuses
+    other = am_mod.finalize_seed_registry(
+        [f"z{i:02d}" for i in range(18)])
+    with pytest.raises(InfrastructureError):
+        st.aggregate_amend1_verdict(
+            a, c, d, b, env_manifest=ENV, bundle=bundle,
+            seed_registry=other, b_pinned_loader=b["loader"])
+    # D8 branch-support failure is a D (scientific) failure
+    bundle3, a3, c3, d3raw, b3 = _amend1_artifacts()
+    exec_sha = bundle3["execution_bundle_sha256"]
+    d_res = {k: dict(v) for k, v in d3raw["results"].items()}
+    branch = {k: dict(v) for k, v in d3raw["branch_counts"].items()}
+    branch["D8_persist_hybrid_theta01_fork|look500"] = {
+        "zero_branch": 0, "positive_branch": 5_000,
+        "denominator_unresolved": 0, "trials": 5_000}
+    d3 = st.finalize_artifact("D", exec_sha, d_res,
+                              extra={"branch_counts": branch},
+                              tag=am_mod.AMEND1_ARTIFACT_TAG)
+    v3 = st.aggregate_amend1_verdict(
+        a3, c3, d3, b3, env_manifest=ENV, bundle=bundle3,
+        seed_registry=_REGISTRY_A, b_pinned_loader=b3["loader"])
+    assert "D8_branch_support" in v3["D_failing"]
+    assert v3["decision"] == "scientific_stop"
 
 
 # --- B replay contract --------------------------------------------------------------

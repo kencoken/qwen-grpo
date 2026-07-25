@@ -8,8 +8,10 @@ output is revealed:
   cells, 24 A-router cells, 120 C cells, 8 D scenarios, 1 B artifact);
 - the frozen D scenario registry: DGPs, seeds, allocated operational
   alphas, truth, and error definitions;
-- the agreement gate, which must run AND pass before the
-  reduced-replicate battery;
+- (amended per 158_s §6, Unit C: the agreement gate and the
+  2,000-replicate approximation are DELETED — 10,000 production
+  replicates are the only inner count; the v1 machinery lives in the
+  archived worktree at da8424b);
 - canonical, content-addressed artifacts holding INTEGER sufficient
   statistics only (every rate/bound is recomputed at load — floats are
   never persisted or hashed);
@@ -27,8 +29,11 @@ from typing import Any, Callable, Mapping
 
 import numpy as np
 
+from . import stage1_amend1 as am
+from . import stage1_persistence as sp
 from . import stage1_validation as sv
 from .profiles import canonical_json
+from .types import InfrastructureError
 
 TRANCHE_ARTIFACT_TAG = "stage1-validation-v1"
 
@@ -105,6 +110,13 @@ def _tp_rows(rng: np.random.Generator, delta: float, sigma: float,
     return np.repeat(cluster_vals[:, None], renderers, axis=1)
 
 
+def stage1_fork_schedule() -> tuple[int, ...]:
+    """The amended fork looks, read from the single source (158_s
+    §5.1: (100, 500))."""
+    from . import stage1
+    return tuple(stage1.FORK_LOOK_SCHEDULE)
+
+
 def _dgp_seq_null(schedule: tuple[int, ...], tail: float, cells: int,
                   sigma: float) -> Callable[[int], str]:
     def run(trial_seed: int) -> str:
@@ -112,7 +124,7 @@ def _dgp_seq_null(schedule: tuple[int, ...], tail: float, cells: int,
         rows = [_tp_rows(rng, 0.0, sigma, schedule[-1])
                 for _ in range(cells)]
         return sv.sequential_stake_decision(
-            rows, schedule, tail, sv.COVERAGE_INNER_REPLICATES,
+            rows, schedule, tail, sv.COVERAGE_PRODUCTION_REPLICATES,
             seed=trial_seed ^ 0x5EED)
     return run
 
@@ -126,7 +138,7 @@ def _dgp_equiv_boundary(theta: float) -> Callable[[int], str]:
         if theta < 0:
             rows = [-r for r in rows]
         return sv.sequential_equivalence_decision(
-            rows, looks, tail, sv.COVERAGE_INNER_REPLICATES,
+            rows, looks, tail, sv.COVERAGE_PRODUCTION_REPLICATES,
             seed=trial_seed ^ 0x5EED)
     return run
 
@@ -142,78 +154,93 @@ def _dgp_pilot_hetero() -> Callable[[int], str]:
         rows = [_tp_rows(rng, 0.0, sg, n)
                 for sg, n in zip(sigmas, counts)]
         lcb, _ = sv.paired_cluster_bootstrap(
-            rows, 0.05 / 2, sv.COVERAGE_INNER_REPLICATES,
+            rows, 0.05 / 2, sv.COVERAGE_PRODUCTION_REPLICATES,
             seed=trial_seed ^ 0x5EED)
         return "pass" if lcb > 0 else "not_pass"
     return run
 
 
-def _dgp_persistence(schedule: str, eligibility: float, theta: float
-                     ) -> Callable[[int], str]:
-    # exact CP/Hoeffding scenario — no bootstrap (132_s §8.4D); error is
-    # UNDERCOVERAGE: the operational bound falling below the true row
-    # rate at any registered look
-    spec = sv.PERSISTENCE_LOOKS[schedule]
-    looks, tail = spec["looks"], spec["tail_alpha"]
-    structural = eligibility >= 1.0
-    m = sv.PERSISTENCE_M
+def _amended_persistence_upper(record) -> float:
+    """The reported ratio upper endpoint at one look (158_s §6): the
+    zero-branch operational bound, or the inverted-interval upper for
+    the positive branch; a denominator-unresolved look reports 1."""
+    if record["branch"] == "zero":
+        u = record["zero_U"]
+        return float("inf") if u == "inf" else float(u)
+    if record["denominator_check"] == "unresolved":
+        return 1.0
+    return float(record["pos_U_p"])
 
-    def run(trial_seed: int) -> str:
-        rng = np.random.Generator(np.random.PCG64(trial_seed))
-        cap = looks[-1]
-        n_elig_cap = int(round(eligibility * cap))
-        eligible = np.zeros(cap, dtype=bool)
-        eligible[rng.permutation(cap)[:n_elig_cap]] = True
-        persists = rng.random((cap, m)) < theta
+
+def _dgp_amended_persistence(schedule: str, eligibility: float,
+                             theta: float, dist: str,
+                             structural: bool) -> Callable[[int], Any]:
+    """D6-D8 (158_s §6): one maximum-length prefix-valid vector per
+    outer trial; every registered look evaluated with the AMENDED
+    statistic (inversion included); error = UNDERCOVERAGE — the
+    reported upper endpoint strictly below the true theta at ANY
+    registered look (U_p == theta covers at the non-strict boundary).
+    Returns (undercover: bool, branches: {look: branch-tag})."""
+    looks = sv.PERSISTENCE_LOOKS[schedule]["looks"]
+
+    def run(trial_seed: int):
+        j, k = sp.generate_path(schedule, eligibility, theta, dist,
+                                trial_seed)
+        undercover = False
+        branches: dict[int, str] = {}
         for look in looks:
-            k_any = int((eligible[:look]
-                         & persists[:look].any(axis=1)).sum())
-            mean_q = float(eligible[:look].mean())
-            bound, resolved = sv.persistence_envelope(
-                k_any, look, mean_q, tail,
-                structural_full_eligibility=structural)
-            if resolved and bound < theta:
-                return "undercover"
-        return "cover"
+            record = sp.look_decision(j[:look], k[:look], schedule,
+                                      structural=structural)
+            if record["branch"] == "zero":
+                branches[look] = "zero"
+            elif record["denominator_check"] == "unresolved":
+                branches[look] = "denominator_unresolved"
+            else:
+                branches[look] = "positive"
+            if _amended_persistence_upper(record) < theta:
+                undercover = True
+        return undercover, branches
     return run
 
 
 D_SCENARIOS: tuple[dict[str, Any], ...] = (
-    {"id": "D1_seq_null_ordinary_div3",
+    {"id": "D1_seq_null_ordinary_div3", "kind": "decision",
      "dgp": _dgp_seq_null((100, 300, 500), 0.05 / 9, 5, 0.75),
      "error_decision": "pass", "allocated_alpha": 3 * 0.05 / 9},
-    {"id": "D2_seq_null_fork_div3",
-     "dgp": _dgp_seq_null((100, 200), 0.05 / 6, 1, 0.50),
+    # 158_s §5.1: schedule-based fork rows use the AMENDED (100, 500)
+    {"id": "D2_seq_null_fork_div3", "kind": "decision",
+     "dgp": _dgp_seq_null(stage1_fork_schedule(), 0.05 / 6, 1, 0.50),
      "error_decision": "pass", "allocated_alpha": 2 * 0.05 / 6},
-    {"id": "D3_equiv_boundary_plus",
+    {"id": "D3_equiv_boundary_plus", "kind": "decision",
      "dgp": _dgp_equiv_boundary(+0.10),
      "error_decision": "pass", "allocated_alpha": 3 * 0.05 / 6},
-    {"id": "D4_equiv_boundary_minus",
+    {"id": "D4_equiv_boundary_minus", "kind": "decision",
      "dgp": _dgp_equiv_boundary(-0.10),
      "error_decision": "pass", "allocated_alpha": 3 * 0.05 / 6},
-    {"id": "D5_pilot_hetero_unequal",
+    {"id": "D5_pilot_hetero_unequal", "kind": "decision",
      "dgp": _dgp_pilot_hetero(),
      "error_decision": "pass", "allocated_alpha": 0.05 / 2},
-    {"id": "D6_persist_const_theta10",
-     "dgp": _dgp_persistence("ordinary", 1.00, 0.10),
-     "error_decision": "undercover", "allocated_alpha": 3 * 0.05 / 3},
-    {"id": "D7_persist_var_nearzero",
-     "dgp": _dgp_persistence("ordinary", 0.65, 0.01),
-     "error_decision": "undercover", "allocated_alpha": 3 * 0.05 / 3},
-    {"id": "D8_persist_var_zero_floor_fork",
-     "dgp": _dgp_persistence("fork", 0.60, 0.0),
-     "error_decision": "undercover", "allocated_alpha": 2 * 0.05 / 2},
+    # 158_s §6: reissued undercoverage rows on the AMENDED statistic
+    {"id": "D6_persist_const_theta10", "kind": "persistence",
+     "dgp": _dgp_amended_persistence("ordinary", 1.00, 0.10,
+                                     "cluster_correlated",
+                                     structural=True),
+     "theta": 0.10, "allocated_alpha": 0.05},
+    {"id": "D7_persist_rowdispersed_theta10", "kind": "persistence",
+     "dgp": _dgp_amended_persistence("ordinary", 0.65, 0.10,
+                                     "row_dispersed",
+                                     structural=False),
+     "theta": 0.10, "allocated_alpha": 0.05},
+    {"id": "D8_persist_hybrid_theta01_fork", "kind": "persistence",
+     "dgp": _dgp_amended_persistence("fork", 0.60, 0.01,
+                                     "cluster_correlated",
+                                     structural=False),
+     "theta": 0.01, "allocated_alpha": 0.05,
+     "requires_both_branches_each_look": True},
 )
 assert len(D_SCENARIOS) <= sv.COVERAGE_SCENARIO_CAP
-assert len({s["id"] for s in D_SCENARIOS}) == len(D_SCENARIOS)
-
-# bootstrap-based scenarios must clear the agreement gate first
-_BOOTSTRAP_SCENARIOS = ("D1_seq_null_ordinary_div3",
-                        "D2_seq_null_fork_div3",
-                        "D3_equiv_boundary_plus",
-                        "D4_equiv_boundary_minus",
-                        "D5_pilot_hetero_unequal")
-
+assert len({sc["id"] for sc in D_SCENARIOS}) == len(D_SCENARIOS)
+assert tuple(sc["id"] for sc in D_SCENARIOS) == am.AMEND1_D_IDS
 
 # --- deterministic equivalence set (production 10k replicates) ----------------
 
@@ -251,87 +278,6 @@ def run_deterministic_equivalence_set() -> dict[str, str]:
     return results
 
 
-# --- agreement gate -------------------------------------------------------------
-
-def _agreement_decision(family: str, rows: list[np.ndarray],
-                        replicates: int, seed: int) -> str:
-    if family == "stake_ordinary":
-        return sv.sequential_stake_decision(rows, (100, 300, 500),
-                                            0.05 / 9, replicates, seed)
-    if family == "stake_fork":
-        return sv.sequential_stake_decision(rows, (100, 200), 0.05 / 6,
-                                            replicates, seed)
-    if family == "equivalence":
-        return sv.sequential_equivalence_decision(
-            rows, (100, 300, 500), 0.05 / 3, replicates, seed)
-    if family == "pilot_unequal":
-        lcb, _ = sv.paired_cluster_bootstrap(rows, 0.05 / 2, replicates,
-                                             seed)
-        return "pass" if lcb > 0 else "not_pass"
-    raise TrancheError(f"unknown agreement family {family!r}")
-
-
-_AGREEMENT_FAMILIES = ("stake_ordinary", "equivalence", "pilot_unequal",
-                       "stake_fork")
-
-
-def run_agreement_gate() -> dict[str, int]:
-    """The 2,000-vs-10,000 replicate decision-agreement check on 1,000
-    separately frozen boundary datasets, REPRESENTING every
-    reduced-replicate scenario family it authorizes (145_s finding 3):
-    datasets cycle stake-ordinary / equivalence / pilot-unequal-cells /
-    stake-fork, with boundary effect sizes cycling {0.08, 0.10, 0.12}
-    (equivalence datasets sit at their own +/-0.10 band boundary)."""
-    deltas = (0.08, 0.10, 0.12)
-    agree = 0
-    for i in range(sv.COVERAGE_AGREEMENT_DATASETS):
-        family = _AGREEMENT_FAMILIES[i % 4]
-        seed = sv.scenario_seed(f"D-agreement|{family}|{i}")
-        rng = np.random.Generator(np.random.PCG64(seed))
-        delta = deltas[(i // 4) % 3]
-        if family == "stake_ordinary":
-            # EXACTLY the D1 shape (148_s finding 4): five equally
-            # weighted sigma=0.75 cells at the ordinary looks
-            rows = [_tp_rows(rng, delta, 0.75, 500) for _ in range(5)]
-        elif family == "stake_fork":
-            # the D2 shape: one sigma=0.50 cell at the fork looks
-            rows = [_tp_rows(rng, delta, 0.5, 200)]
-        elif family == "equivalence":
-            # alternate positive/negative band boundaries (148_s)
-            sign = 1.0 if (i // 8) % 2 == 0 else -1.0
-            rows = [sign * _tp_rows(rng, delta, 0.5, 500)]
-        else:  # pilot_unequal: the D5 shape at a boundary shift
-            sigmas = (0.25, 0.40, 0.50, 0.60, 0.75, 0.90)
-            counts = (12, 12, 12, 12, 12, 6)
-            rows = [_tp_rows(rng, delta / 2, sg, n)
-                    for sg, n in zip(sigmas, counts)]
-        d_small = _agreement_decision(
-            family, rows, sv.COVERAGE_INNER_REPLICATES, seed ^ 0xA9)
-        d_big = _agreement_decision(
-            family, rows, sv.COVERAGE_PRODUCTION_REPLICATES, seed ^ 0xA9)
-        agree += int(d_small == d_big)
-    return {"agree_count": agree,
-            "datasets": sv.COVERAGE_AGREEMENT_DATASETS}
-
-
-def agreement_passes(artifact_block: Mapping[str, int]) -> bool:
-    """145_s finding 3: the frozen criterion is the one-sided 95% Wilson
-    LOWER BOUND >= 0.995 on exactly the 1,000 frozen datasets — 999/1000
-    is the minimum passing count; 1/1 or any other sample size refuses."""
-    agree = artifact_block.get("agree_count")
-    datasets = artifact_block.get("datasets")
-    if type(agree) is not int or type(datasets) is not int:
-        raise TrancheError("malformed agreement block")
-    if datasets != sv.COVERAGE_AGREEMENT_DATASETS:
-        raise TrancheError(
-            f"agreement gate requires exactly "
-            f"{sv.COVERAGE_AGREEMENT_DATASETS} frozen datasets, got "
-            f"{datasets}")
-    if not 0 <= agree <= datasets:
-        raise TrancheError("malformed agreement block")
-    return sv.wilson_lower(agree, datasets) >= sv.COVERAGE_AGREEMENT_MIN
-
-
 # --- runners (frozen order; integer sufficient statistics only) --------------------
 
 def run_a_grids() -> dict[str, dict[str, int]]:
@@ -364,20 +310,80 @@ def run_c_grid() -> dict[str, dict[str, int]]:
     return results
 
 
-def run_d_battery(agreement_block: Mapping[str, int]
-                  ) -> dict[str, dict[str, int]]:
-    """The 8-scenario coverage battery at 5,000 outer trials. Refuses
-    to start a reduced-replicate (bootstrap) scenario unless the
-    agreement gate already ran and passed."""
+def run_d_battery(deadline_seconds: float | None = None
+                  ) -> tuple[dict[str, dict[str, int]],
+                             dict[str, dict[str, int]]]:
+    """All eight amended scenarios at 5,000 outer trials, 10,000
+    production inner replicates where a bootstrap applies. There is NO
+    agreement gate (158_s §6 — the reduced-replicate approximation is
+    deleted). Returns (scenario rows, D6-D8 per-look branch rows)."""
     results: dict[str, dict[str, int]] = {}
-    gate_ok = agreement_passes(agreement_block)
+    branch_rows: dict[str, dict[str, int]] = {}
     for scen in D_SCENARIOS:
-        if scen["id"] in _BOOTSTRAP_SCENARIOS and not gate_ok:
+        row, branches = run_d_battery_scenario(
+            scen, deadline_seconds=deadline_seconds)
+        results[scen["id"]] = row
+        branch_rows.update(branches)
+    return results, branch_rows
+
+
+def run_d_battery_scenario(scen: Mapping[str, Any],
+                           deadline_seconds: float | None = None
+                           ) -> tuple[dict[str, int],
+                                      dict[str, dict[str, int]]]:
+    """One frozen scenario at 5,000 outer trials with the IN-LOOP
+    deadline (checked every 50 trials; partial error count travels in
+    the abort message). Persistence scenarios additionally return
+    per-look branch rows (158_s §6)."""
+    import time
+    errors = 0
+    branch_counts: dict[int, dict[str, int]] = {}
+    started = time.perf_counter()
+    for t in range(sv.COVERAGE_OUTER_TRIALS):
+        if deadline_seconds is not None and t % 50 == 0 and \
+                time.perf_counter() - started > deadline_seconds:
             raise TrancheError(
-                "agreement gate has not passed; reduced-replicate "
-                f"scenario {scen['id']} may not run (142_s)")
-        results[scen["id"]] = run_d_battery_scenario(scen)
-    return results
+                f"{scen['id']} exceeded its {deadline_seconds:.0f}s "
+                f"deadline at trial {t}/{sv.COVERAGE_OUTER_TRIALS} "
+                f"(partial errors={errors}) — aborting per 158_s §5.4")
+        trial_seed = sv.scenario_seed(f"{scen['id']}|{t}")
+        if scen["kind"] == "decision":
+            decision = scen["dgp"](trial_seed)
+            errors += int(decision == scen["error_decision"])
+        else:
+            undercover, branches = scen["dgp"](trial_seed)
+            errors += int(undercover)
+            for look, tag in branches.items():
+                row = branch_counts.setdefault(
+                    look, {"zero_branch": 0, "positive_branch": 0,
+                           "denominator_unresolved": 0})
+                if tag == "zero":
+                    row["zero_branch"] += 1
+                elif tag == "denominator_unresolved":
+                    row["positive_branch"] += 1
+                    row["denominator_unresolved"] += 1
+                else:
+                    row["positive_branch"] += 1
+    branch_rows = {
+        f"{scen['id']}|look{look}": {**counts,
+                                     "trials": sv.COVERAGE_OUTER_TRIALS}
+        for look, counts in sorted(branch_counts.items())}
+    return ({"error_count": errors,
+             "trials": sv.COVERAGE_OUTER_TRIALS}, branch_rows)
+
+
+def d8_branch_support_ok(branch_rows: Mapping[str, Mapping[str, int]]
+                         ) -> bool:
+    """158_s §6: D8 must reach BOTH branches at each registered look;
+    otherwise the scenario is unsupported and D does not pass."""
+    fork_looks = stage1_fork_schedule()
+    for look in fork_looks:
+        row = branch_rows.get(f"D8_persist_hybrid_theta01_fork"
+                              f"|look{look}")
+        if not row or row["zero_branch"] == 0 or \
+                row["positive_branch"] == 0:
+            return False
+    return True
 
 
 # --- content-addressed artifacts -----------------------------------------------------
@@ -518,7 +524,7 @@ def load_artifact(artifact: Mapping[str, Any], name: str,
     return dict(artifact)
 
 
-# --- the fail-closed A-D + B verdict ---------------------------------------------------
+# --- the fail-closed amended verdict (158_s §§7, 12) ---------------------------
 
 def _checked_rate(row: Mapping[str, Any], numerator: str,
                   key: str) -> tuple[int, int]:
@@ -531,35 +537,41 @@ def _checked_rate(row: Mapping[str, Any], numerator: str,
     return k, n
 
 
-def aggregate_verdict(a_artifact: Mapping[str, Any],
-                      c_artifact: Mapping[str, Any],
-                      d_artifact: Mapping[str, Any],
-                      b_evidence: Mapping[str, Any], *,
-                      env_manifest: Mapping[str, Any],
-                      b_pinned_loader=None) -> dict[str, Any]:
-    # `b_pinned_loader` exists for tests only; None means the
-    # authoritative stage1_replay.load_pinned_replay_inputs.
-    """The single fail-closed tranche summary feeding the reviewed
-    confirm/amend decision (which is never automated). Every check
-    contributes; artifacts bind to ONE execution identity that is
-    verified to be the hash of a valid environment manifest; B enters
-    only as an EVIDENCE BUNDLE — {artifact, replay_manifest,
-    raw_completions_text} — verified against INTERNALLY loaded pinned
-    inputs and the fully regenerated expected replay manifest at this
-    boundary (148_s finding 3; 151_s finding 2); Wilson bounds and B
-    direction statuses are recomputed, never trusted."""
+def aggregate_amend1_verdict(a_artifact: Mapping[str, Any],
+                             c_artifact: Mapping[str, Any],
+                             d_artifact: Mapping[str, Any],
+                             b_evidence: Mapping[str, Any], *,
+                             env_manifest: Mapping[str, Any],
+                             bundle: Mapping[str, Any],
+                             seed_registry: Mapping[str, int],
+                             b_pinned_loader=None) -> dict[str, Any]:
+    """The single fail-closed AMENDED tranche summary feeding the
+    reviewed terminal decision (158_s §12 — never automated). Inputs
+    bind to ONE execution-bundle identity (validated against the
+    finalized registry); A keeps its v1 acceptance criteria under
+    fresh seeds; C is judged by the §5.3 hard-path evaluator; D by the
+    per-scenario Wilson ceilings plus the D8 branch-support rule; B by
+    the §7 C2/C1 consequence matrix — B never blocks confirmation
+    globally, it sets the claim state. There is NO agreement input."""
+    exec_sha = am.validate_execution_bundle(bundle,
+                                            seed_registry=seed_registry)
     from .stage1_manifest import validate_env_manifest
-    # 148_s finding 3: the shared identity must be PROVEN to be the
-    # content hash of a valid stage1-environment-v2 manifest — a bare
-    # matching 64-hex string proves only equality
-    exec_sha = validate_env_manifest(env_manifest)
+    env_sha = validate_env_manifest(env_manifest)
+    if bundle.get("environment_manifest_sha256") != env_sha:
+        raise TrancheError(
+            "bundle does not bind this environment manifest")
+
     reg = expected_result_keys()
     a = load_artifact(a_artifact, "A",
-                      reg["A_position"] | reg["A_router"], exec_sha)
-    c = load_artifact(c_artifact, "C", reg["C"], exec_sha)
-    d = load_artifact(d_artifact, "D", reg["D"], exec_sha)
-    if "agreement" not in d:
-        raise TrancheError("D artifact carries no agreement block")
+                      reg["A_position"] | reg["A_router"], exec_sha,
+                      tag=am.AMEND1_ARTIFACT_TAG)
+    c = sp.load_amended_c_artifact(c_artifact, exec_sha)
+    d = load_artifact(d_artifact, "D", frozenset(am.AMEND1_D_IDS),
+                      exec_sha, tag=am.AMEND1_ARTIFACT_TAG)
+    if "branch_counts" not in d:
+        raise TrancheError("amended D artifact carries no "
+                           "branch_counts block")
+    am.validate_amend1_rows("D_branch", d["branch_counts"])
 
     a_fail, r_fail = [], []
     for scen, delta, sigma in a_position_cells():
@@ -576,24 +588,9 @@ def aggregate_verdict(a_artifact: Mapping[str, Any],
                 sv.wilson_lower(k, n) < sv.ACCEPT_PASS_WILSON_LB:
             r_fail.append(key)
 
-    c_zero_fail, c_power_fail = [], []
-    for schedule, n_cl, e, theta, dist in c_cells():
-        key = _c_key(schedule, n_cl, e, theta, dist)
-        k, n = _checked_rate(c["results"][key], "pass_count", key)
-        if dist != "cluster_correlated":
-            continue
-        terminal = sv.PERSISTENCE_LOOKS[schedule]["looks"][-1]
-        if n_cl != terminal or e != sv.PERSISTENCE_FLOORS[schedule]:
-            continue
-        if theta == 0.0 and k < n:
-            c_zero_fail.append(key)
-        if theta == sv.PERSISTENCE_POWER_THETA and \
-                sv.wilson_lower(k, n) < sv.PERSISTENCE_POWER_WILSON_LB:
-            c_power_fail.append(key)
+    c_verdict = sp.hard_path_acceptance(c["results"])
 
     d_fail = []
-    if not agreement_passes(d["agreement"]):
-        d_fail.append("agreement")
     for scen in D_SCENARIOS:
         k, n = _checked_rate(d["results"][scen["id"]], "error_count",
                              scen["id"])
@@ -601,12 +598,12 @@ def aggregate_verdict(a_artifact: Mapping[str, Any],
             float(scen["allocated_alpha"]))
         if sv.wilson_upper(k, n) > ceiling:
             d_fail.append(scen["id"])
+    if not d8_branch_support_ok(d["branch_counts"]):
+        d_fail.append("D8_branch_support")
 
-    # B: full evidence verification at the consuming boundary — the
-    # pair table rederives from the pinned surface, the raw completions
-    # hash-match and reparse to the artifact counts, the replay
-    # manifest self-hashes and carries the frozen contract (148_s
-    # finding 3). A self-rehashed artifact cannot survive this.
+    # B: full evidence verification, then the §7 consequence matrix —
+    # malformed/unreproducible evidence raises (infrastructure abort);
+    # not_demonstrated/unknown set the conservative C1-only state.
     from .stage1_replay import verify_replay_evidence
     for field in ("artifact", "replay_manifest",
                   "raw_completions_text"):
@@ -616,58 +613,74 @@ def aggregate_verdict(a_artifact: Mapping[str, Any],
         b_evidence["artifact"], env_manifest=env_manifest,
         replay_manifest=b_evidence["replay_manifest"],
         raw_completions_text=b_evidence["raw_completions_text"],
-        pinned_loader=b_pinned_loader)
+        pinned_loader=b_pinned_loader,
+        execution_identity=exec_sha)     # the bundle identity (§9.1)
     directions = summary["directions"]
     if set(directions) != {"2", "3"}:
         raise TrancheError("B summary must cover exactly directions "
                            "2 and 3")
-    b_blockers = [u for u, block in sorted(directions.items())
-                  if block["status"] == "not_demonstrated"]
+    statuses = {u: directions[u]["status"] for u in ("2", "3")}
+    for u, status in statuses.items():
+        if status not in ("not_ruled_out", "not_demonstrated",
+                          "unknown"):
+            raise TrancheError(f"B direction {u}: bad status "
+                               f"{status!r}")
+    c2_available = all(v == "not_ruled_out" for v in statuses.values())
+
+    scientific_pass = not (a_fail or r_fail
+                           or not c_verdict["passes"] or d_fail)
+    if scientific_pass and c2_available:
+        decision = "confirm_c2_provisional"
+    elif scientific_pass:
+        decision = "confirm_c1_only"
+    else:
+        decision = "scientific_stop"
 
     return {
         "A_positions_failing": a_fail,
         "A_router_failing": r_fail,
-        "C_zero_persistence_failing": c_zero_fail,
-        "C_power_failing": c_power_fail,
+        "C_hard_path_failures": c_verdict["failures"],
         "D_failing": d_fail,
-        "B_directions_blocking": b_blockers,
-        "B_directions_unknown": [
-            u for u, block in sorted(directions.items())
-            if block["status"] == "unknown"],
-        "confirm_possible": not (a_fail or r_fail or c_zero_fail
-                                 or c_power_fail or d_fail
-                                 or b_blockers),
+        "B_direction_statuses": statuses,
+        "C2_preCE1_available": c2_available,
+        "decision": decision,
     }
 
 
-# --- the one narrow tranche command (145_s finding 6) ---------------------------
+# --- the one narrow amended tranche command (158_s §11) ---------------------------
 
-TRANCHE_RUN_DIR = "runs/stage1-validation"
 SCENARIO_ABORT_FACTOR = 4
+A_BUDGET_SECONDS = 30 * 60
+D68_BUDGET_SECONDS = 30 * 60
+TOTAL_BUDGET_SECONDS = 12 * 3600
 
 
-def run_full_tranche(*, allow_dirty: bool = False) -> dict[str, Any]:
-    """The single CPU-side tranche command, enforcing the frozen order
-    with STAGED persistence (148_s finding 5): the run directory is
-    fresh (refuses to overwrite a formal run), the environment manifest
-    is written first, every stage boundary persists immediately, each D
-    scenario records its wall time, and an in-loop deadline aborts an
-    over-budget scenario mid-run — an agreement failure or abort leaves
-    the environment, A/C artifacts, agreement outcome, timings, partial
-    D results, and an `aborted` run record on disk. Check B (GPU) runs
-    separately under the same environment identity; aggregate_verdict
-    joins all four."""
+def run_amend1_tranche(bundle: Mapping[str, Any],
+                       seed_registry: Mapping[str, int], *,
+                       allow_dirty: bool = False) -> dict[str, Any]:
+    """The single CPU-side AMENDED tranche command in the frozen 158_s
+    §11 order: v1 evidence archive verification → bundle/registry/
+    environment validation → atomic run-root claim → deterministic
+    equivalence set → the full-count worst-case benchmark and frozen
+    budgets → fresh-seed A → amended C → all eight D scenarios →
+    amend1 artifacts with staged persistence, wall times, and
+    aborted-run records. B (GPU) runs separately under the same
+    bundle; aggregate_amend1_verdict joins everything."""
     import json
     import time
     from pathlib import Path
 
     from .stage1_manifest import build_stage1_env_manifest
-    out_dir = Path(TRANCHE_RUN_DIR)
-    if out_dir.exists() and any(out_dir.iterdir()):
-        raise TrancheError(
-            f"{out_dir} already holds a formal tranche run — refusing "
-            "to overwrite (148_s finding 5)")
-    out_dir.mkdir(parents=True, exist_ok=True)
+
+    am.verify_v1_evidence_archive()          # §11 step 1: entry gate
+    exec_sha = am.validate_execution_bundle(
+        bundle, seed_registry=seed_registry)
+    env = build_stage1_env_manifest(allow_dirty=allow_dirty)
+    if bundle.get("environment_manifest_sha256") != \
+            env["execution_manifest_sha256"]:
+        raise TrancheError("bundle does not bind the current "
+                           "environment manifest")
+    out_dir = am.claim_run_root(am.AMEND1_VALIDATION_RUN_ROOT)
 
     record: dict[str, Any] = {"status": "running", "stages": [],
                               "scenario_wall_seconds": {},
@@ -680,66 +693,85 @@ def run_full_tranche(*, allow_dirty: bool = False) -> dict[str, Any]:
         (out_dir / "run_record.json").write_text(
             json.dumps(record, indent=1), encoding="utf-8")
 
-    reg = expected_result_keys()
+    started = time.time()
     try:
-        env = build_stage1_env_manifest(allow_dirty=allow_dirty)
-        exec_sha = env["execution_manifest_sha256"]
+        _persist("execution_bundle_manifest", dict(bundle))
         _persist("env_manifest", env)
 
-        det = run_deterministic_equivalence_set()  # raises on mismatch
+        det = run_deterministic_equivalence_set()
         _persist("deterministic_equivalence", det)
 
         bench = sv.benchmark_worst_case()
-        deadline = SCENARIO_ABORT_FACTOR * \
+        d_deadline = SCENARIO_ABORT_FACTOR * \
             bench["seconds_per_outer_trial"] * sv.COVERAGE_OUTER_TRIALS
         _persist("benchmark", {
             "seconds_per_outer_trial_x1e6":
                 int(bench["seconds_per_outer_trial"] * 1e6),
-            "deadline_seconds": int(deadline)})
+            "d_scenario_deadline_seconds": int(d_deadline)})
 
-        a_art = finalize_artifact("A", exec_sha, run_a_grids())
+        a_started = time.time()
+        a_results: dict[str, dict[str, int]] = {}
+        for scen, delta, sigma in a_position_cells():
+            key = _a_key(scen, delta, sigma)
+            out = sv.simulate_position_power(
+                scen, delta, sigma, seed_override=seed_registry[key])
+            a_results[key] = {"pass_count": out["pass_count"],
+                              "fail_count": out["fail_count"],
+                              "unresolved_count":
+                                  out["unresolved_count"],
+                              "trials": out["trials"]}
+        for mix, effect, sigma in a_router_cells():
+            key = _r_key(mix, effect, sigma)
+            out = sv.simulate_router_power(
+                mix, effect, sigma, seed_override=seed_registry[key])
+            a_results[key] = {
+                "pass_count": out["pass_count"], "fail_count": 0,
+                "unresolved_count": out["trials"] - out["pass_count"],
+                "trials": out["trials"]}
+        if time.time() - a_started > A_BUDGET_SECONDS:
+            raise TrancheError("A exceeded its 30-minute budget")
+        a_art = finalize_artifact("A", exec_sha, a_results,
+                                  tag=am.AMEND1_ARTIFACT_TAG)
         _persist("artifact_A", a_art)
-        c_art = finalize_artifact("C", exec_sha, run_c_grid())
+
+        path_rows, marginal_rows = sp.run_amended_c(seed_registry)
+        c_art = sp.build_c_artifact(exec_sha, path_rows, marginal_rows)
         _persist("artifact_C", c_art)
 
-        agreement = run_agreement_gate()
-        _persist("agreement", agreement)
-        if not agreement_passes(agreement):
-            raise TrancheError(
-                f"agreement gate failed ({agreement['agree_count']}/"
-                f"{agreement['datasets']}); the reduced-replicate "
-                "battery may not run")
-
         d_results: dict[str, dict[str, int]] = {}
+        d_branches: dict[str, dict[str, int]] = {}
+        d68_started = None
         for scen in D_SCENARIOS:
+            if scen["kind"] == "persistence" and d68_started is None:
+                d68_started = time.time()
             t0 = time.perf_counter()
             try:
-                d_results[scen["id"]] = run_d_battery_scenario(
-                    scen, deadline_seconds=deadline)
+                row, branches = run_d_battery_scenario(
+                    scen, deadline_seconds=d_deadline)
             finally:
-                # 151_s finding 4: a deadline abort must still leave
-                # this scenario's wall time in the record (the partial
-                # error count travels in the exception text, which the
-                # outer handler writes into the aborted record)
                 record["scenario_wall_seconds"][scen["id"]] = \
                     int(time.perf_counter() - t0)
-            _persist(f"partial_D_{scen['id']}", d_results[scen["id"]])
-        d_art = finalize_artifact("D", exec_sha, d_results,
-                                  extra={"agreement": agreement})
+            d_results[scen["id"]] = row
+            d_branches.update(branches)
+            _persist(f"partial_D_{scen['id']}", row)
+            if scen["kind"] == "persistence" and \
+                    time.time() - d68_started > D68_BUDGET_SECONDS:
+                raise TrancheError("D6-D8 exceeded their combined "
+                                   "30-minute budget")
+        d_art = finalize_artifact(
+            "D", exec_sha, d_results,
+            extra={"branch_counts": {k: dict(v) for k, v
+                                     in sorted(d_branches.items())}},
+            tag=am.AMEND1_ARTIFACT_TAG)
         _persist("artifact_D", d_art)
 
-        # persist-reload verification of every artifact
-        for name, expected in (("A", reg["A_position"]
-                                | reg["A_router"]),
-                               ("C", reg["C"]), ("D", reg["D"])):
-            path = out_dir / f"artifact_{name}.json"
-            load_artifact(json.loads(path.read_text(encoding="utf-8")),
-                          name, expected, exec_sha)
+        if time.time() - started > TOTAL_BUDGET_SECONDS:
+            raise TrancheError("the amended CPU tranche exceeded 12h")
         record["status"] = "complete"
         record["total_wall_seconds"] = int(time.time()
                                            - record["started_unix"])
         _persist("run_record_final", record)
-        return {"execution_manifest_sha256": exec_sha,
+        return {"execution_bundle_sha256": exec_sha,
                 "run_dir": str(out_dir), "record": record}
     except BaseException as error:
         record["status"] = "aborted"
@@ -749,27 +781,3 @@ def run_full_tranche(*, allow_dirty: bool = False) -> dict[str, Any]:
         (out_dir / "run_record.json").write_text(
             json.dumps(record, indent=1), encoding="utf-8")
         raise
-
-
-def run_d_battery_scenario(scen: Mapping[str, Any],
-                           deadline_seconds: float | None = None
-                           ) -> dict[str, int]:
-    """One frozen coverage scenario at 5,000 outer trials, with an
-    IN-LOOP deadline (148_s finding 5): the abort interrupts an
-    over-budget scenario mid-run (checked every 50 trials) instead of
-    timing a completed one; the partial error count travels in the
-    exception message for the aborted-run record."""
-    import time
-    errors = 0
-    started = time.perf_counter()
-    for t in range(sv.COVERAGE_OUTER_TRIALS):
-        if deadline_seconds is not None and t % 50 == 0 and \
-                time.perf_counter() - started > deadline_seconds:
-            raise TrancheError(
-                f"{scen['id']} exceeded its {deadline_seconds:.0f}s "
-                f"deadline at trial {t}/{sv.COVERAGE_OUTER_TRIALS} "
-                f"(partial errors={errors}) — aborting per 147_f/150_f")
-        trial_seed = sv.scenario_seed(f"{scen['id']}|{t}")
-        decision = scen["dgp"](trial_seed)
-        errors += int(decision == scen["error_decision"])
-    return {"error_count": errors, "trials": sv.COVERAGE_OUTER_TRIALS}

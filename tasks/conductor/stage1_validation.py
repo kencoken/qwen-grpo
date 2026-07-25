@@ -196,7 +196,8 @@ ROUTER_MIXTURES = {"core": 5, "core_fork": 6}
 
 
 def simulate_position_power(scenario: str, delta: float, sigma: float,
-                            n_trials: int = POWER_TRIALS
+                            n_trials: int = POWER_TRIALS,
+                            seed_override: int | None = None
                             ) -> dict[str, Any]:
     """One (scenario, delta, sigma) grid cell: draw one maximum-length
     iid vector per trial, evaluate immutable prefixes at each registered
@@ -211,7 +212,12 @@ def simulate_position_power(scenario: str, delta: float, sigma: float,
     a, p_b = two_point_distribution(delta, sigma)
     z = float(_norm.ppf(1.0 - tail_alpha))
     cap = schedule[-1]
-    rng = _rng(f"A|{scenario}|{delta}|{sigma}|{n_trials}")
+    # amended runs supply the REGISTERED fresh-domain seed (158_s
+    # §9.3); the default derivation remains the v1 domain for probes
+    if seed_override is not None:
+        rng = np.random.Generator(np.random.PCG64(seed_override))
+    else:
+        rng = _rng(f"A|{scenario}|{delta}|{sigma}|{n_trials}")
     draws = np.where(rng.random((n_trials, cap)) < p_b, 1.0, a)
     passed = np.zeros(n_trials, dtype=bool)
     failed = np.zeros(n_trials, dtype=bool)
@@ -240,7 +246,9 @@ def simulate_position_power(scenario: str, delta: float, sigma: float,
 
 
 def simulate_router_power(mixture: str, effect: float, sigma: float,
-                          n_trials: int = POWER_TRIALS) -> dict[str, Any]:
+                          n_trials: int = POWER_TRIALS,
+                          seed_override: int | None = None
+                          ) -> dict[str, Any]:
     """One aggregate-router grid cell: the fixed first-100-per-cell
     support with equal-cell weighting (never pooled as one N), a single
     terminal test at one-sided 0.025, pass iff LCB > 0. No
@@ -248,7 +256,10 @@ def simulate_router_power(mixture: str, effect: float, sigma: float,
     n_cells = ROUTER_MIXTURES[mixture]
     a, p_b = two_point_distribution(effect, sigma)
     z = float(_norm.ppf(1.0 - ROUTER_ALPHA))
-    rng = _rng(f"A-router|{mixture}|{effect}|{sigma}|{n_trials}")
+    if seed_override is not None:
+        rng = np.random.Generator(np.random.PCG64(seed_override))
+    else:
+        rng = _rng(f"A-router|{mixture}|{effect}|{sigma}|{n_trials}")
     draws = np.where(
         rng.random((n_trials, n_cells, ROUTER_SUPPORT_PER_CELL)) < p_b,
         1.0, a)
@@ -343,10 +354,11 @@ def simulate_persistence_envelope(schedule: str, n_clusters: int,
 # --- D. coverage battery primitives ------------------------------------------------
 
 COVERAGE_OUTER_TRIALS = 5_000
-COVERAGE_INNER_REPLICATES = 2_000
+# 158_s §6 (amend-once, Unit C): 10,000 production replicates are the
+# ONLY bootstrap inner count; the 2,000-replicate approximation and
+# its agreement authorization are removed together. The v1 constants
+# and gate live in the archived worktree (da8424b) only.
 COVERAGE_PRODUCTION_REPLICATES = stage1.BOOTSTRAP_REPLICATES  # 10,000
-COVERAGE_AGREEMENT_DATASETS = 1_000
-COVERAGE_AGREEMENT_MIN = 0.995
 COVERAGE_SCENARIO_CAP = 8
 
 
@@ -515,18 +527,18 @@ def sequential_equivalence_decision(rows_by_cell: list[np.ndarray],
 
 
 def benchmark_worst_case(outer_trials: int = 20) -> dict[str, Any]:
-    """Timing-only dry run (NON-frozen throwaway seed, statistical
-    output discarded): the worst coverage scenario is the ordinary
-    3-look sequential null at 500 clusters x 3 renderers with 2,000
-    inner replicates per look. Scales linearly in outer trials; 132_s
-    requires this benchmark and an approved CPU budget before the full
-    battery runs."""
+    """The §5.4 item-3 timing probe (NON-frozen throwaway seed,
+    statistical output discarded): the ACTUAL worst-case D path — the
+    ordinary 3-look sequential null at 5 cells x 500 clusters x 3
+    renderers with the full 10,000 production inner replicates per
+    look. The measured per-outer literal feeds the frozen D1-D5
+    deadlines (4 x measured x 5,000)."""
     rng = np.random.Generator(np.random.PCG64(0xDEADBEEF))  # throwaway
     cells = [rng.normal(0.0, 0.5, size=(500, 3)) for _ in range(5)]
     t0 = time.perf_counter()
     for i in range(outer_trials):
         sequential_stake_decision(cells, (100, 300, 500), 0.05 / 9,
-                                  COVERAGE_INNER_REPLICATES, seed=i)
+                                  COVERAGE_PRODUCTION_REPLICATES, seed=i)
     elapsed = time.perf_counter() - t0
     per_trial = elapsed / outer_trials
     return {

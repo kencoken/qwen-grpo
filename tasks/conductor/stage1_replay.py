@@ -348,7 +348,9 @@ def verify_replay_evidence(artifact: Mapping[str, Any], *,
                            env_manifest: Mapping[str, Any],
                            replay_manifest: Mapping[str, Any],
                            raw_completions_text: str,
-                           pinned_loader=None) -> dict[str, Any]:
+                           pinned_loader=None,
+                           execution_identity: str | None = None
+                           ) -> dict[str, Any]:
     """THE consuming boundary for B evidence (148_s finding 3; hardened
     per 151_s finding 2): the pinned surface, support rows and
     rendered-request hashes are loaded/REGENERATED internally — never
@@ -360,7 +362,13 @@ def verify_replay_evidence(artifact: Mapping[str, Any], *,
     count reproduction. `pinned_loader` exists for tests only and
     defaults to the authoritative loader."""
     from .stage1_manifest import validate_env_manifest
-    exec_sha = validate_env_manifest(env_manifest)
+    env_sha = validate_env_manifest(env_manifest)
+    # v1 binds artifacts to the environment identity; the AMENDED
+    # tranche binds every artifact to the execution-BUNDLE identity
+    # (158_s §9.1) — the caller passes it, the env manifest is still
+    # fully validated either way
+    exec_sha = execution_identity if execution_identity is not None \
+        else env_sha
     b = load_b_artifact(artifact, exec_sha)
 
     loader = pinned_loader or load_pinned_replay_inputs

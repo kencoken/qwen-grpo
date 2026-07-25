@@ -178,9 +178,11 @@ def test_frozen_grid_constants():
     assert sv.ROUTER_MIXTURES == {"core": 5, "core_fork": 6}
     assert sv.ROUTER_SUPPORT_PER_CELL == 100
     assert sv.COVERAGE_OUTER_TRIALS == 5_000
-    assert sv.COVERAGE_INNER_REPLICATES == 2_000
-    assert sv.COVERAGE_AGREEMENT_DATASETS == 1_000
-    assert sv.COVERAGE_AGREEMENT_MIN == 0.995
+    # 158_s §6: 10,000 production replicates are the ONLY inner count;
+    # the 2,000-replicate constants and the agreement gate are deleted
+    assert sv.COVERAGE_PRODUCTION_REPLICATES == 10_000
+    assert not hasattr(sv, "COVERAGE_INNER_REPLICATES")
+    assert not hasattr(sv, "COVERAGE_AGREEMENT_DATASETS")
     assert sv.COVERAGE_SCENARIO_CAP == 8
 
 
