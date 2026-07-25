@@ -926,6 +926,99 @@ def run_amend1_tranche(bundle: Mapping[str, Any],
         raise
 
 
+def _read_run_file(dir_, name: str) -> str:
+    path = dir_ / name
+    if not path.is_file():
+        raise TrancheError(f"missing {name} under {dir_} — the "
+                           "frozen lifecycle is incomplete")
+    return path.read_text(encoding="utf-8")
+
+
+def _check_run_root_identity(bundle: Mapping[str, Any], dir_,
+                             env_sha: str) -> dict[str, Any]:
+    """One root's identity/completion gate: persisted bundle equality,
+    FULLY validated env manifest (recomputed hash) bound by the
+    bundle + provenance cross-check, complete run record (returned)."""
+    import json
+
+    from .stage1_manifest import validate_env_manifest
+
+    persisted = json.loads(
+        _read_run_file(dir_, "execution_bundle_manifest.json"))
+    if persisted != dict(bundle):
+        raise TrancheError(
+            f"{dir_} was not produced under this execution bundle")
+    persisted_env = json.loads(
+        _read_run_file(dir_, "env_manifest.json"))
+    if validate_env_manifest(persisted_env) != env_sha:
+        raise TrancheError(
+            f"{dir_} env manifest is not the one the bundle binds")
+    am.check_bundle_env_provenance(bundle, persisted_env)
+    run_record = json.loads(_read_run_file(dir_, "run_record.json"))
+    if not isinstance(run_record, dict) or \
+            run_record.get("status") != "complete":
+        raise TrancheError(
+            f"{dir_} run record is malformed or not complete — only "
+            "complete runs may be aggregated")
+    return run_record
+
+
+def _reconcile_partial_d(val_dir, d: Mapping[str, Any],
+                         exec_sha: str) -> None:
+    """171_s finding 2: every partial_D_* record reconciles exactly
+    with artifact_D (fields, identities, counts, branch counts)."""
+    import json
+    for scen in D_SCENARIOS:
+        sid = scen["id"]
+        partial = json.loads(
+            _read_run_file(val_dir, f"partial_D_{sid}.json"))
+        expected_fields = {"scenario", "execution_bundle_sha256",
+                           "error_count", "trials"}
+        if scen["kind"] == "persistence":
+            expected_fields.add("branch_counts")
+        if not isinstance(partial, dict) or \
+                set(partial) != expected_fields:
+            raise TrancheError(
+                f"partial_D_{sid}: field set != expected "
+                f"{sorted(expected_fields)}")
+        if partial["scenario"] != sid or \
+                partial["execution_bundle_sha256"] != exec_sha:
+            raise TrancheError(
+                f"partial_D_{sid}: scenario/execution identity does "
+                "not match this run")
+        row = {"error_count": partial["error_count"],
+               "trials": partial["trials"]}
+        if row != d["results"].get(sid):
+            raise TrancheError(
+                f"partial_D_{sid}: counts do not reconcile with "
+                "artifact_D")
+        if scen["kind"] == "persistence":
+            scen_branches = {k: v for k, v
+                             in d.get("branch_counts", {}).items()
+                             if k.startswith(f"{sid}|")}
+            if partial["branch_counts"] != scen_branches:
+                raise TrancheError(
+                    f"partial_D_{sid}: branch counts do not reconcile "
+                    "with artifact_D")
+
+
+def _load_run_evidence(val_dir, rep_dir) -> tuple[dict[str, Any], ...]:
+    import json
+    env = json.loads(_read_run_file(val_dir, "env_manifest.json"))
+    a = json.loads(_read_run_file(val_dir, "artifact_A.json"))
+    c = json.loads(_read_run_file(val_dir, "artifact_C.json"))
+    d = json.loads(_read_run_file(val_dir, "artifact_D.json"))
+    b_evidence = {
+        "artifact": json.loads(
+            _read_run_file(rep_dir, "artifact_B.json")),
+        "replay_manifest": json.loads(
+            _read_run_file(rep_dir, "replay_manifest.json")),
+        "raw_completions_text":
+            _read_run_file(rep_dir, "raw_completions.json"),
+    }
+    return env, a, c, d, b_evidence
+
+
 def finalize_amend1_run(bundle: Mapping[str, Any],
                         seed_registry: Mapping[str, int], *,
                         b_pinned_loader=None,
@@ -942,9 +1035,7 @@ def finalize_amend1_run(bundle: Mapping[str, Any],
        (validated) bundle; both env manifests are FULLY validated —
        recomputed content hash, never a trusted field — and must be
        the one manifest the bundle binds; both run records complete;
-    3. every `partial_D_*` record is reconciled against `artifact_D`
-       (scenario id, execution identity, error/trial counts, and —
-       persistence rows — exact per-scenario branch counts);
+    3. every `partial_D_*` record is reconciled against `artifact_D`;
     4. the evidence is reloaded through `aggregate_amend1_verdict`
        (all loader/verifier gates re-run, B support bound to the
        registry);
@@ -953,12 +1044,11 @@ def finalize_amend1_run(bundle: Mapping[str, Any],
        against the frozen exact file sets.
 
     Returns the verdict the reviewed §12 terminal decision consumes —
-    nothing further is automated."""
+    nothing further is automated. The READ-ONLY counterpart for
+    already-finalized runs is `verify_finalized_run` (181_s)."""
     import json
     import os
     from pathlib import Path
-
-    from .stage1_manifest import validate_env_manifest
 
     val_dir = Path(validation_dir
                    if validation_dir is not None
@@ -991,83 +1081,22 @@ def finalize_amend1_run(bundle: Mapping[str, Any],
             f"contract (missing {sorted(expected_pre - got)}, "
             f"extra {sorted(got - expected_pre)})")
 
-    def _read(dir_: Path, name: str) -> str:
-        path = dir_ / name
-        if not path.is_file():
-            raise TrancheError(f"missing {name} under {dir_} — the "
-                               "frozen lifecycle is incomplete")
-        return path.read_text(encoding="utf-8")
-
     # --- 2. identity and completion gates
     env_sha = bundle["environment_manifest_sha256"]
+    record = None
     for dir_ in (val_dir, rep_dir):
-        persisted = json.loads(
-            _read(dir_, "execution_bundle_manifest.json"))
-        if persisted != dict(bundle):
-            raise TrancheError(
-                f"{dir_} was not produced under this execution bundle")
-        persisted_env = json.loads(_read(dir_, "env_manifest.json"))
-        if validate_env_manifest(persisted_env) != env_sha:
-            raise TrancheError(
-                f"{dir_} env manifest is not the one the bundle binds")
-        am.check_bundle_env_provenance(bundle, persisted_env)
-        run_record = json.loads(_read(dir_, "run_record.json"))
-        if run_record.get("status") != "complete":
-            raise TrancheError(
-                f"{dir_} run record status is "
-                f"{run_record.get('status')!r} — only complete runs "
-                "may be aggregated")
+        run_record = _check_run_root_identity(bundle, dir_, env_sha)
+        if dir_ is val_dir:
+            record = run_record
 
-    env = json.loads(_read(val_dir, "env_manifest.json"))
-    a = json.loads(_read(val_dir, "artifact_A.json"))
-    c = json.loads(_read(val_dir, "artifact_C.json"))
-    d = json.loads(_read(val_dir, "artifact_D.json"))
-
-    # --- 3. partial-D reconciliation against the finalized artifact
-    for scen in D_SCENARIOS:
-        sid = scen["id"]
-        partial = json.loads(_read(val_dir, f"partial_D_{sid}.json"))
-        expected_fields = {"scenario", "execution_bundle_sha256",
-                           "error_count", "trials"}
-        if scen["kind"] == "persistence":
-            expected_fields.add("branch_counts")
-        if set(partial) != expected_fields:
-            raise TrancheError(
-                f"partial_D_{sid}: field set {sorted(partial)} != "
-                f"expected {sorted(expected_fields)}")
-        if partial["scenario"] != sid or \
-                partial["execution_bundle_sha256"] != exec_sha:
-            raise TrancheError(
-                f"partial_D_{sid}: scenario/execution identity does "
-                "not match this run")
-        row = {"error_count": partial["error_count"],
-               "trials": partial["trials"]}
-        if row != d["results"].get(sid):
-            raise TrancheError(
-                f"partial_D_{sid}: counts do not reconcile with "
-                "artifact_D")
-        if scen["kind"] == "persistence":
-            scen_branches = {k: v for k, v
-                             in d.get("branch_counts", {}).items()
-                             if k.startswith(f"{sid}|")}
-            if partial["branch_counts"] != scen_branches:
-                raise TrancheError(
-                    f"partial_D_{sid}: branch counts do not reconcile "
-                    "with artifact_D")
-
-    # --- 4. the aggregate (all loader/verifier gates re-run)
-    b_evidence = {
-        "artifact": json.loads(_read(rep_dir, "artifact_B.json")),
-        "replay_manifest": json.loads(
-            _read(rep_dir, "replay_manifest.json")),
-        "raw_completions_text": _read(rep_dir, "raw_completions.json"),
-    }
+    # --- 3-4. loads, reconciliation, the aggregate
+    env, a, c, d, b_evidence = _load_run_evidence(val_dir, rep_dir)
+    _reconcile_partial_d(val_dir, d, exec_sha)
     verdict = aggregate_amend1_verdict(
         a, c, d, b_evidence, env_manifest=env, bundle=bundle,
         seed_registry=seed_registry, b_pinned_loader=b_pinned_loader)
 
     # --- 5. atomic persistence, then the final exact-set check
-    record = json.loads(_read(val_dir, "run_record.json"))
     record["stages"].append("aggregate")
     record["aggregate_decision"] = verdict["decision"]
 
@@ -1081,4 +1110,68 @@ def finalize_amend1_run(bundle: Mapping[str, Any],
 
     am.verify_run_file_set(val_dir, am.AMEND1_VALIDATION_RUN_ROOT)
     am.verify_run_file_set(rep_dir, am.AMEND1_REPLAY_RUN_ROOT)
+    return verdict
+
+
+def verify_finalized_run(bundle: Mapping[str, Any],
+                         seed_registry: Mapping[str, int], *,
+                         b_pinned_loader=None,
+                         validation_dir=None,
+                         replay_dir=None) -> dict[str, Any]:
+    """READ-ONLY verifier for an ALREADY-FINALIZED run (181_s finding
+    1 — success archival must not accept invalid finalized evidence):
+
+    - both roots hold their EXACT frozen file sets (aggregate
+      included) and complete records;
+    - both env manifests fully validate and are the one the bundle
+      binds (provenance cross-checked);
+    - A/C/D/B and the raw B evidence RELOAD through every fail-closed
+      gate; partial-D records reconcile;
+    - the aggregate is RE-DERIVED and must equal the persisted
+      `aggregate.json` exactly;
+    - the run record must carry the `aggregate` stage and the
+      matching `aggregate_decision`.
+
+    Writes nothing. Returns the re-derived verdict."""
+    import json
+    from pathlib import Path
+
+    val_dir = Path(validation_dir
+                   if validation_dir is not None
+                   else am.AMEND1_VALIDATION_RUN_ROOT)
+    rep_dir = Path(replay_dir if replay_dir is not None
+                   else am.AMEND1_REPLAY_RUN_ROOT)
+    exec_sha = am.validate_execution_bundle(bundle,
+                                            seed_registry=seed_registry)
+    am.verify_registry_canonical(seed_registry)
+    am.verify_run_file_set(val_dir, am.AMEND1_VALIDATION_RUN_ROOT)
+    am.verify_run_file_set(rep_dir, am.AMEND1_REPLAY_RUN_ROOT)
+
+    env_sha = bundle["environment_manifest_sha256"]
+    record = None
+    for dir_ in (val_dir, rep_dir):
+        run_record = _check_run_root_identity(bundle, dir_, env_sha)
+        if dir_ is val_dir:
+            record = run_record
+
+    env, a, c, d, b_evidence = _load_run_evidence(val_dir, rep_dir)
+    _reconcile_partial_d(val_dir, d, exec_sha)
+    verdict = aggregate_amend1_verdict(
+        a, c, d, b_evidence, env_manifest=env, bundle=bundle,
+        seed_registry=seed_registry, b_pinned_loader=b_pinned_loader)
+
+    persisted = json.loads(_read_run_file(val_dir, "aggregate.json"))
+    if persisted != verdict:
+        raise TrancheError(
+            "persisted aggregate.json != the re-derived verdict — "
+            "the finalized evidence is not what the artifacts imply "
+            "(181_s)")
+    if "aggregate" not in record.get("stages", []):
+        raise TrancheError(
+            "run record carries no aggregate stage — the run was "
+            "never finalized")
+    if record.get("aggregate_decision") != verdict["decision"]:
+        raise TrancheError(
+            "run record aggregate_decision != the re-derived "
+            "decision")
     return verdict

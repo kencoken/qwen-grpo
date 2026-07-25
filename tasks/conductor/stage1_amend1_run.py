@@ -41,7 +41,7 @@ from .types import InfrastructureError
 
 PREREG_PATH = Path(
     "plans/conductor/"
-    "180_f_stage_1_amend1_final_successor_prereg_rev3.md")
+    "183_f_stage_1_amend1_final_successor_prereg_rev4.md")
 LOCK_RECORD_GLOB = "plans/conductor/*_f_stage_1_amend1_lock.md"
 EVIDENCE_PARENT = Path("plans/conductor/evidence")
 EVIDENCE_MANIFEST_KIND = "stage1-amend1-evidence-v1"
@@ -116,7 +116,13 @@ def persisted_context(*, validation_dir: Path | str | None = None,
     expected_pre = set(
         am.EXPECTED_RUN_FILES[am.AMEND1_VALIDATION_RUN_ROOT]) \
         - {"aggregate.json"}
-    got = {p.name for p in val_dir.iterdir() if p.is_file()}
+    entries = list(val_dir.iterdir())
+    subdirs = sorted(p.name for p in entries if not p.is_file())
+    if subdirs:
+        raise InfrastructureError(
+            f"{val_dir}: unexpected non-file entries {subdirs} "
+            "(181_s: the pre-aggregate check is exact)")
+    got = {p.name for p in entries}
     if got != expected_pre:
         raise InfrastructureError(
             f"{val_dir}: pre-aggregate file set mismatch (missing "
@@ -224,10 +230,15 @@ def _run_status(dir_: Path) -> str:
     if not record.exists():
         return "absent"
     try:
-        return json.loads(record.read_text(encoding="utf-8")).get(
-            "status", "unknown")
+        loaded = json.loads(record.read_text(encoding="utf-8"))
     except ValueError:
         return "unreadable"
+    # 181_s finding 2: shape-check decoded objects — abort archival
+    # must be total over malformed evidence
+    if not isinstance(loaded, dict) or \
+            not isinstance(loaded.get("status"), str):
+        return "malformed"
+    return loaded["status"]
 
 
 def archive_evidence(mode: str,
@@ -235,8 +246,9 @@ def archive_evidence(mode: str,
                      replay_dir: Path | str | None = None,
                      evidence_parent: Path | str | None = None,
                      prereg_path: Path | str | None = None,
-                     lock_record_path: Path | str | None = None
-                     ) -> dict[str, Any]:
+                     lock_record_path: Path | str | None = None,
+                     b_pinned_loader=None,
+                     _support_ids=None) -> dict[str, Any]:
     """Copy the exact immutable bytes of the run roots into
     `plans/conductor/evidence/stage1_pre_ce1_amend1_{first12}/` with
     a byte/length/SHA-256 manifest, the frozen command list, and the
@@ -245,13 +257,20 @@ def archive_evidence(mode: str,
 
     - `success`: the persisted bundle must pass its self-hash, equal
       the replay root's copy, AND equal the bundle rebuilt from
-      current authoritative provenance; both run records must be
-      `complete`; both roots must hold their EXACT frozen file sets
-      (aggregate included) — anything less refuses;
+      current authoritative provenance — and the finalized evidence
+      itself is RE-VERIFIED read-only (`verify_finalized_run`, 181_s
+      finding 1: exact file sets, validated environments, artifact
+      reloads, partial-D reconciliation, aggregate re-derivation with
+      exact equality against `aggregate.json`, and the run record's
+      aggregate stage/decision) — anything less refuses;
     - `abort`: preserves whatever bytes exist WITHOUT trusting the
-      bundle — every failed validation is RECORDED in the manifest's
-      `validation_errors` instead of raising; the replay root may be
-      absent.
+      bundle — malformed JSON, wrong-shape objects, self-hash
+      failures and cross-root disagreements are RECORDED in the
+      manifest's `validation_errors` instead of raising; the replay
+      root may be absent. The claimed bundle identity names the
+      destination ONLY when the self-hash actually passes; otherwise
+      the raw bundle-file byte hash does (`identity_basis` records
+      which).
 
     Both modes stage the copy under a temporary name, verify every
     archived byte against the sources and the manifest, then rename
@@ -269,27 +288,46 @@ def archive_evidence(mode: str,
 
     errors: list[str] = []
     bundle: Mapping[str, Any] | None = None
+    self_hash_ok = False
     bundle_path = val_dir / "execution_bundle_manifest.json"
     if bundle_path.is_file():
         try:
-            bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+            decoded = json.loads(bundle_path.read_text(encoding="utf-8"))
         except ValueError as error:
             errors.append(f"validation bundle unreadable: {error}")
+        else:
+            # 181_s finding 2: shape-check before any attribute use
+            if isinstance(decoded, dict):
+                bundle = decoded
+            else:
+                errors.append("validation bundle is not a JSON "
+                              "object")
     else:
         errors.append("validation bundle manifest absent")
-    if bundle is not None and not _bundle_self_hash_ok(bundle):
-        errors.append("validation bundle fails its self-hash")
-    if bundle is not None and rep_dir.is_dir() and \
-            (rep_dir / "execution_bundle_manifest.json").is_file():
-        try:
-            rep_bundle = json.loads(
-                (rep_dir / "execution_bundle_manifest.json").read_text(
-                    encoding="utf-8"))
-            if rep_bundle != bundle:
-                errors.append("the two run roots carry different "
-                              "execution bundles")
-        except ValueError as error:
-            errors.append(f"replay bundle unreadable: {error}")
+    if bundle is not None:
+        self_hash_ok = _bundle_self_hash_ok(bundle)
+        if not self_hash_ok:
+            errors.append("validation bundle fails its self-hash")
+    if rep_dir.is_dir():
+        rep_bundle_path = rep_dir / "execution_bundle_manifest.json"
+        if not rep_bundle_path.is_file():
+            # 181_s small repair: a claimed replay root without its
+            # bundle manifest is recorded
+            errors.append("replay root exists but its bundle "
+                          "manifest is absent")
+        else:
+            try:
+                rep_bundle = json.loads(
+                    rep_bundle_path.read_text(encoding="utf-8"))
+            except ValueError as error:
+                errors.append(f"replay bundle unreadable: {error}")
+            else:
+                if not isinstance(rep_bundle, dict):
+                    errors.append("replay bundle is not a JSON "
+                                  "object")
+                elif bundle is not None and rep_bundle != bundle:
+                    errors.append("the two run roots carry different "
+                                  "execution bundles")
 
     val_status = _run_status(val_dir)
     rep_status = _run_status(rep_dir) if rep_dir.is_dir() else "absent"
@@ -298,11 +336,12 @@ def archive_evidence(mode: str,
         if errors:
             raise InfrastructureError(
                 "success archive refused: " + "; ".join(errors))
-        rebuilt, _, _ = am.build_lock_bundle(
+        rebuilt, registry, _ = am.build_lock_bundle(
             prereg_path=prereg_path if prereg_path is not None
             else PREREG_PATH,
             lock_record_path=lock_record_path if lock_record_path
-            is not None else locate_lock_record())
+            is not None else locate_lock_record(),
+            _support_ids=_support_ids)
         if dict(bundle) != dict(rebuilt):
             raise InfrastructureError(
                 "success archive refused: persisted bundle != bundle "
@@ -311,8 +350,14 @@ def archive_evidence(mode: str,
             raise InfrastructureError(
                 f"success archive refused: run statuses "
                 f"validation={val_status!r}, replay={rep_status!r}")
-        am.verify_run_file_set(val_dir, am.AMEND1_VALIDATION_RUN_ROOT)
-        am.verify_run_file_set(rep_dir, am.AMEND1_REPLAY_RUN_ROOT)
+        # 181_s finding 1: the finalized evidence itself is re-verified
+        # read-only — exact file sets, artifact reloads, partial-D
+        # reconciliation, aggregate re-derivation and exact equality
+        from .stage1_tranche import verify_finalized_run
+        verify_finalized_run(bundle, registry,
+                             b_pinned_loader=b_pinned_loader,
+                             validation_dir=val_dir,
+                             replay_dir=rep_dir)
     else:
         # abort mode records, never trusts
         if val_status not in ("aborted", "complete"):
@@ -320,12 +365,12 @@ def archive_evidence(mode: str,
         if rep_status not in ("aborted", "complete", "absent"):
             errors.append(f"replay run status {rep_status!r}")
 
-    # destination identity: the claimed bundle hash when it is a
-    # well-formed self-consistent value, else the byte hash of the
-    # bundle file (abort mode only — success requires the real thing)
+    # destination identity (181_s finding 2): the claimed bundle hash
+    # ONLY when the self-hash actually passes; otherwise the byte
+    # hash of the bundle file as documented
     claimed = (bundle or {}).get("execution_bundle_sha256")
-    if isinstance(claimed, str) and len(claimed) == 64 and \
-            set(claimed) <= _HEX64:
+    if self_hash_ok and isinstance(claimed, str) and \
+            len(claimed) == 64 and set(claimed) <= _HEX64:
         first12, identity_basis = claimed[:12], "bundle_self_hash"
     else:
         raw = bundle_path.read_bytes() if bundle_path.is_file() \

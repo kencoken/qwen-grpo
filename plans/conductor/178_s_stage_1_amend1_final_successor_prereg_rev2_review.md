@@ -1,6 +1,6 @@
 Not quite. The statistical repair is sound, but three integration issues still block locking.
 
-1. **[P1] The real launch path fails before execution.**  
+1. **[P1] The real launch path fails before execution.**
    [stage1_amend1.py](/Users/ken/Documents/Codex/2026-07-15/kencoken-qwen-grpo-https-github-com/review-stage1/tasks/conductor/stage1_amend1.py:763) builds the registry from 36 smoke-schedule rows rather than 18 unique observations. On picome I reproduced:
 
    ```text
@@ -10,12 +10,12 @@ Not quite. The statistical repair is sound, but three integration issues still b
 
    The test bypasses this by injecting `_support_ids`. Use `support_observations()` directly—or otherwise derive a uniquely validated set—and add a test exercising the production default.
 
-2. **[P1] Replay does not consume the CPU run’s persisted bundle or enforce CPU-first ordering.**  
+2. **[P1] Replay does not consume the CPU run’s persisted bundle or enforce CPU-first ordering.**
    [stage1_amend1_run.py](/Users/ken/Documents/Codex/2026-07-15/kencoken-qwen-grpo-https-github-com/review-stage1/tasks/conductor/stage1_amend1_run.py:246) reconstructs the bundle independently for tranche, replay, and finalize. Consequently, replay can run before CPU completion or under changed environment identity, consume all 9,216 GPU completions, and only be rejected during finalization.
 
    The CPU tranche should create the canonical bundle. Replay should load that exact bundle, verify it against current authoritative provenance, and require a complete CPU root before claiming the replay root or loading the model. Finalization should consume the same persisted bundle.
 
-3. **[P1] The archive command does not yet satisfy either terminal mode fully.**  
+3. **[P1] The archive command does not yet satisfy either terminal mode fully.**
    [archive_evidence()](/Users/ken/Documents/Codex/2026-07-15/kencoken-qwen-grpo-https-github-com/review-stage1/tasks/conductor/stage1_amend1_run.py:140):
 
    - accepts incomplete or extra files without enforcing the successful exact-file-set/finalized-aggregate contract;
