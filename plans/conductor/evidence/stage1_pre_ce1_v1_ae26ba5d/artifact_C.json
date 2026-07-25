@@ -1,0 +1,608 @@
+{
+ "artifact": "C",
+ "tag": "stage1-validation-v1",
+ "execution_manifest_sha256": "ae26ba5d3ab951ce0a898fcd14b055be144b3a8d642cc3a80e38c433c53d24b1",
+ "results": {
+  "C|fork|100|0.65|0.05|cluster_correlated|10000": {
+   "pass_count": 372,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.65|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.65|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.65|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.65|0.1|cluster_correlated|10000": {
+   "pass_count": 10,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.65|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.6|0.05|cluster_correlated|10000": {
+   "pass_count": 420,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.6|0.05|row_dispersed|10000": {
+   "pass_count": 1,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.6|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.6|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.6|0.1|cluster_correlated|10000": {
+   "pass_count": 16,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.6|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.8|0.05|cluster_correlated|10000": {
+   "pass_count": 867,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.8|0.05|row_dispersed|10000": {
+   "pass_count": 1,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.8|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.8|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.8|0.1|cluster_correlated|10000": {
+   "pass_count": 17,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|0.8|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|1.0|0.05|cluster_correlated|10000": {
+   "pass_count": 4331,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|1.0|0.05|row_dispersed|10000": {
+   "pass_count": 9,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|1.0|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|1.0|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|1.0|0.1|cluster_correlated|10000": {
+   "pass_count": 236,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|100|1.0|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.65|0.05|cluster_correlated|10000": {
+   "pass_count": 1098,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.65|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.65|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.65|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.65|0.1|cluster_correlated|10000": {
+   "pass_count": 8,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.65|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.6|0.05|cluster_correlated|10000": {
+   "pass_count": 1421,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.6|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.6|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.6|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.6|0.1|cluster_correlated|10000": {
+   "pass_count": 17,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.6|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.8|0.05|cluster_correlated|10000": {
+   "pass_count": 1821,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.8|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.8|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.8|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.8|0.1|cluster_correlated|10000": {
+   "pass_count": 13,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|0.8|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|1.0|0.05|cluster_correlated|10000": {
+   "pass_count": 7062,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|1.0|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|1.0|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|1.0|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|1.0|0.1|cluster_correlated|10000": {
+   "pass_count": 160,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|fork|200|1.0|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.65|0.05|cluster_correlated|10000": {
+   "pass_count": 345,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.65|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.65|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.65|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.65|0.1|cluster_correlated|10000": {
+   "pass_count": 12,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.65|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.6|0.05|cluster_correlated|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.6|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.6|0.0|cluster_correlated|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.6|0.0|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.6|0.1|cluster_correlated|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.6|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.8|0.05|cluster_correlated|10000": {
+   "pass_count": 149,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.8|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.8|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.8|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.8|0.1|cluster_correlated|10000": {
+   "pass_count": 3,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|0.8|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|1.0|0.05|cluster_correlated|10000": {
+   "pass_count": 2579,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|1.0|0.05|row_dispersed|10000": {
+   "pass_count": 2,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|1.0|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|1.0|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|1.0|0.1|cluster_correlated|10000": {
+   "pass_count": 82,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|100|1.0|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.65|0.05|cluster_correlated|10000": {
+   "pass_count": 2362,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.65|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.65|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.65|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.65|0.1|cluster_correlated|10000": {
+   "pass_count": 4,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.65|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.6|0.05|cluster_correlated|10000": {
+   "pass_count": 2012,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.6|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.6|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.6|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.6|0.1|cluster_correlated|10000": {
+   "pass_count": 7,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.6|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.8|0.05|cluster_correlated|10000": {
+   "pass_count": 3402,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.8|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.8|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.8|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.8|0.1|cluster_correlated|10000": {
+   "pass_count": 8,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|0.8|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|1.0|0.05|cluster_correlated|10000": {
+   "pass_count": 8209,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|1.0|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|1.0|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|1.0|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|1.0|0.1|cluster_correlated|10000": {
+   "pass_count": 93,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|300|1.0|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.65|0.05|cluster_correlated|10000": {
+   "pass_count": 5418,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.65|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.65|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.65|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.65|0.1|cluster_correlated|10000": {
+   "pass_count": 4,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.65|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.6|0.05|cluster_correlated|10000": {
+   "pass_count": 4681,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.6|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.6|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.6|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.6|0.1|cluster_correlated|10000": {
+   "pass_count": 6,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.6|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.8|0.05|cluster_correlated|10000": {
+   "pass_count": 7248,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.8|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.8|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.8|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.8|0.1|cluster_correlated|10000": {
+   "pass_count": 7,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|0.8|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|1.0|0.05|cluster_correlated|10000": {
+   "pass_count": 9821,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|1.0|0.05|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|1.0|0.0|cluster_correlated|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|1.0|0.0|row_dispersed|10000": {
+   "pass_count": 10000,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|1.0|0.1|cluster_correlated|10000": {
+   "pass_count": 116,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "C|ordinary|500|1.0|0.1|row_dispersed|10000": {
+   "pass_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  }
+ },
+ "artifact_sha256": "a079f3535b67eccd47e5de144e420ed71bb6ebda3ae6fec2f6722426d14f0b82"
+}

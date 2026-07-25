@@ -483,9 +483,10 @@ def test_namespace_caps_enforced():
     with pytest.raises(GenerationError):
         generate_latent("lookup_atomic", "construction", 130, PROF)
     generate_latent("lookup_atomic", "construction", 129, PROF)
+    # 158_s §5.1: fork qualification cap amended 200 -> 500
     with pytest.raises(GenerationError):
-        generate_latent("fork_join", "qualification", 200, PROF)
-    generate_latent("fork_join", "qualification", 199, PROF)
+        generate_latent("fork_join", "qualification", 500, PROF)
+    generate_latent("fork_join", "qualification", 499, PROF)
 
 
 @pytest.mark.parametrize("bad_index", [-1, -42, True, False, 1.0, "0"])

@@ -161,7 +161,7 @@ def test_position_scenarios_cover_the_alpha_matrix():
     assert s["ordinary_div3"]["tail_alpha"] == pytest.approx(0.05 / 9)
     assert s["fork_div3"]["tail_alpha"] == pytest.approx(0.05 / 6)
     assert s["ordinary_div1"]["schedule"] == (100, 300, 500)
-    assert s["fork_div3"]["schedule"] == (100, 200)
+    assert s["fork_div3"]["schedule"] == (100, 500)  # 158_s §5.1
     # the model divisor is the fixed 3-position universe (132_s §8.2)
     assert stage1.MODEL_POSITION_ALPHA_DIVISOR == 3
 

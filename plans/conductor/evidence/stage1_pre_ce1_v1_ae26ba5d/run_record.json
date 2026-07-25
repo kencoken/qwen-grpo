@@ -1,0 +1,15 @@
+{
+ "status": "aborted",
+ "stages": [
+  "env_manifest",
+  "deterministic_equivalence",
+  "benchmark",
+  "artifact_A",
+  "artifact_C",
+  "agreement"
+ ],
+ "scenario_wall_seconds": {},
+ "started_unix": 1784931748,
+ "error": "TrancheError: agreement gate failed (998/1000); the reduced-replicate battery may not run",
+ "total_wall_seconds": 420
+}

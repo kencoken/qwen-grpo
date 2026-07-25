@@ -1,0 +1,59 @@
+{
+ "archived": "2026-07-25",
+ "diagnostic_note": "agreement_diagnostic.txt and its regenerating script are POST-HOC descriptive localization of the two disagreements; they did not enter the 998/1000 gate and their directionality finding is retrospective (158_s section 2)",
+ "execution_identity": "ae26ba5d3ab951ce0a898fcd14b055be144b3a8d642cc3a80e38c433c53d24b1",
+ "files": {
+  "agreement.json": {
+   "bytes": 42,
+   "role": "frozen",
+   "sha256": "21f8267c42bf6546b02736b909df37c11660ceda4e2bc2ea67d38a34f806f492"
+  },
+  "agreement_diagnostic.txt": {
+   "bytes": 173,
+   "role": "post-hoc descriptive",
+   "sha256": "34ec1caa5b7e0e11ec8d5fe5b7fad1da3a65e85db963144ca894dfd2068eb754"
+  },
+  "agreement_diagnostic_script.py": {
+   "bytes": 2270,
+   "role": "post-hoc descriptive",
+   "sha256": "eccbc0d3586a0f46a640fa8288023c55f32f5a8b3011b5d2c83cfb69d5cb3f5c"
+  },
+  "artifact_A.json": {
+   "bytes": 9804,
+   "role": "frozen",
+   "sha256": "3ad61310142e1c07062e77afff9da764a5fd4d14c0a6b6456efa8359251eae24"
+  },
+  "artifact_C.json": {
+   "bytes": 15051,
+   "role": "frozen",
+   "sha256": "eb4c13912f7f4da1f7f7511fb5021852af39367545964efbf3186b652ea900a7"
+  },
+  "benchmark.json": {
+   "bytes": 70,
+   "role": "frozen",
+   "sha256": "1fd09bff0b9fc7476b8a72cca2e4700e9af4c8ba30506aa2185b1b4ba5cf07e3"
+  },
+  "deterministic_equivalence.json": {
+   "bytes": 154,
+   "role": "frozen",
+   "sha256": "12c48da5e2a57e2f2f9a011cd9acbe3d903ee1aaa306fb52b01f9877a3d940cd"
+  },
+  "env_manifest.json": {
+   "bytes": 2326,
+   "role": "frozen",
+   "sha256": "caa666660ee4ebbbf88189771fc8f2322799964f891a1a68fbc1fac639c7b189"
+  },
+  "run_record.json": {
+   "bytes": 341,
+   "role": "frozen",
+   "sha256": "6a0b6fac3561f45bf439415b5f84a6a1ca1caf05485b1430f251bc6055a71cf0"
+  }
+ },
+ "lock_commit": "da8424bcf27dd59ad4c4e3fc32cb4edef6ba090a",
+ "manifest": "stage1-pre-ce1-v1-evidence-v1",
+ "outcome_commit": "20507e6d9f4573746813a47349e11cb227a42b9b",
+ "preregistration_153f_sha256": "235acb78d9b875999ab90ca50a37e9fbe4c208fa2fa92a285c3229ec01748572",
+ "reviewed_executable_commit": "75b852ff3bc3bd5671352451bfc60eae161b4370",
+ "source_digest": "8034178f00d952e4f8952dc511a79ac8fc7e36fa58b46e523d47964a9cc4470b",
+ "source_run_root": "runs/stage1-validation (picome; ignored path)"
+}

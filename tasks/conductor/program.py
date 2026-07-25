@@ -55,11 +55,15 @@ NAMESPACE_CONFIG: dict[str, dict[str, Any]] = {
     # (see CONSTRUCTION_FORMAL_COHORT / validate_construction_cohort).
     "construction": {"max_latent_clusters": 130, "expansion_batch": 100,
                      "stopping_rule": "fixed"},
+    # 158_s §5.1 (amend-once, accepted 159_f): fork terminal look
+    # 200 -> 500 globally; per-cell sequential fork gates keep two
+    # looks and the two-look alpha spending; aggregate-router
+    # contrasts stay on the first 100 per cell.
     "qualification": {"max_latent_clusters": 500, "expansion_batch": 200,
                       "stopping_rule": "sequential_looks",
                       "look_schedule": (100, 300, 500),
-                      "fork_join": {"max_latent_clusters": 200,
-                                    "look_schedule": (100, 200)}},
+                      "fork_join": {"max_latent_clusters": 500,
+                                    "look_schedule": (100, 500)}},
     "train": {"max_latent_clusters": 50_000, "expansion_batch": 5_000,
               "stopping_rule": "fixed"},
     "dev": {"max_latent_clusters": 2_000, "expansion_batch": 1_000,

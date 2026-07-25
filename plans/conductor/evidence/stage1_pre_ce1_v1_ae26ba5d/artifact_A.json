@@ -1,0 +1,440 @@
+{
+ "artifact": "A",
+ "tag": "stage1-validation-v1",
+ "execution_manifest_sha256": "ae26ba5d3ab951ce0a898fcd14b055be144b3a8d642cc3a80e38c433c53d24b1",
+ "results": {
+  "A-router|core_fork|0.05|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.05|0.5|10000": {
+   "pass_count": 7110,
+   "fail_count": 0,
+   "unresolved_count": 2890,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.05|0.75|10000": {
+   "pass_count": 3639,
+   "fail_count": 0,
+   "unresolved_count": 6361,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.05|0.95|10000": {
+   "pass_count": 2386,
+   "fail_count": 0,
+   "unresolved_count": 7614,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.15|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.15|0.5|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.15|0.75|10000": {
+   "pass_count": 9990,
+   "fail_count": 0,
+   "unresolved_count": 10,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.15|0.95|10000": {
+   "pass_count": 9669,
+   "fail_count": 0,
+   "unresolved_count": 331,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.1|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.1|0.5|10000": {
+   "pass_count": 9989,
+   "fail_count": 0,
+   "unresolved_count": 11,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.1|0.75|10000": {
+   "pass_count": 9115,
+   "fail_count": 0,
+   "unresolved_count": 885,
+   "trials": 10000
+  },
+  "A-router|core_fork|0.1|0.95|10000": {
+   "pass_count": 7415,
+   "fail_count": 0,
+   "unresolved_count": 2585,
+   "trials": 10000
+  },
+  "A-router|core|0.05|0.25|10000": {
+   "pass_count": 9996,
+   "fail_count": 0,
+   "unresolved_count": 4,
+   "trials": 10000
+  },
+  "A-router|core|0.05|0.5|10000": {
+   "pass_count": 6229,
+   "fail_count": 0,
+   "unresolved_count": 3771,
+   "trials": 10000
+  },
+  "A-router|core|0.05|0.75|10000": {
+   "pass_count": 3050,
+   "fail_count": 0,
+   "unresolved_count": 6950,
+   "trials": 10000
+  },
+  "A-router|core|0.05|0.95|10000": {
+   "pass_count": 2231,
+   "fail_count": 0,
+   "unresolved_count": 7769,
+   "trials": 10000
+  },
+  "A-router|core|0.15|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A-router|core|0.15|0.5|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A-router|core|0.15|0.75|10000": {
+   "pass_count": 9944,
+   "fail_count": 0,
+   "unresolved_count": 56,
+   "trials": 10000
+  },
+  "A-router|core|0.15|0.95|10000": {
+   "pass_count": 9404,
+   "fail_count": 0,
+   "unresolved_count": 596,
+   "trials": 10000
+  },
+  "A-router|core|0.1|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A-router|core|0.1|0.5|10000": {
+   "pass_count": 9972,
+   "fail_count": 0,
+   "unresolved_count": 28,
+   "trials": 10000
+  },
+  "A-router|core|0.1|0.75|10000": {
+   "pass_count": 8547,
+   "fail_count": 0,
+   "unresolved_count": 1453,
+   "trials": 10000
+  },
+  "A-router|core|0.1|0.95|10000": {
+   "pass_count": 6441,
+   "fail_count": 0,
+   "unresolved_count": 3559,
+   "trials": 10000
+  },
+  "A|fork_div3|0.15|0.25|10000": {
+   "pass_count": 9996,
+   "fail_count": 0,
+   "unresolved_count": 4,
+   "trials": 10000
+  },
+  "A|fork_div3|0.15|0.5|10000": {
+   "pass_count": 9432,
+   "fail_count": 0,
+   "unresolved_count": 568,
+   "trials": 10000
+  },
+  "A|fork_div3|0.15|0.75|10000": {
+   "pass_count": 6871,
+   "fail_count": 0,
+   "unresolved_count": 3129,
+   "trials": 10000
+  },
+  "A|fork_div3|0.15|0.95|10000": {
+   "pass_count": 4540,
+   "fail_count": 1,
+   "unresolved_count": 5459,
+   "trials": 10000
+  },
+  "A|fork_div3|0.1|0.25|10000": {
+   "pass_count": 5798,
+   "fail_count": 0,
+   "unresolved_count": 4202,
+   "trials": 10000
+  },
+  "A|fork_div3|0.1|0.5|10000": {
+   "pass_count": 5291,
+   "fail_count": 0,
+   "unresolved_count": 4709,
+   "trials": 10000
+  },
+  "A|fork_div3|0.1|0.75|10000": {
+   "pass_count": 3322,
+   "fail_count": 3,
+   "unresolved_count": 6675,
+   "trials": 10000
+  },
+  "A|fork_div3|0.1|0.95|10000": {
+   "pass_count": 2166,
+   "fail_count": 1,
+   "unresolved_count": 7833,
+   "trials": 10000
+  },
+  "A|fork_div3|0.2|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|fork_div3|0.2|0.5|10000": {
+   "pass_count": 9983,
+   "fail_count": 0,
+   "unresolved_count": 17,
+   "trials": 10000
+  },
+  "A|fork_div3|0.2|0.75|10000": {
+   "pass_count": 9298,
+   "fail_count": 0,
+   "unresolved_count": 702,
+   "trials": 10000
+  },
+  "A|fork_div3|0.2|0.95|10000": {
+   "pass_count": 7278,
+   "fail_count": 0,
+   "unresolved_count": 2722,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.15|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.15|0.5|10000": {
+   "pass_count": 9950,
+   "fail_count": 0,
+   "unresolved_count": 50,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.15|0.75|10000": {
+   "pass_count": 9529,
+   "fail_count": 1,
+   "unresolved_count": 470,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.15|0.95|10000": {
+   "pass_count": 9035,
+   "fail_count": 4,
+   "unresolved_count": 961,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.1|0.25|10000": {
+   "pass_count": 6894,
+   "fail_count": 0,
+   "unresolved_count": 3106,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.1|0.5|10000": {
+   "pass_count": 6875,
+   "fail_count": 0,
+   "unresolved_count": 3125,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.1|0.75|10000": {
+   "pass_count": 6464,
+   "fail_count": 6,
+   "unresolved_count": 3530,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.1|0.95|10000": {
+   "pass_count": 5760,
+   "fail_count": 11,
+   "unresolved_count": 4229,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.2|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.2|0.5|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.2|0.75|10000": {
+   "pass_count": 9991,
+   "fail_count": 0,
+   "unresolved_count": 9,
+   "trials": 10000
+  },
+  "A|ordinary_div1|0.2|0.95|10000": {
+   "pass_count": 9931,
+   "fail_count": 0,
+   "unresolved_count": 69,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.15|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.15|0.5|10000": {
+   "pass_count": 9936,
+   "fail_count": 0,
+   "unresolved_count": 64,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.15|0.75|10000": {
+   "pass_count": 9590,
+   "fail_count": 1,
+   "unresolved_count": 409,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.15|0.95|10000": {
+   "pass_count": 8830,
+   "fail_count": 0,
+   "unresolved_count": 1170,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.1|0.25|10000": {
+   "pass_count": 6895,
+   "fail_count": 0,
+   "unresolved_count": 3105,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.1|0.5|10000": {
+   "pass_count": 6640,
+   "fail_count": 0,
+   "unresolved_count": 3360,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.1|0.75|10000": {
+   "pass_count": 6125,
+   "fail_count": 1,
+   "unresolved_count": 3874,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.1|0.95|10000": {
+   "pass_count": 5387,
+   "fail_count": 3,
+   "unresolved_count": 4610,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.2|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.2|0.5|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.2|0.75|10000": {
+   "pass_count": 9991,
+   "fail_count": 0,
+   "unresolved_count": 9,
+   "trials": 10000
+  },
+  "A|ordinary_div2|0.2|0.95|10000": {
+   "pass_count": 9901,
+   "fail_count": 0,
+   "unresolved_count": 99,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.15|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.15|0.5|10000": {
+   "pass_count": 9946,
+   "fail_count": 0,
+   "unresolved_count": 54,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.15|0.75|10000": {
+   "pass_count": 9502,
+   "fail_count": 0,
+   "unresolved_count": 498,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.15|0.95|10000": {
+   "pass_count": 8596,
+   "fail_count": 2,
+   "unresolved_count": 1402,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.1|0.25|10000": {
+   "pass_count": 6978,
+   "fail_count": 0,
+   "unresolved_count": 3022,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.1|0.5|10000": {
+   "pass_count": 6543,
+   "fail_count": 0,
+   "unresolved_count": 3457,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.1|0.75|10000": {
+   "pass_count": 5959,
+   "fail_count": 4,
+   "unresolved_count": 4037,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.1|0.95|10000": {
+   "pass_count": 4720,
+   "fail_count": 1,
+   "unresolved_count": 5279,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.2|0.25|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.2|0.5|10000": {
+   "pass_count": 10000,
+   "fail_count": 0,
+   "unresolved_count": 0,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.2|0.75|10000": {
+   "pass_count": 9990,
+   "fail_count": 0,
+   "unresolved_count": 10,
+   "trials": 10000
+  },
+  "A|ordinary_div3|0.2|0.95|10000": {
+   "pass_count": 9865,
+   "fail_count": 0,
+   "unresolved_count": 135,
+   "trials": 10000
+  }
+ },
+ "artifact_sha256": "539a138bc0f59eef8208845e991351a89b6d6ead970f4eb625683126450b5d98"
+}

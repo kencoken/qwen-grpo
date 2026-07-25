@@ -144,7 +144,7 @@ def test_qualification_registers_maximum_with_per_look_blocks(
         qualification):
     for cell in STAGE1_CELLS:
         block = qualification["cells"][cell]
-        cap = 200 if cell == "fork_join" else 500
+        cap = 500                    # 158_s §5.1: fork cap now 500 too
         assert len(block["ids"]) == cap
         with_visible = [row for row in block["ids"]
                         if "visible_render_instance_ids" in row]
@@ -229,14 +229,14 @@ def test_prefixes_are_immutable_prefixes(qualification):
     p1 = qualification_prefix(qualification, {"code_atomic": 100,
                                               "fork_join": 100})
     p2 = qualification_prefix(qualification, {"code_atomic": 300,
-                                              "fork_join": 200})
+                                              "fork_join": 500})
     assert p2["code_atomic"][:100] == p1["code_atomic"]
     assert p2["fork_join"][:100] == p1["fork_join"]
     assert len(set(p2["code_atomic"])) == 300
 
 
 def test_validate_qualification_looks_hardened():
-    validate_qualification_looks({"code_atomic": 300, "fork_join": 200})
+    validate_qualification_looks({"code_atomic": 300, "fork_join": 500})
     with pytest.raises(ManifestError):
         validate_qualification_looks({})            # empty (139_s)
     with pytest.raises(ManifestError):
@@ -246,7 +246,7 @@ def test_validate_qualification_looks_hardened():
     with pytest.raises(ManifestError):
         validate_qualification_looks({"code_atomic": 200})
     with pytest.raises(ManifestError):
-        validate_qualification_looks({"fork_join": 500})
+        validate_qualification_looks({"fork_join": 200})  # old cap
     with pytest.raises(ManifestError):
         validate_qualification_looks({"bogus": 100})
 

@@ -418,7 +418,8 @@ def _check_hex64(value: Any, what: str) -> str:
 
 def finalize_artifact(name: str, execution_manifest_sha256: str,
                       results: Mapping[str, Mapping[str, int]],
-                      extra: Mapping[str, Any] | None = None
+                      extra: Mapping[str, Any] | None = None,
+                      tag: str = TRANCHE_ARTIFACT_TAG
                       ) -> dict[str, Any]:
     """Canonical, content-addressed tranche artifact. INTEGER sufficient
     statistics only (rates/bounds recomputed at load); the execution
@@ -442,7 +443,7 @@ def finalize_artifact(name: str, execution_manifest_sha256: str,
             f"extra fields {sorted(set(extra) & _RESERVED_FIELDS)} "
             "shadow reserved artifact fields")
     body: dict[str, Any] = {
-        "artifact": name, "tag": TRANCHE_ARTIFACT_TAG,
+        "artifact": name, "tag": tag,
         "execution_manifest_sha256": execution_manifest_sha256,
         "results": {k: dict(v) for k, v in sorted(results.items())},
     }
@@ -458,7 +459,8 @@ def finalize_artifact(name: str, execution_manifest_sha256: str,
 def load_artifact(artifact: Mapping[str, Any], name: str,
                   expected_keys: frozenset[str],
                   execution_manifest_sha256: str | None = None,
-                  b_n: int | None = None) -> dict[str, Any]:
+                  b_n: int | None = None,
+                  tag: str = TRANCHE_ARTIFACT_TAG) -> dict[str, Any]:
     """Fail-closed reload: hash recompute, tag/name, exact key set,
     exact per-row schema with trial-count and count identities, and —
     when given — the ONE authoritative execution identity (145_s
@@ -469,8 +471,11 @@ def load_artifact(artifact: Mapping[str, Any], name: str,
     if digest != artifact.get("artifact_sha256"):
         raise TrancheError(f"artifact {name}: content hash mismatch")
     if artifact.get("artifact") != name or \
-            artifact.get("tag") != TRANCHE_ARTIFACT_TAG:
-        raise TrancheError(f"artifact {name}: wrong name/tag")
+            artifact.get("tag") != tag:
+        raise TrancheError(
+            f"artifact {name}: wrong name/tag (expected tag {tag!r}; "
+            "a v1 artifact must refuse an amend1 loader and vice "
+            "versa, 158_s §9)")
     if execution_manifest_sha256 is not None and \
             artifact.get("execution_manifest_sha256") != \
             execution_manifest_sha256:

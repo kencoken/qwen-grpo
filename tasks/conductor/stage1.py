@@ -214,7 +214,9 @@ C2_POSITION_UNIVERSE = (("code_atomic", "n1"), ("math_code", "n2"),
 
 # Cross-checked against program.NAMESPACE_CONFIG by the acceptance tests.
 ORDINARY_LOOK_SCHEDULE = (100, 300, 500)
-FORK_LOOK_SCHEDULE = (100, 200)
+# 158_s §5.1: fork terminal look amended 200 -> 500 (still two looks,
+# so the 0.05/2 fork tail alpha is unchanged).
+FORK_LOOK_SCHEDULE = (100, 500)
 
 ALPHA_TOTAL = 0.05
 ORDINARY_LOOK_TAIL_ALPHA = ALPHA_TOTAL / len(ORDINARY_LOOK_SCHEDULE)  # 0.05/3
