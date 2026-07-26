@@ -143,11 +143,15 @@ LAUNCH_LOCK_PATH = Path("plans/conductor/b_diagnostic_launch_lock.json")
 
 
 def current_executable_identity() -> dict[str, str]:
-    """The four identities the smoke record carries and the launch
-    lock must match (195_f §3 steps 4-5)."""
+    """The identities the smoke record carries and the launch lock
+    must match (195_f §3 steps 4-5; uv_lock_sha256 added per 199_s
+    finding 1 — the dependency lockfile is part of the smoked
+    executable)."""
     from .stage1_manifest import stage1_source_digest
     return {
         "source_digest": stage1_source_digest(),
+        "uv_lock_sha256": hashlib.sha256(
+            Path("uv.lock").read_bytes()).hexdigest(),
         "contract_sha256": hashlib.sha256(canonical_json(
             B_DIAGNOSTIC_CONTRACT).encode("utf-8")).hexdigest(),
         "generation_config_sha256": generation_config_digest(),
@@ -155,6 +159,44 @@ def current_executable_identity() -> dict[str, str]:
         "tokenizer_revision":
             B_DIAGNOSTIC_CONTRACT["tokenizer_revision"],
     }
+
+
+def validate_smoke_record(record: Any) -> None:
+    """199_s finding 1: the SHARED smoke-record validator — semantic,
+    not just byte-level. Used at lock BUILD and at every lock
+    VALIDATION, so a lock pointing at an aborted, foreign,
+    under-budget or shape-less record refuses everywhere."""
+    if not isinstance(record, dict):
+        raise InfrastructureError("smoke record is not a JSON object")
+    if record.get("smoke") != B_DIAG_TAG:
+        raise InfrastructureError("smoke record carries a foreign tag")
+    if record.get("status") != "complete":
+        raise InfrastructureError(
+            "smoke record is not a complete run")
+    ident = current_executable_identity()
+    for field, value in ident.items():
+        if record.get(field) != value:
+            raise InfrastructureError(
+                f"smoke record {field!r} != the current executable — "
+                "re-smoke after any change (195_f §3)")
+    expected_budget = 2 * SMOKE_COMPLETIONS_PER_PROMPT
+    if record.get("budget_completions") != expected_budget or \
+            record.get("completions") != expected_budget:
+        raise InfrastructureError(
+            "smoke record budget/completion count != the frozen "
+            f"{expected_budget}")
+    if record.get("deadline_seconds") != SMOKE_DEADLINE_SECONDS:
+        raise InfrastructureError(
+            "smoke record deadline != the frozen literal")
+    shapes = record.get("prompt_input_ids_shapes")
+    if not isinstance(shapes, dict) or \
+            set(shapes) != set(_PROMPT_SHAS) or \
+            any(not isinstance(s, list) or len(s) != 2 or s[0] != 1
+                or not isinstance(s[1], int) or s[1] < 1
+                for s in shapes.values()):
+        raise InfrastructureError(
+            "smoke record prompt tensor shapes are missing or "
+            "malformed")
 
 
 def build_launch_lock(smoke_record_path: Path | str, *,
@@ -170,17 +212,8 @@ def build_launch_lock(smoke_record_path: Path | str, *,
     record_path = Path(smoke_record_path)
     record_bytes = record_path.read_bytes()
     record = json.loads(record_bytes)
-    if not isinstance(record, dict) or \
-            record.get("status") != "complete":
-        raise InfrastructureError(
-            "launch lock refused: smoke record is not a complete run")
+    validate_smoke_record(record)      # 199_s: SEMANTIC validation
     ident = current_executable_identity()
-    for field, value in ident.items():
-        if record.get(field) != value:
-            raise InfrastructureError(
-                f"launch lock refused: smoke record {field!r} != the "
-                "current executable — re-smoke after any change "
-                "(195_f §3)")
     body = {
         "launch_lock": B_DIAG_TAG,
         "smoke_record_path": str(record_path),
@@ -228,10 +261,20 @@ def validate_launch_lock(lock: Mapping[str, Any], *,
     if not record_path.is_file():
         raise InfrastructureError(
             "the smoke record the launch lock binds is absent")
-    if hashlib.sha256(record_path.read_bytes()).hexdigest() != \
+    record_bytes = record_path.read_bytes()
+    if hashlib.sha256(record_bytes).hexdigest() != \
             lock["smoke_record_sha256"]:
         raise InfrastructureError(
             "smoke record bytes != the launch lock binding")
+    # 199_s finding 1: the consumer re-validates the bound record's
+    # SEMANTICS — a rehashed lock pointing at an aborted/foreign/
+    # under-budget record refuses here regardless of its bytes hash
+    try:
+        record = json.loads(record_bytes)
+    except ValueError as error:
+        raise InfrastructureError(
+            f"bound smoke record is unreadable: {error}")
+    validate_smoke_record(record)
 
 
 # --- §4.1: the self-hashed pre-sampling manifest -----------------------------------
@@ -729,6 +772,17 @@ def run_b_smoke(_inputs: Mapping[str, Any] | None = None,
     import time
 
     from .stage1_manifest import build_stage1_env_manifest
+    # 199_s finding 2: the smoke is ONE-SHOT — refuse before the
+    # preflight or any model loading if its record (or a stale
+    # temporary) already exists
+    path = Path(record_path if record_path is not None
+                else SMOKE_RECORD_PATH)
+    tmp_path = path.with_suffix(".json.tmp")
+    if path.exists() or tmp_path.exists():
+        raise InfrastructureError(
+            f"{path} (or its temporary) already exists — the smoke "
+            "is one-shot; a re-smoke requires review and removal of "
+            "the superseded record (199_s finding 2)")
     preflight = None if _inputs is not None else vram_preflight()
     env = build_stage1_env_manifest()
     tokenizer = (_inputs or {}).get("tokenizer") or \
@@ -755,11 +809,9 @@ def run_b_smoke(_inputs: Mapping[str, Any] | None = None,
     }
 
     def _persist_record() -> None:
-        path = Path(record_path if record_path is not None
-                    else SMOKE_RECORD_PATH)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(record, indent=1), encoding="utf-8")
-        os.replace(tmp, path)
+        tmp_path.write_text(json.dumps(record, indent=1),
+                            encoding="utf-8")
+        os.replace(tmp_path, path)
 
     try:
         # 197_s: record the prompt tensor shapes explicitly (same
@@ -995,6 +1047,14 @@ def archive_b_diagnostic(mode: str,
     present = sorted(p.name for p in src.iterdir() if p.is_file())
     if "run_record.json" not in present:
         errors.append("run record absent")
+    if mode == "abort" and status != "aborted":
+        # 199_s finding 3: abort archival is ONLY for aborted runs —
+        # a complete run must go through --mode success and its
+        # authenticating verification, and must never consume the
+        # immutable destination via the untrusting path
+        raise InfrastructureError(
+            f"abort archive refused: run record status {status!r} != "
+            "'aborted' (a complete run archives with --mode success)")
 
     if mode == "success":
         if errors:

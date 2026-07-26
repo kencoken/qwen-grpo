@@ -432,6 +432,14 @@ def test_run_b_smoke_stub(tmp_path, monkeypatch):
     persisted = json.loads((tmp_path / "smoke.json").read_text(
         encoding="utf-8"))
     assert persisted == record
+    # 199_s: uv_lock_sha256 joins the executable identity
+    assert record["uv_lock_sha256"] == hashlib.sha256(
+        __import__("pathlib").Path("uv.lock").read_bytes()).hexdigest()
+    # 199_s finding 2: the smoke is one-shot — a second invocation
+    # refuses BEFORE preflight/model loading
+    with pytest.raises(InfrastructureError, match="one-shot"):
+        bd.run_b_smoke(_inputs=inputs,
+                       record_path=tmp_path / "smoke.json")
 
 
 def _smoke_and_lock(tmp_path, rows):
@@ -454,11 +462,15 @@ def test_launch_lock_binding_and_refusals(tmp_path, monkeypatch):
     rows = _support_rows()
     registry = bd.build_diagnostic_seed_registry(sorted(rows))
     lock_path = _smoke_and_lock(tmp_path, rows)
+    from tasks.conductor.profiles import canonical_json
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    good_record = json.loads((tmp_path / "smoke.json").read_text(
+        encoding="utf-8"))
     bd.validate_launch_lock(lock, seed_registry=registry)
+    assert lock["uv_lock_sha256"] == hashlib.sha256(
+        __import__("pathlib").Path("uv.lock").read_bytes()).hexdigest()
     # a lock whose identity disagrees with the current executable
     # refuses (rehashed so the self-hash passes)
-    from tasks.conductor.profiles import canonical_json
     body = {k: v for k, v in lock.items()
             if k != "launch_lock_sha256"}
     body["source_digest"] = "e" * 64
@@ -473,10 +485,32 @@ def test_launch_lock_binding_and_refusals(tmp_path, monkeypatch):
     # an incomplete smoke record cannot be locked at all
     (tmp_path / "smoke2.json").write_text(
         json.dumps({"status": "aborted"}), encoding="utf-8")
-    with pytest.raises(InfrastructureError, match="complete"):
+    with pytest.raises(InfrastructureError, match="JSON object|tag|complete"):
         bd.build_launch_lock(tmp_path / "smoke2.json",
                              seed_registry=registry,
                              lock_path=tmp_path / "lock2.json")
+    # 199_s finding 1: a REHASHED lock pointing at an aborted record
+    # is refused by the consumer's SEMANTIC re-validation
+    aborted_bytes = (tmp_path / "smoke2.json").read_bytes()
+    evil = {k: v for k, v in lock.items()
+            if k != "launch_lock_sha256"}
+    evil["smoke_record_path"] = str(tmp_path / "smoke2.json")
+    evil["smoke_record_sha256"] = hashlib.sha256(
+        aborted_bytes).hexdigest()
+    evil["launch_lock_sha256"] = hashlib.sha256(
+        canonical_json(evil).encode("utf-8")).hexdigest()
+    with pytest.raises(InfrastructureError,
+                       match="JSON object|tag|complete"):
+        bd.validate_launch_lock(evil, seed_registry=registry)
+    # an under-budget record refuses semantically too
+    good = dict(good_record)
+    good["completions"] = 8
+    (tmp_path / "smoke3.json").write_text(json.dumps(good),
+                                          encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="budget"):
+        bd.build_launch_lock(tmp_path / "smoke3.json",
+                             seed_registry=registry,
+                             lock_path=tmp_path / "lock3.json")
 
 
 def test_verifier_provenance_tampers_refused():
@@ -598,6 +632,11 @@ def test_run_b_diagnostic_end_to_end(tmp_path, monkeypatch):
         bd.archive_b_diagnostic("success", run_dir=run_dir,
                                 evidence_parent=tmp_path / "ev",
                                 pinned_loader=f["loader"])
+    # 199_s finding 3: a complete run may not consume the immutable
+    # destination through the untrusting abort path
+    with pytest.raises(InfrastructureError, match="mode success"):
+        bd.archive_b_diagnostic("abort", run_dir=run_dir,
+                                evidence_parent=tmp_path / "ev3")
     # a second diagnostic run refuses the claimed root
     with pytest.raises(InfrastructureError, match="already exists"):
         bd.run_b_diagnostic(_inputs=inputs,
@@ -648,12 +687,13 @@ def test_diagnostic_abort_preserves_partial(tmp_path, monkeypatch):
         (dest / "evidence_manifest.json").read_text(encoding="utf-8"))
     assert manifest["run_status"] == "aborted"
     assert "raw_completions_partial.json" in manifest["files_present"]
-    # 197_s: a NON-terminal status is recorded as a validation error
+    # 199_s finding 3: abort archival is ONLY for aborted runs — a
+    # non-terminal status refuses outright
     (run_dir / "run_record.json").write_text(
         json.dumps({"status": "running"}), encoding="utf-8")
-    out2 = bd.archive_b_diagnostic("abort", run_dir=run_dir,
-                                   evidence_parent=tmp_path / "ev4")
-    assert any("not terminal" in e for e in out2["validation_errors"])
+    with pytest.raises(InfrastructureError, match="mode success"):
+        bd.archive_b_diagnostic("abort", run_dir=run_dir,
+                                evidence_parent=tmp_path / "ev4")
     # success mode REFUSES the aborted root
     with pytest.raises(InfrastructureError,
                        match="file set|complete|not terminal"):
