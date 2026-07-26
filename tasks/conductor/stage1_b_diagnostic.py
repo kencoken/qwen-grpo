@@ -136,6 +136,104 @@ def generation_config_digest() -> str:
         canonical_json(desc).encode("utf-8")).hexdigest()
 
 
+# --- 197_s finding 1: the smoke/launch lock ------------------------------------------
+
+SMOKE_RECORD_PATH = Path("plans/conductor/b_diagnostic_smoke_record.json")
+LAUNCH_LOCK_PATH = Path("plans/conductor/b_diagnostic_launch_lock.json")
+
+
+def current_executable_identity() -> dict[str, str]:
+    """The four identities the smoke record carries and the launch
+    lock must match (195_f §3 steps 4-5)."""
+    from .stage1_manifest import stage1_source_digest
+    return {
+        "source_digest": stage1_source_digest(),
+        "contract_sha256": hashlib.sha256(canonical_json(
+            B_DIAGNOSTIC_CONTRACT).encode("utf-8")).hexdigest(),
+        "generation_config_sha256": generation_config_digest(),
+        "model_revision": B_DIAGNOSTIC_CONTRACT["revision"],
+        "tokenizer_revision":
+            B_DIAGNOSTIC_CONTRACT["tokenizer_revision"],
+    }
+
+
+def build_launch_lock(smoke_record_path: Path | str, *,
+                      seed_registry: Mapping[str, int],
+                      lock_path: Path | str | None = None
+                      ) -> dict[str, Any]:
+    """Step-5 launch lock: proves smoked executable == launched
+    executable. Requires the PERSISTED smoke record to be complete
+    and to carry exactly the CURRENT executable identities; binds the
+    record's bytes, the identities, and the canonical seed-registry
+    digest; self-hashed and written to the lock path."""
+    import os
+    record_path = Path(smoke_record_path)
+    record_bytes = record_path.read_bytes()
+    record = json.loads(record_bytes)
+    if not isinstance(record, dict) or \
+            record.get("status") != "complete":
+        raise InfrastructureError(
+            "launch lock refused: smoke record is not a complete run")
+    ident = current_executable_identity()
+    for field, value in ident.items():
+        if record.get(field) != value:
+            raise InfrastructureError(
+                f"launch lock refused: smoke record {field!r} != the "
+                "current executable — re-smoke after any change "
+                "(195_f §3)")
+    body = {
+        "launch_lock": B_DIAG_TAG,
+        "smoke_record_path": str(record_path),
+        "smoke_record_sha256": hashlib.sha256(
+            record_bytes).hexdigest(),
+        "seed_registry_sha256": am.seed_registry_digest(seed_registry),
+        **ident,
+    }
+    digest = hashlib.sha256(
+        canonical_json(body).encode("utf-8")).hexdigest()
+    lock = dict(body)
+    lock["launch_lock_sha256"] = digest
+    path = Path(lock_path if lock_path is not None
+                else LAUNCH_LOCK_PATH)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(lock, indent=1), encoding="utf-8")
+    os.replace(tmp, path)
+    return lock
+
+
+def validate_launch_lock(lock: Mapping[str, Any], *,
+                         seed_registry: Mapping[str, int]) -> None:
+    """The consuming boundary (197_s finding 1): the diagnostic may
+    not sample retained support unless the committed launch lock
+    matches the CURRENT executable identities, the canonical
+    registry, and the persisted smoke record's bytes."""
+    body = {k: v for k, v in lock.items() if k != "launch_lock_sha256"}
+    digest = hashlib.sha256(
+        canonical_json(body).encode("utf-8")).hexdigest()
+    if digest != lock.get("launch_lock_sha256"):
+        raise InfrastructureError("launch lock hash mismatch")
+    if lock.get("launch_lock") != B_DIAG_TAG:
+        raise InfrastructureError("not a B-diagnostic launch lock")
+    ident = current_executable_identity()
+    for field, value in ident.items():
+        if lock.get(field) != value:
+            raise InfrastructureError(
+                f"launch lock {field!r} != the current executable — "
+                "smoked != launched; return to review and re-smoke")
+    if lock.get("seed_registry_sha256") != \
+            am.seed_registry_digest(seed_registry):
+        raise InfrastructureError(
+            "launch lock does not bind this seed registry")
+    record_path = Path(lock["smoke_record_path"])
+    if not record_path.is_file():
+        raise InfrastructureError(
+            "the smoke record the launch lock binds is absent")
+    if hashlib.sha256(record_path.read_bytes()).hexdigest() != \
+            lock["smoke_record_sha256"]:
+        raise InfrastructureError(
+            "smoke record bytes != the launch lock binding")
+
+
 # --- §4.1: the self-hashed pre-sampling manifest -----------------------------------
 
 def build_diagnostic_manifest(env_manifest_sha256: str,
@@ -222,7 +320,13 @@ def count_from_raw(raw: Mapping[str, str],
             levels = {level: 0 for level in REWARD_LEVELS}
             for i in range(sr.REPLAY_COMPLETIONS):
                 text = raw[f"{oid}|{sha}|{i:03d}"]
-                text.encode("utf-8")
+                try:
+                    text.encode("utf-8")
+                except UnicodeEncodeError:
+                    # 197_s: non-UTF-8 output is non-parseable and
+                    # reward-zero, never an abort
+                    levels["0"] += 1
+                    continue
                 try:
                     json.loads(text)
                 except ValueError:
@@ -388,6 +492,29 @@ def verify_b_diagnostic_evidence(artifact: Mapping[str, Any], *,
             am.seed_registry_digest(registry):
         raise InfrastructureError(
             "manifest seed-registry digest != the canonical registry")
+    # 197_s finding 2: provenance claims are independently RE-DERIVED,
+    # never accepted as well-formed hashes
+    if manifest["stage1_source_sha256"] != \
+            env_manifest["stage1_source_sha256"]:
+        raise InfrastructureError(
+            "manifest stage1_source_sha256 != the validated "
+            "environment manifest's source identity")
+    if manifest["generation_config_sha256"] != \
+            generation_config_digest():
+        raise InfrastructureError(
+            "manifest generation_config_sha256 != the digest of the "
+            "frozen generation kwargs")
+    tokenizer = inputs.get("tokenizer")
+    chat_template = getattr(tokenizer, "chat_template", None)
+    if chat_template is None:
+        raise InfrastructureError(
+            "the pinned loader supplied no tokenizer chat template — "
+            "chat_template_sha256 cannot be verified (197_s)")
+    if manifest["chat_template_sha256"] != hashlib.sha256(
+            str(chat_template).encode("utf-8")).hexdigest():
+        raise InfrastructureError(
+            "manifest chat_template_sha256 != the pinned tokenizer's "
+            "chat template")
 
     raw_sha = hashlib.sha256(
         raw_completions_text.encode("utf-8")).hexdigest()
@@ -418,17 +545,24 @@ REPORT_LABEL = ("descriptive; iid-singleton plug-in predictions, not "
 
 def _plugin_quantities(row: Mapping[str, Any],
                        pair: Mapping[str, Any] | None
-                       ) -> dict[str, float | None]:
+                       ) -> dict[str, Any]:
     n = row["n"]
     p_levels = {lv: row["reward_levels"][lv] / n
                 for lv in REWARD_LEVELS}
     zero_var = sum(p ** 8 for p in p_levels.values())
     diversity = sum(1.0 - (1.0 - p) ** 8 for p in p_levels.values())
-    out: dict[str, float | None] = {
+    out: dict[str, Any] = {
         "parse_rate": row["parseable"] / n,
         "valid_rate": row["valid"] / n,
         "zero_variance_group_fraction": zero_var,
         "expected_reward_level_diversity": diversity,
+        # 197_s finding 3: signed outputs — the full reward-level
+        # frequencies and the action distribution travel per row
+        "reward_rate_0": p_levels["0"],
+        "reward_rate_0.5": p_levels["0.5"],
+        "reward_rate_1": p_levels["1"],
+        "assignment_rates": {k: v / n
+                             for k, v in row["assignments"].items()},
         "p2": None, "p3": None, "g8": None,
     }
     if pair is not None:
@@ -439,6 +573,27 @@ def _plugin_quantities(row: Mapping[str, Any],
         out.update({"p2": p2, "p3": p3,
                     "g8": sr.g_direct_gradient(p2, p3)})
     return out
+
+
+def _aggregate_detail(values_by_obs: Mapping[str, float],
+                      obs_meta: Mapping[str, Mapping[str, str]]
+                      ) -> dict[str, Any]:
+    """197_s finding 3: the frozen renderer→latent→equal-cell
+    weighting, EXPOSED at every level — per-cell means plus the
+    overall equal-cell mean (the overall value equals
+    `sr._aggregate` by construction)."""
+    cells: dict[str, dict[str, dict[str, float]]] = {}
+    for obs, value in values_by_obs.items():
+        meta = obs_meta[obs]
+        cells.setdefault(meta["cell_id"], {}).setdefault(
+            meta["latent"], {})[meta["renderer"]] = value
+    per_cell = {}
+    for cell, latents in sorted(cells.items()):
+        latent_means = [sum(r.values()) / len(r)
+                        for r in latents.values()]
+        per_cell[cell] = sum(latent_means) / len(latent_means)
+    return {"equal_cell": sum(per_cell.values()) / len(per_cell),
+            "per_cell": per_cell}
 
 
 def build_b_diagnostic_report(results: Mapping[str, Mapping[str, Any]],
@@ -467,17 +622,14 @@ def build_b_diagnostic_report(results: Mapping[str, Mapping[str, Any]],
         per_row[key] = q
 
     def _agg(metric: str, keys: list[str],
-             prompt_sha: str) -> float | None:
+             prompt_sha: str) -> dict[str, Any] | None:
         values = {k.rsplit("|", 1)[0]: per_row[k][metric]
                   for k in keys if k.endswith(prompt_sha)
                   and per_row[k][metric] is not None}
         if not values:
             return None
-        return sr._aggregate(values, obs_meta)
+        return _aggregate_detail(values, obs_meta)
 
-    report: dict[str, Any] = {"label": REPORT_LABEL,
-                              "per_observation_prompt": per_row,
-                              "aggregates": {}}
     populations = {
         "all_18": [k for k in per_row],
         "w2_favoured": [k for k, q in per_row.items()
@@ -487,13 +639,39 @@ def build_b_diagnostic_report(results: Mapping[str, Mapping[str, Any]],
         "tied_pairs": [k for k, q in per_row.items()
                        if q["population"] == "tied_pair"],
     }
+    # 197_s finding 3: explicit denominators and support composition
+    n_pairs = len(pair_table)
+    n_distinct = sum(1 for p in pair_table.values()
+                     if p["distinct_payoff"])
+    report: dict[str, Any] = {
+        "label": REPORT_LABEL,
+        "support_composition": {
+            "observations": len(obs_meta),
+            "pair_observations": n_pairs,
+            "distinct_payoff_pairs": n_distinct,
+            "w2_favoured": sum(1 for p in pair_table.values()
+                               if p["direction"] == 2),
+            "w3_favoured": sum(1 for p in pair_table.values()
+                               if p["direction"] == 3),
+            "tied_pairs": n_pairs - n_distinct,
+        },
+        "populations": {
+            pop: {"row_count": len(keys),
+                  "observation_count":
+                      len({k.rsplit("|", 1)[0] for k in keys})}
+            for pop, keys in populations.items()},
+        "per_observation_prompt": per_row,
+        "aggregates": {},
+    }
     for prompt_name, sha in (("fewshot", _PROMPT_SHAS[0]),
                              ("schema_only", _PROMPT_SHAS[1])):
         block: dict[str, Any] = {}
         for pop, keys in populations.items():
             metrics = ["parse_rate", "valid_rate",
                        "zero_variance_group_fraction",
-                       "expected_reward_level_diversity"]
+                       "expected_reward_level_diversity",
+                       "reward_rate_0", "reward_rate_0.5",
+                       "reward_rate_1"]
             if pop in ("w2_favoured", "w3_favoured"):
                 metrics += ["p2", "p3", "g8"]
             if pop == "tied_pairs":
@@ -528,22 +706,33 @@ SMOKE_OOD_USER = ("SMOKE (throwaway, out-of-distribution): respond "
 SMOKE_OID = "smoke-ood-00000"
 
 
-def run_b_smoke(_inputs: Mapping[str, Any] | None = None
+def _load_smoke_tokenizer():
+    """197_s: the synthetic smoke needs ONLY the tokenizer — never
+    the retained-support surface or rows."""
+    from transformers import AutoTokenizer
+    return AutoTokenizer.from_pretrained(
+        B_DIAGNOSTIC_CONTRACT["model_id"],
+        revision=B_DIAGNOSTIC_CONTRACT["tokenizer_revision"])
+
+
+def run_b_smoke(_inputs: Mapping[str, Any] | None = None,
+                record_path: Path | str | None = None
                 ) -> dict[str, Any]:
     """The reward-blind smoke (195_f §3): SAME helper
     (`sr._generate`), SAME constructor (`sr._build_replay_model`),
     SAME kwargs (`sr.GENERATION_KWARGS`); one synthetic OOD input;
     both frozen system prompts; ≤16 completions; 10-minute in-loop
     monotonic deadline; discloses ONLY shape/runtime validity.
-    Outputs are discarded — never parsed, scored, or persisted."""
+    Outputs are discarded — never parsed, scored, or persisted. The
+    record (identities included) is PERSISTED for the launch lock."""
+    import os
     import time
 
-    from .stage1_manifest import (build_stage1_env_manifest,
-                                  stage1_source_digest)
+    from .stage1_manifest import build_stage1_env_manifest
     preflight = None if _inputs is not None else vram_preflight()
     env = build_stage1_env_manifest()
-    inputs = _inputs or sr._load_replay_inputs_full()
-    tokenizer = inputs["tokenizer"]
+    tokenizer = (_inputs or {}).get("tokenizer") or \
+        _load_smoke_tokenizer()
     rows = {SMOKE_OID: {"positions": json.dumps(["n1"]),
                         "num_steps": 1}}
     messages = {}
@@ -556,17 +745,31 @@ def run_b_smoke(_inputs: Mapping[str, Any] | None = None
     started = time.monotonic()
     record: dict[str, Any] = {
         "smoke": B_DIAG_TAG, "preflight": preflight,
-        "source_digest": stage1_source_digest(),
         "environment_manifest_sha256":
             env["execution_manifest_sha256"],
-        "contract_sha256": hashlib.sha256(canonical_json(
-            B_DIAGNOSTIC_CONTRACT).encode("utf-8")).hexdigest(),
-        "model_revision": B_DIAGNOSTIC_CONTRACT["revision"],
-        "generation_config_sha256": generation_config_digest(),
+        # the four identities the launch lock must match, plus the
+        # explicit tokenizer revision (197_s)
+        **current_executable_identity(),
         "budget_completions": 2 * SMOKE_COMPLETIONS_PER_PROMPT,
         "deadline_seconds": SMOKE_DEADLINE_SECONDS,
     }
+
+    def _persist_record() -> None:
+        path = Path(record_path if record_path is not None
+                    else SMOKE_RECORD_PATH)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(record, indent=1), encoding="utf-8")
+        os.replace(tmp, path)
+
     try:
+        # 197_s: record the prompt tensor shapes explicitly (same
+        # tokenizer call the shared helper makes)
+        record["prompt_input_ids_shapes"] = {
+            sha: list(tokenizer.apply_chat_template(
+                messages[f"{SMOKE_OID}|{sha}"], tokenize=True,
+                return_tensors="pt",
+                add_generation_prompt=True)["input_ids"].shape)
+            for sha in _PROMPT_SHAS}
         model = (_inputs or {}).get("_model") or \
             sr._build_replay_model()
         raw: dict[str, str] = {}
@@ -590,11 +793,13 @@ def run_b_smoke(_inputs: Mapping[str, Any] | None = None
                 torch.cuda.max_memory_allocated() / 2**20)
         except Exception:
             record["vram_peak_mib"] = None
+        _persist_record()
     except BaseException as error:
         record.update({"status": "aborted",
                        "error": f"{type(error).__name__}: {error}",
                        "wall_seconds": round(
                            time.monotonic() - started, 1)})
+        _persist_record()
         raise SmokeFailure(json.dumps(record, indent=1)) from error
     return record
 
@@ -604,14 +809,21 @@ class SmokeFailure(InfrastructureError):
 
 
 def run_b_diagnostic(*, allow_dirty: bool = False,
-                     _inputs: Mapping[str, Any] | None = None
+                     _inputs: Mapping[str, Any] | None = None,
+                     launch_lock_path: Path | str | None = None
                      ) -> dict[str, Any]:
-    """The one-shot diagnostic (195_f §4): preflight → manifest
-    persisted BEFORE model work → shared repaired helper with the
-    registered diagnostic seeds, 3-hour in-loop monotonic deadline
-    and staged persistence → integer artifact with the frozen
-    identities → authenticating verification → complete record.
-    Aborts preserve partial raw evidence and the aborted record."""
+    """The one-shot diagnostic (195_f §4): LAUNCH LOCK enforced at
+    this consuming boundary (197_s finding 1 — retained support
+    cannot be sampled without a committed lock matching the current
+    executable, the registry, and the persisted smoke record) →
+    preflight → manifest persisted BEFORE model work → shared
+    repaired helper with the registered diagnostic seeds, 3-hour
+    in-loop monotonic deadline and staged persistence → integer
+    artifact with the frozen identities → authenticating
+    verification → complete record. Aborts atomically preserve the
+    CURRENT in-memory raw map (mid-block included, 197_s finding 4)
+    and the aborted record."""
+    import os
     import time
 
     from .stage1_manifest import (build_stage1_env_manifest,
@@ -625,6 +837,19 @@ def run_b_diagnostic(*, allow_dirty: bool = False,
     tokenizer = inputs["tokenizer"]
     chat_template = getattr(tokenizer, "chat_template", None) or ""
     registry = build_diagnostic_seed_registry(sorted(rows))
+
+    # 197_s finding 1: no lock, no sampling
+    lock_file = Path(launch_lock_path if launch_lock_path is not None
+                     else LAUNCH_LOCK_PATH)
+    if not lock_file.is_file():
+        raise InfrastructureError(
+            "no committed launch lock — the diagnostic may not "
+            "sample retained support (197_s finding 1; 195_f §3 "
+            "step 5)")
+    validate_launch_lock(
+        json.loads(lock_file.read_text(encoding="utf-8")),
+        seed_registry=registry)
+
     manifest = build_diagnostic_manifest(
         env_sha, stage1_source_digest(),
         hashlib.sha256(str(chat_template).encode("utf-8")).hexdigest(),
@@ -647,10 +872,14 @@ def run_b_diagnostic(*, allow_dirty: bool = False,
 
     raw: dict[str, str] = {}
 
-    def _flush_partial(oid: str, sha: str) -> None:
-        (out_dir / "raw_completions_partial.json").write_text(
-            json.dumps(dict(sorted(raw.items())), ensure_ascii=False),
+    def _flush_partial(*_args: str) -> None:
+        # ensure_ascii=True: surrogate/non-UTF-8 completions are
+        # escaped rather than crashing persistence (197_s)
+        tmp = out_dir / "raw_completions_partial.json.tmp"
+        tmp.write_text(
+            json.dumps(dict(sorted(raw.items())), ensure_ascii=True),
             encoding="utf-8")
+        os.replace(tmp, out_dir / "raw_completions_partial.json")
 
     def _registered_seed(oid: str, sha: str, i: int) -> int:
         value = registry.get(f"B-diag|{oid}|{sha}|{i}")
@@ -678,7 +907,7 @@ def run_b_diagnostic(*, allow_dirty: bool = False,
             raise InfrastructureError(
                 f"accounting incomplete: {len(raw)} raw completions")
         raw_blob = json.dumps(dict(sorted(raw.items())),
-                              ensure_ascii=False)
+                              ensure_ascii=True)
         raw_sha = hashlib.sha256(raw_blob.encode("utf-8")).hexdigest()
         (out_dir / "raw_completions.json").write_text(
             raw_blob, encoding="utf-8")
@@ -699,6 +928,12 @@ def run_b_diagnostic(*, allow_dirty: bool = False,
             pinned_loader=(lambda: inputs) if _inputs else None)
         _finish("complete")
     except BaseException as error:
+        # 197_s finding 4: atomically persist the CURRENT in-memory
+        # raw map — mid-block completions are never lost
+        try:
+            _flush_partial()
+        except Exception:
+            pass  # the abort record below still lands
         _finish("aborted", f"{type(error).__name__}: {error}")
         raise
     return {"run_dir": str(out_dir),
@@ -742,6 +977,24 @@ def archive_b_diagnostic(mode: str,
         errors.append("diagnostic manifest absent")
     except (ValueError, InfrastructureError) as error:
         errors.append(f"diagnostic manifest invalid: {error}")
+
+    # 197_s: the run record's TERMINAL status and the present files
+    # are validated in BOTH modes (recorded in abort, refused in
+    # success via the checks below)
+    status = "absent"
+    record_file = src / "run_record.json"
+    if record_file.is_file():
+        try:
+            loaded_record = json.loads(record_file.read_text("utf-8"))
+            status = loaded_record.get("status", "unknown") \
+                if isinstance(loaded_record, dict) else "malformed"
+        except ValueError:
+            status = "unreadable"
+    if status not in ("complete", "aborted"):
+        errors.append(f"run record status {status!r} is not terminal")
+    present = sorted(p.name for p in src.iterdir() if p.is_file())
+    if "run_record.json" not in present:
+        errors.append("run record absent")
 
     if mode == "success":
         if errors:
@@ -798,6 +1051,7 @@ def archive_b_diagnostic(mode: str,
     evidence_manifest = {
         "manifest": "stage1-b-diagnostic-evidence-v1", "mode": mode,
         "diagnostic_manifest_sha256": manifest_sha,
+        "run_status": status, "files_present": present,
         "validation_errors": errors, "files": files,
     }
     text = json.dumps(evidence_manifest, indent=1)

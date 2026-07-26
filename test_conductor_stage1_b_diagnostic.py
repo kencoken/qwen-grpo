@@ -119,15 +119,19 @@ def _diag_fixture():
     rr = {f"{o}|{p}": "a" * 64 for o in sorted(rows)
           for p in (FEW, SO)}
     registry = bd.build_diagnostic_seed_registry(sorted(rows))
+    tokenizer = _StubTokenizer()
     manifest = bd.build_diagnostic_manifest(
-        ENV["execution_manifest_sha256"], "s" * 64, "c" * 64,
+        ENV["execution_manifest_sha256"],
+        ENV["stage1_source_sha256"],
+        hashlib.sha256(tokenizer.chat_template.encode(
+            "utf-8")).hexdigest(),
         sorted(rows), rr, registry)
     results = bd.count_from_raw(raw, rows, surface)
     artifact = bd.build_diagnostic_artifact(
         manifest["manifest_sha256"], ENV["execution_manifest_sha256"],
         raw_sha, results, sorted(rows))
     inputs = {"surface": surface, "rows": rows, "rr_hashes": rr,
-              "messages": {}, "tokenizer": None}
+              "messages": {}, "tokenizer": tokenizer}
     return {"rows": rows, "surface": surface, "raw": raw,
             "raw_text": raw_text, "manifest": manifest,
             "results": results, "artifact": artifact,
@@ -376,6 +380,10 @@ def test_report_estimands_and_populations():
     agg = report["aggregates"]["fewshot"]
     assert "g8" not in agg["tied_pairs"]
     assert "g8" in agg["w2_favoured"] and "g8" in agg["w3_favoured"]
+    # 197_s: renderer->latent->cell summaries exposed per metric
+    assert agg["w3_favoured"]["g8"]["equal_cell"] == pytest.approx(
+        q["g8"])
+    assert "code_atomic" in agg["w3_favoured"]["g8"]["per_cell"]
     # frozen formulas on the level distribution
     row = f["results"][f"{tie_oid}|{SO}"]
     p = {lv: c / 256 for lv, c in row["reward_levels"].items()}
@@ -384,24 +392,137 @@ def test_report_estimands_and_populations():
         sum(v ** 8 for v in p.values()))
     assert qrow["expected_reward_level_diversity"] == pytest.approx(
         sum(1 - (1 - v) ** 8 for v in p.values()))
-    # all-18 population aggregates exist for the shared metrics
-    assert agg["all_18"]["valid_rate"] is not None
+    # all-18 population aggregates exist for the shared metrics,
+    # including the signed reward frequencies (197_s)
+    assert agg["all_18"]["valid_rate"]["equal_cell"] is not None
+    assert agg["all_18"]["reward_rate_0"]["equal_cell"] == \
+        pytest.approx(1 - agg["all_18"]["valid_rate"]["equal_cell"])
+    # explicit denominators and support composition
+    comp = report["support_composition"]
+    assert comp == {"observations": 18, "pair_observations": 3,
+                    "distinct_payoff_pairs": 2, "w2_favoured": 1,
+                    "w3_favoured": 1, "tied_pairs": 1}
+    assert report["populations"]["all_18"]["row_count"] == 36
+    assert report["populations"]["w2_favoured"]["row_count"] == 2
+    # per-row action distribution travels in the signed output
+    assert q["assignment_rates"]["3"] == pytest.approx(30 / 256)
 
 
 # --- smoke + driver + archiver (195_f §3/§4.5) ------------------------------------------
 
-def test_run_b_smoke_stub(monkeypatch):
+def test_run_b_smoke_stub(tmp_path, monkeypatch):
     import tasks.conductor.stage1_manifest as sm
     monkeypatch.setattr(sm, "build_stage1_env_manifest",
                         lambda allow_dirty=False: dict(ENV))
     inputs = {"tokenizer": _StubTokenizer(), "_model": _StubModel()}
-    record = bd.run_b_smoke(_inputs=inputs)
+    record = bd.run_b_smoke(_inputs=inputs,
+                            record_path=tmp_path / "smoke.json")
     assert record["status"] == "complete"
     assert record["completions"] == 16
     assert record["nonempty_completions"] == 16
     assert record["generation_config_sha256"] == \
         bd.generation_config_digest()
     assert record["budget_completions"] == 16
+    # 197_s: tokenizer revision + prompt tensor shapes recorded, and
+    # the record is PERSISTED for the launch lock
+    assert record["tokenizer_revision"] == \
+        bd.B_DIAGNOSTIC_CONTRACT["tokenizer_revision"]
+    assert record["prompt_input_ids_shapes"] == {FEW: [1, 3],
+                                                 SO: [1, 3]}
+    persisted = json.loads((tmp_path / "smoke.json").read_text(
+        encoding="utf-8"))
+    assert persisted == record
+
+
+def _smoke_and_lock(tmp_path, rows):
+    """Persist a smoke record and build the launch lock over the
+    fixture support's registry (197_s finding 1 flow)."""
+    inputs = {"tokenizer": _StubTokenizer(), "_model": _StubModel()}
+    bd.run_b_smoke(_inputs=inputs,
+                   record_path=tmp_path / "smoke.json")
+    registry = bd.build_diagnostic_seed_registry(sorted(rows))
+    bd.build_launch_lock(tmp_path / "smoke.json",
+                         seed_registry=registry,
+                         lock_path=tmp_path / "lock.json")
+    return tmp_path / "lock.json"
+
+
+def test_launch_lock_binding_and_refusals(tmp_path, monkeypatch):
+    import tasks.conductor.stage1_manifest as sm
+    monkeypatch.setattr(sm, "build_stage1_env_manifest",
+                        lambda allow_dirty=False: dict(ENV))
+    rows = _support_rows()
+    registry = bd.build_diagnostic_seed_registry(sorted(rows))
+    lock_path = _smoke_and_lock(tmp_path, rows)
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    bd.validate_launch_lock(lock, seed_registry=registry)
+    # a lock whose identity disagrees with the current executable
+    # refuses (rehashed so the self-hash passes)
+    from tasks.conductor.profiles import canonical_json
+    body = {k: v for k, v in lock.items()
+            if k != "launch_lock_sha256"}
+    body["source_digest"] = "e" * 64
+    body["launch_lock_sha256"] = hashlib.sha256(
+        canonical_json(body).encode("utf-8")).hexdigest()
+    with pytest.raises(InfrastructureError, match="current"):
+        bd.validate_launch_lock(body, seed_registry=registry)
+    # a modified smoke record after locking refuses
+    (tmp_path / "smoke.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="smoke record"):
+        bd.validate_launch_lock(lock, seed_registry=registry)
+    # an incomplete smoke record cannot be locked at all
+    (tmp_path / "smoke2.json").write_text(
+        json.dumps({"status": "aborted"}), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="complete"):
+        bd.build_launch_lock(tmp_path / "smoke2.json",
+                             seed_registry=registry,
+                             lock_path=tmp_path / "lock2.json")
+
+
+def test_verifier_provenance_tampers_refused():
+    # 197_s finding 2: the three provenance claims are independently
+    # re-derived — a rehashed manifest with any of them changed
+    # refuses even though its self-hash passes
+    from tasks.conductor.profiles import canonical_json
+    f = _diag_fixture()
+    for field, match in (
+            ("stage1_source_sha256", "source"),
+            ("chat_template_sha256", "chat template"),
+            ("generation_config_sha256", "generation")):
+        body = {k: v for k, v in f["manifest"].items()
+                if k != "manifest_sha256"}
+        body[field] = "e" * 64
+        body["manifest_sha256"] = hashlib.sha256(
+            canonical_json(body).encode("utf-8")).hexdigest()
+        artifact = bd.build_diagnostic_artifact(
+            body["manifest_sha256"], ENV["execution_manifest_sha256"],
+            hashlib.sha256(f["raw_text"].encode()).hexdigest(),
+            f["results"], sorted(f["rows"]))
+        with pytest.raises(InfrastructureError, match=match):
+            bd.verify_b_diagnostic_evidence(
+                artifact, manifest=body,
+                raw_completions_text=f["raw_text"], env_manifest=ENV,
+                pinned_loader=f["loader"])
+
+
+def test_non_utf8_completion_is_reward_zero():
+    # 197_s: a lone-surrogate completion counts as non-parseable and
+    # reward-zero instead of aborting
+    rows = {k: v for k, v in list(_support_rows().items())[:1]}
+    surface = _full_surface(rows)
+    oid = next(iter(rows))
+    raw = {}
+    for sha in (FEW, SO):
+        for i in range(sr.REPLAY_COMPLETIONS):
+            raw[f"{oid}|{sha}|{i:03d}"] = "\ud800"
+    results = bd.count_from_raw(raw, rows, surface)
+    row = results[f"{oid}|{FEW}"]
+    assert row["parseable"] == 0 and row["valid"] == 0
+    assert row["reward_levels"]["0"] == 256
+    # and ensure_ascii persistence round-trips the surrogate
+    blob = json.dumps(raw, ensure_ascii=True)
+    blob.encode("utf-8")
+    assert json.loads(blob) == raw
 
 
 def test_run_b_diagnostic_end_to_end(tmp_path, monkeypatch):
@@ -425,7 +546,9 @@ def test_run_b_diagnostic_end_to_end(tmp_path, monkeypatch):
     tok = _ScriptedTokenizer()
     model = _ScriptedModel()
 
-    real_generate = sr._generate
+    # the smoke + launch lock use the REAL helper with stubs, so
+    # they run BEFORE the scripted generator is patched in
+    lock_path = _smoke_and_lock(tmp_path, f["rows"])
 
     def scripted_generate(mdl, tkn, rows, messages, table, raw,
                           counts, **kwargs):
@@ -448,7 +571,13 @@ def test_run_b_diagnostic_end_to_end(tmp_path, monkeypatch):
 
     inputs = {**f["inputs"], "tokenizer": tok, "_model": model,
               "messages": {}}
-    out = bd.run_b_diagnostic(_inputs=inputs)
+    # 197_s finding 1: without a committed launch lock the diagnostic
+    # refuses BEFORE claiming its root
+    with pytest.raises(InfrastructureError, match="launch lock"):
+        bd.run_b_diagnostic(_inputs=inputs,
+                            launch_lock_path=tmp_path / "absent.json")
+    out = bd.run_b_diagnostic(_inputs=inputs,
+                              launch_lock_path=lock_path)
     from pathlib import Path
     run_dir = Path(out["run_dir"])
     record = json.loads((run_dir / "run_record.json").read_text(
@@ -471,7 +600,8 @@ def test_run_b_diagnostic_end_to_end(tmp_path, monkeypatch):
                                 pinned_loader=f["loader"])
     # a second diagnostic run refuses the claimed root
     with pytest.raises(InfrastructureError, match="already exists"):
-        bd.run_b_diagnostic(_inputs=inputs)
+        bd.run_b_diagnostic(_inputs=inputs,
+                            launch_lock_path=lock_path)
 
 
 def test_diagnostic_abort_preserves_partial(tmp_path, monkeypatch):
@@ -482,24 +612,31 @@ def test_diagnostic_abort_preserves_partial(tmp_path, monkeypatch):
                         str(tmp_path / "b-diag"))
     f = _diag_fixture()
 
+    lock_path = _smoke_and_lock(tmp_path, f["rows"])
+
     def dying_generate(mdl, tkn, rows, messages, table, raw, counts,
                        **kwargs):
+        # 197_s finding 4: dies MID-BLOCK — no callback ever fires;
+        # the exception path must still preserve every completion
         oid = sorted(rows)[0]
-        for i in range(sr.REPLAY_COMPLETIONS):
+        for i in range(100):
             raw[f"{oid}|{FEW}|{i:03d}"] = "partial"
-        kwargs["on_block_complete"](oid, FEW)
         raise RuntimeError("CUDA out of memory (probe)")
     monkeypatch.setattr(sr, "_generate", dying_generate)
     inputs = {**f["inputs"], "tokenizer": _StubTokenizer(),
               "_model": _StubModel(), "messages": {}}
     with pytest.raises(RuntimeError, match="probe"):
-        bd.run_b_diagnostic(_inputs=inputs)
+        bd.run_b_diagnostic(_inputs=inputs,
+                            launch_lock_path=lock_path)
     from pathlib import Path
     run_dir = Path(str(tmp_path / "b-diag"))
     record = json.loads((run_dir / "run_record.json").read_text(
         encoding="utf-8"))
     assert record["status"] == "aborted"
-    assert (run_dir / "raw_completions_partial.json").exists()
+    partial = json.loads(
+        (run_dir / "raw_completions_partial.json").read_text(
+            encoding="utf-8"))
+    assert len(partial) == 100         # the mid-block completions
     # abort archiver preserves the partial evidence untrusting
     out = bd.archive_b_diagnostic("abort", run_dir=run_dir,
                                   evidence_parent=tmp_path / "ev")
@@ -507,9 +644,19 @@ def test_diagnostic_abort_preserves_partial(tmp_path, monkeypatch):
     from pathlib import Path as _P
     dest = _P(out["evidence_dir"])
     assert (dest / "raw_completions_partial.json").exists()
+    manifest = json.loads(
+        (dest / "evidence_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["run_status"] == "aborted"
+    assert "raw_completions_partial.json" in manifest["files_present"]
+    # 197_s: a NON-terminal status is recorded as a validation error
+    (run_dir / "run_record.json").write_text(
+        json.dumps({"status": "running"}), encoding="utf-8")
+    out2 = bd.archive_b_diagnostic("abort", run_dir=run_dir,
+                                   evidence_parent=tmp_path / "ev4")
+    assert any("not terminal" in e for e in out2["validation_errors"])
     # success mode REFUSES the aborted root
     with pytest.raises(InfrastructureError,
-                       match="file set|complete"):
+                       match="file set|complete|not terminal"):
         bd.archive_b_diagnostic("success", run_dir=run_dir,
                                 evidence_parent=tmp_path / "ev2",
                                 pinned_loader=f["loader"])
