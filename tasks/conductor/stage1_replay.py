@@ -705,18 +705,46 @@ def run_replay(*, allow_dirty: bool = False,
             "summary": summarize_replay(counts, pair_table, obs_meta)}
 
 
+GENERATION_KWARGS: dict[str, Any] = {
+    # the frozen decoding parameters, shared verbatim by the formal
+    # replay, the 195_f smoke, and the B diagnostic (192_s change 4)
+    "do_sample": True, "temperature": 1.0, "top_p": None,
+    "top_k": None,
+    "max_new_tokens": REPLAY_CONTRACT["sampling"]["max_new_tokens"],
+}
+
+
 def _generate(model, tokenizer, rows, messages, pair_table, raw,
-              counts, *, seed_of=completion_seed) -> None:
+              counts, *, seed_of=completion_seed,
+              n_completions: int = REPLAY_COMPLETIONS,
+              deadline_seconds: float | None = None,
+              on_block_complete=None) -> None:
     """The generation loop, isolated so the driver's abort handling
     wraps exactly the GPU work. Note the frozen RNG semantics: the
     GLOBAL CPU and CUDA RNG state is reset per singleton draw from the
     preregistered seed — there is no per-draw generator object.
     `seed_of` defaults to the frozen derivation; the AMENDED driver
     passes a lookup into the verified-canonical registry so the seeds
-    consumed ARE the registered values (169_s finding 2)."""
+    consumed ARE the registered values (169_s finding 2).
+
+    190_f/195_f §2 repair: under transformers 5.x,
+    `apply_chat_template(tokenize=True, return_tensors="pt")` returns
+    a `BatchEncoding` — `generate` consumes its `input_ids` +
+    `attention_mask` tensors explicitly (singleton unpadded input:
+    the inferred mask would be identical; passing it is exact), and
+    decode slices at `input_ids.shape[1]`.
+
+    195_f additions: `n_completions` (the smoke shares this exact
+    helper at a smaller count), `deadline_seconds` (in-loop wall-time
+    abort on the MONOTONIC clock, checked every draw), and
+    `on_block_complete` (staged-persistence callback per
+    observation×prompt block)."""
+    import time as _time
+
     import torch
     from .parser import ActionSchemaError, parse_routing_action
     from .grpo_task import positional_to_semantic
+    started = _time.monotonic()
     for oid, row in sorted(rows.items()):
         positions = json.loads(row["positions"])
         pair = pair_table.get(oid)
@@ -725,8 +753,17 @@ def _generate(model, tokenizer, rows, messages, pair_table, raw,
             enc = tokenizer.apply_chat_template(
                 messages[key], tokenize=True, return_tensors="pt",
                 add_generation_prompt=True).to(model.device)
+            input_ids = enc["input_ids"]
+            attention_mask = enc["attention_mask"]
             k2 = k3 = 0
-            for i in range(REPLAY_COMPLETIONS):
+            for i in range(n_completions):
+                if deadline_seconds is not None and \
+                        _time.monotonic() - started > deadline_seconds:
+                    raise InfrastructureError(
+                        f"generation exceeded its "
+                        f"{deadline_seconds:.0f}s deadline at "
+                        f"{key}|{i} — partial evidence preserved by "
+                        "the caller (195_f §4.6)")
                 # full unsigned 64-bit seed, EXACTLY as preregistered —
                 # no modulus (148_s finding 1); the pinned torch build
                 # accepts the full range
@@ -735,12 +772,10 @@ def _generate(model, tokenizer, rows, messages, pair_table, raw,
                 torch.cuda.manual_seed_all(seed)
                 with torch.no_grad():
                     out = model.generate(
-                        enc, do_sample=True, temperature=1.0,
-                        top_p=None, top_k=None,
-                        max_new_tokens=REPLAY_CONTRACT["sampling"][
-                            "max_new_tokens"],
-                        pad_token_id=tokenizer.eos_token_id)
-                text = tokenizer.decode(out[0, enc.shape[1]:],
+                        input_ids, attention_mask=attention_mask,
+                        pad_token_id=tokenizer.eos_token_id,
+                        **GENERATION_KWARGS)
+                text = tokenizer.decode(out[0, input_ids.shape[1]:],
                                         skip_special_tokens=True)
                 raw[f"{key}|{i:03d}"] = text
                 if pair is None:
@@ -758,7 +793,9 @@ def _generate(model, tokenizer, rows, messages, pair_table, raw,
                     k3 += 1
             if pair is not None:
                 counts[key] = {"k2": k2, "k3": k3,
-                               "n": REPLAY_COMPLETIONS}
+                               "n": n_completions}
+            if on_block_complete is not None:
+                on_block_complete(oid, sha)
 
 
 # --- the AMENDED GPU driver (158_s §9/§11; 169_s finding 1) -----------------------
