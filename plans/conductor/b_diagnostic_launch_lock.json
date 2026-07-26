@@ -1,0 +1,13 @@
+{
+ "launch_lock": "stage1-b-diagnostic-v1",
+ "smoke_record_path": "plans/conductor/b_diagnostic_smoke_record.json",
+ "smoke_record_sha256": "b6d5bc3da25dc558cca307721ff9bd4bc14dc9e496231dea6dd18bbbb330f9a3",
+ "seed_registry_sha256": "66dd41bc13aca560463be83c0cf7a1bca75d948ff9f2d5648b6cedd90fa7fc1f",
+ "source_digest": "105d8c0e1399f7696c71db5dbcf173d1a5b705b4b260393b2217a376941cee2f",
+ "uv_lock_sha256": "f5486ec478b080aa79c6d0444478b019d2ce6262173a643fd1d6aa8f779e48c9",
+ "contract_sha256": "1e2f63fc23b8b82174f4e431b704401ac172d130de45ac65db23bd076bf9a110",
+ "generation_config_sha256": "1feb76057fe336d7a1333fafa3c3985687316412234efc18384b48f874b29ffb",
+ "model_revision": "aa8e72537993ba99e69dfaafa59ed015b17504d1",
+ "tokenizer_revision": "aa8e72537993ba99e69dfaafa59ed015b17504d1",
+ "launch_lock_sha256": "1303106e87cf5b6fe8d38040ebf277bb8ff261be0daa0cb6f46a4203ecefb7ba"
+}
