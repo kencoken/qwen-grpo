@@ -606,7 +606,14 @@ NAMESPACES = ("construction", "qualification", "train", "dev", "test",
               # cold start; barred from Stage-1 cell admission,
               # refitting/reselection, training, checkpoint selection
               # and test.
-              "policy_dev")
+              "policy_dev",
+              # 211_f §3 (signed 212_f): routing-training development
+              # universes — permanently development data, never
+              # confirmatory. routing_dev may be direction-enriched;
+              # routing_dev_val is the adaptive development validation
+              # set (natural mixture, rotated per cycle);
+              # routing_dev_cycle is the one-reveal cycle-end holdout.
+              "routing_dev", "routing_dev_val", "routing_dev_cycle")
 
 # §1.4: renderer ids; `resource_first` is canonical.
 RENDERER_IDS = ("resource_first", "goal_first", "bound_var")

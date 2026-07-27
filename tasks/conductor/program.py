@@ -81,6 +81,17 @@ NAMESPACE_CONFIG: dict[str, dict[str, Any]] = {
     # cross-cohort reuse.
     "policy_dev": {"max_latent_clusters": 1_000, "expansion_batch": 1_000,
                    "stopping_rule": "fixed"},
+    # 211_f §3 (signed 212_f): the routing-training development track.
+    # Caps are per cell (namespace_cap semantics). All three universes
+    # are development data permanently; none may enter a confirmatory
+    # estimate (211_f §14).
+    "routing_dev": {"max_latent_clusters": 2_000, "expansion_batch": 500,
+                    "stopping_rule": "fixed"},
+    "routing_dev_val": {"max_latent_clusters": 500, "expansion_batch": 250,
+                        "stopping_rule": "fixed"},
+    "routing_dev_cycle": {"max_latent_clusters": 500,
+                          "expansion_batch": 250,
+                          "stopping_rule": "fixed"},
 }
 
 # --- 132_s §3.1 D4: formal construction cohort (approved in 133_f) ---------
