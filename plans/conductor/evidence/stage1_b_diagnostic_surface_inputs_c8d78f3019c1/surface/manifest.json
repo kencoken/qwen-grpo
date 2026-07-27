@@ -1,0 +1,18 @@
+{
+ "cache_hits": 0,
+ "declaration_sha256": "6df4c42b69f8480c9da01d60e664f618eec971d0f0cdd2aa90828cc7d39c4fff",
+ "executed_step_records": 560,
+ "payoff_rows": 324,
+ "payoffs_sha256": "78dd45031a5dd046206f4c7a07a77408e5d41cdac44b52312f40e7f7ea84560b",
+ "planned_step_executions": 804,
+ "runtime_profile_fingerprint": "rtp-6b23c4c5ef267b3a",
+ "support": "stage0-diagnostic-v1",
+ "surface_schema_version": 1,
+ "trace_manifest_sha256": "d831b7f926e51bcda39c3d258180d0317642e58c56535bd5f5f528914c58da1e",
+ "trace_steps_sha256": "825317094b5b4bb0b6d9e014b6185d40ef18e4d4e6a79fa593d3429731edb7a8",
+ "uncached_step_records": 560,
+ "unique_singleton_generations": 124,
+ "wall_seconds": 46.3,
+ "worker_pool_fingerprint": "wp-197e286115f56e4a",
+ "worker_visible_fingerprint": "wv-4e196a1c467d108b"
+}

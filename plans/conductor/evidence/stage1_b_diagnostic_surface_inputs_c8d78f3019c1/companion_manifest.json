@@ -1,0 +1,37 @@
+{
+ "binds": {
+  "archive_dir": "plans/conductor/evidence/stage1_b_diagnostic_973e8adc316e",
+  "diagnostic_manifest_sha256": "973e8adc316e0b80c64a4a82ffb91c597be3c1d263aefca2a4ddf940205d7534",
+  "evidence_manifest_sha256": "ea9dfbd22de7f2b52dea4cca2c68bdd34e38160f610c42f6a904143d9279d3be",
+  "surface_manifest_pin_source": "tasks/conductor/grpo_smoke.py STAGE0C_LAUNCH_PROFILE['surface_manifest_sha256']"
+ },
+ "bundle": "stage1-b-diagnostic-surface-inputs-v1",
+ "companion_manifest_sha256": "c8d78f3019c1290b8da36033b92be52ec43ebb1b570f1d0d0611c396eaf91903",
+ "excluded": {
+  "runs/stage0-support/cache.sqlite": "worker-request cache; never read by payoff_support.load_support_surface \u2014 only its accounting counts, which are fields of surface/manifest.json and are verified there"
+ },
+ "files": {
+  "surface/manifest.json": {
+   "bytes": 788,
+   "restore_path": "runs/stage0-support/manifest.json",
+   "sha256": "221a04d53403f14c537a3d43336eb6630ca6fe5682f5e3f8aa66f78ace679c23"
+  },
+  "surface/payoffs.jsonl": {
+   "bytes": 65624,
+   "restore_path": "runs/stage0-support/payoffs.jsonl",
+   "sha256": "78dd45031a5dd046206f4c7a07a77408e5d41cdac44b52312f40e7f7ea84560b"
+  },
+  "surface/traces/traces/manifest.json": {
+   "bytes": 3775,
+   "restore_path": "runs/stage0-support/traces/traces/manifest.json",
+   "sha256": "d831b7f926e51bcda39c3d258180d0317642e58c56535bd5f5f528914c58da1e"
+  },
+  "surface/traces/traces/steps.jsonl": {
+   "bytes": 3026023,
+   "restore_path": "runs/stage0-support/traces/traces/steps.jsonl",
+   "sha256": "825317094b5b4bb0b6d9e014b6185d40ef18e4d4e6a79fa593d3429731edb7a8"
+  }
+ },
+ "purpose": "Evidence-preservation companion to the immutable B diagnostic success archive (204_s section 10 / 206_s / 208_s): the exact pinned Stage-0 payoff-surface input bytes the diagnostic verifier reads, which live under the untracked runs/ directory and are otherwise absent from a clean checkout. The archive itself is unchanged.",
+ "restore_instructions": "From a clean checkout: copy each file to its restore_path, creating runs/stage0-support/ and runs/stage0-support/traces/traces/ as needed. Then the full verifier runs via the committed CLI (tasks.conductor.stage1_b_diagnostic report) against the committed archive; payoff_support.load_support_surface re-scores every payoff from the stored terminal values against regenerated gold and validates every content hash above."
+}
