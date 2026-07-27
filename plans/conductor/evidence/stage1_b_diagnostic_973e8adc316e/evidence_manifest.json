@@ -1,0 +1,36 @@
+{
+ "manifest": "stage1-b-diagnostic-evidence-v1",
+ "mode": "success",
+ "diagnostic_manifest_sha256": "973e8adc316e0b80c64a4a82ffb91c597be3c1d263aefca2a4ddf940205d7534",
+ "run_status": "complete",
+ "files_present": [
+  "artifact_B_diagnostic.json",
+  "diagnostic_manifest.json",
+  "env_manifest.json",
+  "raw_completions.json",
+  "run_record.json"
+ ],
+ "validation_errors": [],
+ "files": {
+  "artifact_B_diagnostic.json": {
+   "sha256": "b20e5c51c845572eae1a3b13d1264d112efd8a15d21761f3198f3479b2d0d5bd",
+   "bytes": 13321
+  },
+  "diagnostic_manifest.json": {
+   "sha256": "7fe70a885f53c5aec18acbcc123857887989e877f51917a07edaa9ac7a6dea8f",
+   "bytes": 10849
+  },
+  "env_manifest.json": {
+   "sha256": "b0b33acfc1671943237f126a9e9b58088db3344022a455ca0a25041d705ff26d",
+   "bytes": 2579
+  },
+  "raw_completions.json": {
+   "sha256": "afb9d8dc508ceb3059c45b3b80ddb5b1221c996f5cdb6396d1505a65ce1e8936",
+   "bytes": 1460268
+  },
+  "run_record.json": {
+   "sha256": "8f4c18d7e09b497974a80836653f57ca4f707961f0c6cf176217f578442aa5f5",
+   "bytes": 282
+  }
+ }
+}

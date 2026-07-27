@@ -1,0 +1,12 @@
+{
+ "status": "complete",
+ "tag": "stage1-b-diagnostic-v1",
+ "preflight": {
+  "free_mib": 24079,
+  "total_mib": 24564,
+  "floor_mib": 8192
+ },
+ "manifest_sha256": "973e8adc316e0b80c64a4a82ffb91c597be3c1d263aefca2a4ddf940205d7534",
+ "started_unix": 1785107806,
+ "wall_seconds": 4150
+}

@@ -1,0 +1,637 @@
+{
+ "artifact": "B-diagnostic",
+ "tag": "stage1-b-diagnostic-v1",
+ "manifest_sha256": "973e8adc316e0b80c64a4a82ffb91c597be3c1d263aefca2a4ddf940205d7534",
+ "environment_manifest_sha256": "1cb0cbb6e0ec3d819efc72d2db90b725378a19b2e453c3f7308455c64b9af3a6",
+ "raw_completions_sha256": "afb9d8dc508ceb3059c45b3b80ddb5b1221c996f5cdb6396d1505a65ce1e8936",
+ "results": {
+  "code_atomic:worker_dev:00000:641a0144:bound_var:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 97,
+   "assignments": {
+    "0": 60,
+    "1": 4,
+    "2": 21,
+    "3": 12
+   },
+   "reward_levels": {
+    "0": 159,
+    "0.5": 64,
+    "1": 33
+   }
+  },
+  "code_atomic:worker_dev:00000:641a0144:bound_var:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0": 251,
+    "1": 2,
+    "2": 1,
+    "3": 2
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 253,
+    "1": 3
+   }
+  },
+  "code_atomic:worker_dev:00000:641a0144:goal_first:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 35,
+   "assignments": {
+    "0": 15,
+    "1": 3,
+    "2": 12,
+    "3": 5
+   },
+   "reward_levels": {
+    "0": 221,
+    "0.5": 18,
+    "1": 17
+   }
+  },
+  "code_atomic:worker_dev:00000:641a0144:goal_first:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0": 101,
+    "1": 7,
+    "2": 124,
+    "3": 24
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 108,
+    "1": 148
+   }
+  },
+  "code_atomic:worker_dev:00000:641a0144:resource_first:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 19,
+   "assignments": {
+    "0": 2,
+    "2": 6,
+    "3": 11
+   },
+   "reward_levels": {
+    "0": 237,
+    "0.5": 2,
+    "1": 17
+   }
+  },
+  "code_atomic:worker_dev:00000:641a0144:resource_first:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0": 191,
+    "1": 7,
+    "2": 16,
+    "3": 42
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 198,
+    "1": 58
+   }
+  },
+  "fork_join:worker_dev:00000:5b6d01a9:bound_var:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 176,
+   "assignments": {
+    "0,1,2": 6,
+    "0,1,3": 1,
+    "0,2,3": 3,
+    "0,3,1": 19,
+    "0,3,2": 8,
+    "1,0,2": 40,
+    "1,2,0": 2,
+    "1,2,3": 8,
+    "1,3,0": 3,
+    "1,3,2": 4,
+    "2,1,0": 1,
+    "2,1,3": 4,
+    "2,3,0": 15,
+    "2,3,1": 9,
+    "2,3,3": 1,
+    "3,1,2": 1,
+    "3,2,0": 8,
+    "3,2,1": 30,
+    "3,3,3": 13
+   },
+   "reward_levels": {
+    "0": 80,
+    "0.5": 176,
+    "1": 0
+   }
+  },
+  "fork_join:worker_dev:00000:5b6d01a9:bound_var:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0,2,1": 3,
+    "0,3,1": 61,
+    "1,0,2": 7,
+    "1,2,3": 7,
+    "1,3,2": 3,
+    "2,3,1": 116,
+    "3,2,1": 59
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 253,
+    "1": 3
+   }
+  },
+  "fork_join:worker_dev:00000:5b6d01a9:goal_first:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 255,
+   "valid": 170,
+   "assignments": {
+    "0,1,2": 8,
+    "0,2,3": 1,
+    "0,3,1": 10,
+    "0,3,2": 2,
+    "1,0,2": 75,
+    "1,2,0": 5,
+    "1,3,0": 1,
+    "2,1,0": 24,
+    "2,3,0": 6,
+    "2,3,1": 2,
+    "3,1,0": 4,
+    "3,1,2": 17,
+    "3,2,0": 7,
+    "3,2,1": 5,
+    "3,3,3": 3
+   },
+   "reward_levels": {
+    "0": 86,
+    "0.5": 170,
+    "1": 0
+   }
+  },
+  "fork_join:worker_dev:00000:5b6d01a9:goal_first:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0,2,1": 1,
+    "0,3,1": 111,
+    "1,0,2": 2,
+    "1,2,0": 8,
+    "1,3,0": 14,
+    "1,3,2": 33,
+    "2,3,1": 70,
+    "3,2,1": 17
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 255,
+    "1": 1
+   }
+  },
+  "fork_join:worker_dev:00000:5b6d01a9:resource_first:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 107,
+   "assignments": {
+    "0,1,2": 2,
+    "0,2,3": 14,
+    "0,3,1": 6,
+    "0,3,2": 22,
+    "1,0,2": 25,
+    "1,2,3": 2,
+    "1,3,2": 1,
+    "2,1,0": 1,
+    "2,3,0": 5,
+    "2,3,1": 13,
+    "3,2,0": 2,
+    "3,2,1": 14
+   },
+   "reward_levels": {
+    "0": 149,
+    "0.5": 101,
+    "1": 6
+   }
+  },
+  "fork_join:worker_dev:00000:5b6d01a9:resource_first:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0,2,1": 42,
+    "0,3,1": 60,
+    "1,0,2": 3,
+    "1,2,0": 29,
+    "1,2,3": 18,
+    "1,3,0": 2,
+    "1,3,2": 1,
+    "2,3,1": 15,
+    "3,2,0": 1,
+    "3,2,1": 85
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 154,
+    "1": 102
+   }
+  },
+  "lookup_atomic:worker_dev:00000:6cd84516:bound_var:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 255,
+   "valid": 211,
+   "assignments": {
+    "0": 209,
+    "1": 1,
+    "2": 1
+   },
+   "reward_levels": {
+    "0": 45,
+    "0.5": 2,
+    "1": 209
+   }
+  },
+  "lookup_atomic:worker_dev:00000:6cd84516:bound_var:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0": 256
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 0,
+    "1": 256
+   }
+  },
+  "lookup_atomic:worker_dev:00000:6cd84516:goal_first:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 92,
+   "assignments": {
+    "0": 92
+   },
+   "reward_levels": {
+    "0": 164,
+    "0.5": 0,
+    "1": 92
+   }
+  },
+  "lookup_atomic:worker_dev:00000:6cd84516:goal_first:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0": 256
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 0,
+    "1": 256
+   }
+  },
+  "lookup_atomic:worker_dev:00000:6cd84516:resource_first:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 189,
+   "assignments": {
+    "0": 168,
+    "1": 5,
+    "2": 2,
+    "3": 14
+   },
+   "reward_levels": {
+    "0": 67,
+    "0.5": 21,
+    "1": 168
+   }
+  },
+  "lookup_atomic:worker_dev:00000:6cd84516:resource_first:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0": 256
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 0,
+    "1": 256
+   }
+  },
+  "lookup_math:worker_dev:00000:1093f92d:bound_var:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 167,
+   "assignments": {
+    "0,1": 151,
+    "0,2": 8,
+    "0,3": 6,
+    "1,1": 2
+   },
+   "reward_levels": {
+    "0": 89,
+    "0.5": 16,
+    "1": 151
+   }
+  },
+  "lookup_math:worker_dev:00000:1093f92d:bound_var:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0,1": 256
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 0,
+    "1": 256
+   }
+  },
+  "lookup_math:worker_dev:00000:1093f92d:goal_first:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 92,
+   "assignments": {
+    "0,1": 49,
+    "0,2": 10,
+    "1,0": 7,
+    "2,0": 4,
+    "2,1": 2,
+    "3,0": 14,
+    "3,1": 1,
+    "3,2": 5
+   },
+   "reward_levels": {
+    "0": 164,
+    "0.5": 43,
+    "1": 49
+   }
+  },
+  "lookup_math:worker_dev:00000:1093f92d:goal_first:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0,1": 255,
+    "0,2": 1
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 1,
+    "1": 255
+   }
+  },
+  "lookup_math:worker_dev:00000:1093f92d:resource_first:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 100,
+   "assignments": {
+    "0,1": 72,
+    "0,2": 10,
+    "2,1": 1,
+    "2,3": 3,
+    "3,0": 1,
+    "3,1": 1,
+    "3,2": 1,
+    "3,3": 11
+   },
+   "reward_levels": {
+    "0": 156,
+    "0.5": 28,
+    "1": 72
+   }
+  },
+  "lookup_math:worker_dev:00000:1093f92d:resource_first:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0,1": 256
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 0,
+    "1": 256
+   }
+  },
+  "math_atomic:worker_dev:00000:90b1f9dd:bound_var:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 186,
+   "assignments": {
+    "0": 184,
+    "2": 2
+   },
+   "reward_levels": {
+    "0": 70,
+    "0.5": 186,
+    "1": 0
+   }
+  },
+  "math_atomic:worker_dev:00000:90b1f9dd:bound_var:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0": 254,
+    "1": 1,
+    "2": 1
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 255,
+    "1": 1
+   }
+  },
+  "math_atomic:worker_dev:00000:90b1f9dd:goal_first:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 194,
+   "assignments": {
+    "0": 188,
+    "1": 1,
+    "2": 4,
+    "3": 1
+   },
+   "reward_levels": {
+    "0": 62,
+    "0.5": 193,
+    "1": 1
+   }
+  },
+  "math_atomic:worker_dev:00000:90b1f9dd:goal_first:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0": 256
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 256,
+    "1": 0
+   }
+  },
+  "math_atomic:worker_dev:00000:90b1f9dd:resource_first:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 101,
+   "assignments": {
+    "0": 98,
+    "1": 1,
+    "2": 1,
+    "3": 1
+   },
+   "reward_levels": {
+    "0": 155,
+    "0.5": 100,
+    "1": 1
+   }
+  },
+  "math_atomic:worker_dev:00000:90b1f9dd:resource_first:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 256,
+   "assignments": {
+    "0": 256
+   },
+   "reward_levels": {
+    "0": 0,
+    "0.5": 256,
+    "1": 0
+   }
+  },
+  "math_code:worker_dev:00000:f0f757f8:bound_var:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 193,
+   "assignments": {
+    "0,1": 77,
+    "0,2": 3,
+    "1,0": 99,
+    "2,0": 6,
+    "2,1": 2,
+    "3,0": 1,
+    "3,1": 2,
+    "3,2": 3
+   },
+   "reward_levels": {
+    "0": 63,
+    "0.5": 193,
+    "1": 0
+   }
+  },
+  "math_code:worker_dev:00000:f0f757f8:bound_var:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 255,
+   "valid": 253,
+   "assignments": {
+    "0,1": 32,
+    "1,0": 3,
+    "1,2": 4,
+    "2,3": 201,
+    "3,1": 1,
+    "3,2": 12
+   },
+   "reward_levels": {
+    "0": 3,
+    "0.5": 249,
+    "1": 4
+   }
+  },
+  "math_code:worker_dev:00000:f0f757f8:goal_first:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 92,
+   "assignments": {
+    "0,1": 21,
+    "0,2": 1,
+    "1,0": 30,
+    "1,2": 2,
+    "1,3": 3,
+    "2,0": 5,
+    "2,1": 2,
+    "2,3": 14,
+    "3,2": 14
+   },
+   "reward_levels": {
+    "0": 164,
+    "0.5": 89,
+    "1": 3
+   }
+  },
+  "math_code:worker_dev:00000:f0f757f8:goal_first:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 251,
+   "assignments": {
+    "0,1": 76,
+    "0,2": 2,
+    "0,3": 4,
+    "1,0": 110,
+    "1,2": 16,
+    "1,3": 1,
+    "2,3": 22,
+    "3,2": 20
+   },
+   "reward_levels": {
+    "0": 5,
+    "0.5": 250,
+    "1": 1
+   }
+  },
+  "math_code:worker_dev:00000:f0f757f8:resource_first:private|9efe8998f1ee17fa9b194ab5e8179c61bbc1036d0c8000c064676ef2c721e9fb": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 177,
+   "assignments": {
+    "0,1": 78,
+    "0,2": 38,
+    "0,3": 7,
+    "1,0": 3,
+    "2,0": 12,
+    "2,1": 7,
+    "2,3": 4,
+    "3,0": 10,
+    "3,1": 1,
+    "3,2": 17
+   },
+   "reward_levels": {
+    "0": 79,
+    "0.5": 177,
+    "1": 0
+   }
+  },
+  "math_code:worker_dev:00000:f0f757f8:resource_first:private|fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070": {
+   "n": 256,
+   "parseable": 256,
+   "valid": 252,
+   "assignments": {
+    "0,1": 20,
+    "0,2": 2,
+    "0,3": 8,
+    "1,0": 5,
+    "1,3": 2,
+    "2,0": 1,
+    "2,3": 188,
+    "3,0": 5,
+    "3,1": 1,
+    "3,2": 20
+   },
+   "reward_levels": {
+    "0": 4,
+    "0.5": 250,
+    "1": 2
+   }
+  }
+ },
+ "artifact_sha256": "19252ed7575299fa8e0208238e8336b38dd66855a5c9a8e8de7b405299b6d880"
+}
