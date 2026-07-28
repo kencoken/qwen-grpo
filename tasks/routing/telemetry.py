@@ -471,6 +471,70 @@ def equal_cell_view(groups: list[Mapping[str, Any]]) -> dict[str, Any]:
     return out
 
 
+def probe_report(groups: list[Mapping[str, Any]], *,
+                 loaded: Mapping[str, Any],
+                 bound_cohort: Mapping[str, Any],
+                 frozen_rule: Mapping[str, Any]) -> dict[str, Any]:
+    """THE report boundary (218_s F3): consumes the frozen bound
+    cohort and rule and requires the groups to BE the frozen design —
+    exact observation ids, exact multiplicity (groups per
+    observation), and exact group size. An extra, missing, foreign or
+    wrong-sized group refuses; only then does aggregation (incl. the
+    equal-cell estimand) run."""
+    from collections import Counter as _Counter
+
+    from .charter import content_sha256
+    from .cohorts import validate_probe_rule
+    rule = validate_probe_rule(frozen_rule)
+    if not isinstance(bound_cohort, Mapping) \
+            or bound_cohort.get("kind") != "routing-dev-probe-cohort-v1":
+        raise InfrastructureError("not a probe-cohort binding record")
+    body = {k: v for k, v in bound_cohort.items()
+            if k != "cohort_sha256"}
+    if content_sha256(body) != bound_cohort.get("cohort_sha256"):
+        raise InfrastructureError(
+            "probe-cohort binding record does not rehash")
+    if bound_cohort["rule_sha256"] != frozen_rule["rule_sha256"]:
+        raise InfrastructureError(
+            "bound cohort was built from a different frozen rule")
+    lock = loaded.get("lock")
+    if not isinstance(lock, Mapping) \
+            or bound_cohort["surface_lock_sha256"] != \
+            lock.get("lock_sha256"):
+        raise InfrastructureError(
+            "bound cohort is not bound to this loaded surface's lock")
+    expected = list(bound_cohort["observation_ids"])
+    per_observation = rule["groups_per_observation"]
+    counts = _Counter(g["observation_id"] for g in groups)
+    if set(counts) - set(expected):
+        raise InfrastructureError(
+            f"report contains groups for observations outside the "
+            f"bound cohort: {sorted(set(counts) - set(expected))[:3]}")
+    wrong = {oid: counts.get(oid, 0) for oid in expected
+             if counts.get(oid, 0) != per_observation}
+    if wrong:
+        raise InfrastructureError(
+            f"group multiplicities do not match the frozen "
+            f"{per_observation}/observation: "
+            f"{dict(list(wrong.items())[:3])} (218_s F3)")
+    bad_sizes = {g["observation_id"]: g["n"] for g in groups
+                 if g["n"] != rule["group_size"]}
+    if bad_sizes:
+        raise InfrastructureError(
+            f"group sizes differ from the frozen G="
+            f"{rule['group_size']}: {dict(list(bad_sizes.items())[:3])}")
+    report = aggregate_stratified(groups)
+    report["design"] = {
+        "rule_sha256": frozen_rule["rule_sha256"],
+        "cohort_sha256": bound_cohort["cohort_sha256"],
+        "surface_lock_sha256": lock["lock_sha256"],
+        "observations": len(expected),
+        "groups_per_observation": per_observation,
+        "group_size": rule["group_size"],
+    }
+    return report
+
+
 def aggregate_stratified(groups: list[Mapping[str, Any]]
                          ) -> dict[str, Any]:
     """Aggregates per cell, per renderer, per payoff direction (tied

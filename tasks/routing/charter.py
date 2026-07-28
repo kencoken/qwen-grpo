@@ -215,11 +215,13 @@ def lightweight_freeze(record: Mapping[str, Any]) -> dict[str, Any]:
     if missing:
         raise InfrastructureError(
             f"lightweight freeze missing {sorted(missing)}")
+    import math
     budget = record["budget_gpu_hours"]
     if not isinstance(budget, (int, float)) or isinstance(budget, bool) \
-            or not budget > 0:
+            or not math.isfinite(budget) or not budget > 0:
         raise InfrastructureError(
-            f"lightweight freeze needs a positive budget, got {budget!r}")
+            f"lightweight freeze needs a finite positive budget, got "
+            f"{budget!r}")
     frozen = {key: record[key] for key in sorted(record)}
     frozen["freeze_sha256"] = content_sha256(frozen)
     return frozen

@@ -132,17 +132,36 @@ def test_claim_run_root_refuses_reuse(tmp_path):
         charter.claim_run_root("a/b", base=tmp_path)
 
 
-# --- execution lock and dev surfaces (211_f §4, 216_s F1) -----------------------
+# --- support-launch manifest and dev surfaces (211_f §4, 218_s F1) ---------------
 
 def _env_manifest(**extra):
-    body = {"manifest": "test-environment", "git_commit": "deadbeef",
-            "uv_lock_sha256": "aa" * 32, **extra}
+    """A CANONICAL stage1-environment-v2 manifest: the stage1
+    validator requires the current source identity and the exact
+    self-hash convention, so a fictional environment cannot pass."""
+    from tasks.conductor.stage1_manifest import (
+        stage1_source_digest, stage1_source_files,
+    )
+    body = {"manifest": "stage1-environment-v2",
+            "git_commit": "deadbeef", "git_dirty": 0,
+            "uv_lock_sha256": "aa" * 32,
+            "stage1_source_sha256": stage1_source_digest(),
+            "stage1_source_files": list(stage1_source_files()),
+            "gpu": "cpu-test", "torch": "0", "numpy": "0",
+            "scipy": "0", **extra}
     sha = hashlib.sha256(
         canonical_json(body).encode("utf-8")).hexdigest()
     return {**body, "execution_manifest_sha256": sha}
 
 
 DRIVER = "tasks/routing/dev_support.py"
+SEARCH_CAP = 12
+
+
+def _probe_rule():
+    return cohorts.freeze_reprobe_rule(
+        namespace="routing_dev", prefix_length_per_cell=1,
+        renderers=RENDERER_IDS, visibility="private", group_size=8,
+        groups_per_observation=2)
 
 
 def _wrong_worker3(request: bytes) -> str:
@@ -179,11 +198,16 @@ def _materialize(tmp_path, sabotage_w3=True, tag="routing-dev-test-v1"):
     declaration = dev_support.build_dev_declaration(
         rt, tag=tag, namespace="routing_dev", cohort=DEV_COHORT,
         renderers=DEV_RENDERERS, visibility="private")
-    execution = dev_support.build_execution_lock(DRIVER,
-                                                 _env_manifest())
+    env = _env_manifest()
+    launch = dev_support.build_support_launch_manifest(
+        declaration=declaration, frozen_probe_rule=_probe_rule(),
+        search_cap=SEARCH_CAP, budget_gpu_hours=1.0, driver=DRIVER,
+        environment_manifest=env)
     out = tmp_path / "surface"
-    dev_support.materialize_dev_support(rt, declaration, out,
-                                        execution)
+    dev_support.materialize_dev_support(
+        rt, declaration, out, launch_manifest=launch,
+        environment_manifest=env,
+        expected_manifest_sha256=launch["manifest_sha256"])
     rt.close()
     return out
 
@@ -198,43 +222,94 @@ def locked_surface(tmp_path_factory):
     return out, lock, loaded
 
 
-def test_execution_lock_recomputes_and_refuses_invention():
-    lock = dev_support.build_execution_lock(DRIVER, _env_manifest())
-    assert dev_support.validate_execution_lock(lock)
-    # invented provenance: edit the source sha and rehash — the live
-    # recompute refuses (216_s F1 reproduction)
-    forged = {k: v for k, v in lock.items() if k != "lock_sha256"}
-    forged["routing_source_sha256"] = "0" * 64
-    forged["lock_sha256"] = charter.content_sha256(forged)
-    with pytest.raises(InfrastructureError, match="does not recompute"):
-        dev_support.validate_execution_lock(forged)
-    # a driver outside the digested set cannot even build a lock
-    with pytest.raises(InfrastructureError, match="actual training "
-                       "driver"):
-        dev_support.build_execution_lock("train.py", _env_manifest())
-    # an environment manifest that is not self-consistent refuses
-    bad_env = dict(_env_manifest(), git_commit="other")
-    with pytest.raises(InfrastructureError, match="hash mismatch"):
-        dev_support.build_execution_lock(DRIVER, bad_env)
-
-
-def test_materialization_consumes_the_execution_lock(tmp_path):
+def test_support_launch_manifest_binds_all_prelaunch_inputs(tmp_path):
     rt = dev_fake_rt(tmp_path)
     declaration = dev_support.build_dev_declaration(
         rt, tag="t", namespace="routing_dev", cohort=DEV_COHORT,
         renderers=DEV_RENDERERS, visibility="private")
-    lock = dev_support.build_execution_lock(DRIVER, _env_manifest())
-    forged = {k: v for k, v in lock.items() if k != "lock_sha256"}
-    forged["environment_manifest_sha256"] = "0" * 64
-    forged["lock_sha256"] = charter.content_sha256(forged)
-    # forged env identity passes rehash but the record persists; a
-    # tampered SOURCE identity refuses at consumption:
-    bad = dict(forged, routing_source_sha256="1" * 64)
-    bad = {k: v for k, v in bad.items() if k != "lock_sha256"}
-    bad["lock_sha256"] = charter.content_sha256(bad)
+    rt.close()
+    env = _env_manifest()
+    launch = dev_support.build_support_launch_manifest(
+        declaration=declaration, frozen_probe_rule=_probe_rule(),
+        search_cap=SEARCH_CAP, budget_gpu_hours=1.0, driver=DRIVER,
+        environment_manifest=env)
+    assert launch["probe_rule_sha256"] == _probe_rule()["rule_sha256"]
+    assert launch["declaration_sha256"] == \
+        charter.content_sha256(dict(declaration))
+    assert dev_support.validate_support_launch_manifest(
+        launch, declaration)
+    # 218_s F1 reproduction: a FICTIONAL environment manifest (self-
+    # consistent but not the canonical stage1 kind / source identity)
+    # refuses
+    fake_env = {"manifest": "test-environment",
+                "git_commit": "deadbeef"}
+    fake_env["execution_manifest_sha256"] = hashlib.sha256(
+        canonical_json(fake_env).encode("utf-8")).hexdigest()
+    with pytest.raises(InfrastructureError, match="not a stage1"):
+        dev_support.build_support_launch_manifest(
+            declaration=declaration, frozen_probe_rule=_probe_rule(),
+            search_cap=SEARCH_CAP, budget_gpu_hours=1.0,
+            driver=DRIVER, environment_manifest=fake_env)
+    wrong_source = _env_manifest(stage1_source_sha256="0" * 64)
+    with pytest.raises(InfrastructureError, match="different source "
+                       "identity"):
+        dev_support.build_support_launch_manifest(
+            declaration=declaration, frozen_probe_rule=_probe_rule(),
+            search_cap=SEARCH_CAP, budget_gpu_hours=1.0,
+            driver=DRIVER, environment_manifest=wrong_source)
+    # search cap must cover the declared screen; budgets must be
+    # finite (218_s F2)
+    with pytest.raises(InfrastructureError, match="search cap"):
+        dev_support.build_support_launch_manifest(
+            declaration=declaration, frozen_probe_rule=_probe_rule(),
+            search_cap=3, budget_gpu_hours=1.0, driver=DRIVER,
+            environment_manifest=env)
+    with pytest.raises(InfrastructureError, match="finite"):
+        dev_support.build_support_launch_manifest(
+            declaration=declaration, frozen_probe_rule=_probe_rule(),
+            search_cap=SEARCH_CAP, budget_gpu_hours=float("nan"),
+            driver=DRIVER, environment_manifest=env)
+    with pytest.raises(InfrastructureError, match="actual training "
+                       "driver"):
+        dev_support.build_support_launch_manifest(
+            declaration=declaration, frozen_probe_rule=_probe_rule(),
+            search_cap=SEARCH_CAP, budget_gpu_hours=1.0,
+            driver="train.py", environment_manifest=env)
+
+
+def test_materialization_consumes_the_frozen_manifest(tmp_path):
+    rt = dev_fake_rt(tmp_path)
+    declaration = dev_support.build_dev_declaration(
+        rt, tag="t", namespace="routing_dev", cohort=DEV_COHORT,
+        renderers=DEV_RENDERERS, visibility="private")
+    env = _env_manifest()
+    launch = dev_support.build_support_launch_manifest(
+        declaration=declaration, frozen_probe_rule=_probe_rule(),
+        search_cap=SEARCH_CAP, budget_gpu_hours=1.0, driver=DRIVER,
+        environment_manifest=env)
+    # not the externally frozen hash
+    with pytest.raises(InfrastructureError, match="externally frozen"):
+        dev_support.materialize_dev_support(
+            rt, declaration, tmp_path / "surface",
+            launch_manifest=launch, environment_manifest=env,
+            expected_manifest_sha256="0" * 64)
+    # a tampered SOURCE identity refuses at the live recompute
+    bad = {k: v for k, v in launch.items() if k != "manifest_sha256"}
+    bad["routing_source_sha256"] = "1" * 64
+    bad["manifest_sha256"] = charter.content_sha256(bad)
     with pytest.raises(InfrastructureError, match="does not recompute"):
         dev_support.materialize_dev_support(
-            rt, declaration, tmp_path / "surface", bad)
+            rt, declaration, tmp_path / "surface",
+            launch_manifest=bad, environment_manifest=env,
+            expected_manifest_sha256=bad["manifest_sha256"])
+    # a different declaration than the bound one refuses
+    other = dict(declaration, support="other-tag")
+    with pytest.raises(InfrastructureError, match="different "
+                       "declaration"):
+        dev_support.materialize_dev_support(
+            rt, other, tmp_path / "surface", launch_manifest=launch,
+            environment_manifest=env,
+            expected_manifest_sha256=launch["manifest_sha256"])
     rt.close()
 
 
@@ -273,11 +348,16 @@ def test_declaration_binds_the_execution_identity(tmp_path):
         rt.runtime_profile_fingerprint
     tampered = dict(declaration,
                     request_contract="worker-blocks-task-first-v0")
-    execution = dev_support.build_execution_lock(DRIVER,
-                                                 _env_manifest())
+    env = _env_manifest()
+    launch = dev_support.build_support_launch_manifest(
+        declaration=tampered, frozen_probe_rule=_probe_rule(),
+        search_cap=SEARCH_CAP, budget_gpu_hours=1.0, driver=DRIVER,
+        environment_manifest=env)
     with pytest.raises(InfrastructureError, match="request_contract"):
         dev_support.materialize_dev_support(
-            rt, tampered, tmp_path / "surface", execution)
+            rt, tampered, tmp_path / "surface", launch_manifest=launch,
+            environment_manifest=env,
+            expected_manifest_sha256=launch["manifest_sha256"])
     rt.close()
 
 
@@ -286,7 +366,8 @@ def test_dev_surface_roundtrip_under_its_lock(locked_surface):
     surface = loaded["surface"]
     assert len(surface) == 108 * len(DEV_RENDERERS)
     assert set(surface.values()) <= {0.5, 1.0}
-    assert loaded["lock"]["execution_lock_sha256"]
+    assert loaded["lock"]["support_launch_sha256"]
+    assert (out / "env_manifest.json").exists()
     cell_of = {obs["observation_id"]: obs["cell_id"]
                for obs in loaded["observations"]}
     table = pair_table_from_surface(surface, cell_of)
@@ -607,6 +688,78 @@ def test_aggregate_stratified_full_population(telemetry_context):
     assert key in report["by_cell_renderer_direction"]
 
 
+def test_probe_report_requires_the_frozen_design(locked_surface,
+                                                 telemetry_context):
+    """218_s F3: the report boundary requires exact observation ids,
+    multiplicities and group size from the bound cohort + rule — the
+    reviewer's extra-authenticated-group reproduction refuses."""
+    out, lock, loaded = locked_surface
+    _, record = telemetry_context
+    frozen = _probe_rule()   # G=8, 2 groups/observation
+    bound = cohorts.bind_probe_cohort(frozen, out,
+                                      lock["lock_sha256"])
+    surface = loaded["surface"]
+
+    def make_group(oid, cell):
+        assignment = _family_correct(cell)
+        reward = surface[(oid, tuple(assignment))]
+        return telemetry.group_stats(
+            {"observation_id": oid, "completions":
+             [_completion(True, assignment, reward)] * 8},
+            loaded=loaded, c_fixed_record=record)
+
+    cell_of = {obs["observation_id"]: obs["cell_id"]
+               for obs in loaded["observations"]}
+    groups = [make_group(oid, cell_of[oid])
+              for oid in bound["observation_ids"]
+              for _ in range(2)]
+    report = telemetry.probe_report(groups, loaded=loaded,
+                                    bound_cohort=bound,
+                                    frozen_rule=frozen)
+    assert report["design"]["observations"] == 18
+    assert report["design"]["group_size"] == 8
+    assert report["total"]["groups"] == 36
+    # an EXTRA authenticated group refuses (the 218_s reproduction)
+    extra_oid = bound["observation_ids"][0]
+    with pytest.raises(InfrastructureError, match="multiplicities"):
+        telemetry.probe_report(
+            groups + [make_group(extra_oid, cell_of[extra_oid])],
+            loaded=loaded, bound_cohort=bound, frozen_rule=frozen)
+    # a missing group refuses
+    with pytest.raises(InfrastructureError, match="multiplicities"):
+        telemetry.probe_report(groups[:-1], loaded=loaded,
+                               bound_cohort=bound, frozen_rule=frozen)
+    # wrong group size refuses
+    wrong_g = list(groups)
+    oid = bound["observation_ids"][0]
+    small = telemetry.group_stats(
+        {"observation_id": oid, "completions":
+         [_completion(True, _family_correct(cell_of[oid]),
+                      surface[(oid,
+                               tuple(_family_correct(cell_of[oid])))])]
+         * 4},
+        loaded=loaded, c_fixed_record=record)
+    wrong_g[0] = small
+    with pytest.raises(InfrastructureError, match="group sizes"):
+        telemetry.probe_report(wrong_g, loaded=loaded,
+                               bound_cohort=bound, frozen_rule=frozen)
+    # a tampered cohort record refuses; a foreign rule refuses
+    tampered = dict(bound, observation_ids=bound["observation_ids"][:1])
+    with pytest.raises(InfrastructureError, match="rehash"):
+        telemetry.probe_report(groups, loaded=loaded,
+                               bound_cohort=tampered,
+                               frozen_rule=frozen)
+    other_rule = cohorts.freeze_reprobe_rule(
+        namespace="routing_dev", prefix_length_per_cell=1,
+        renderers=RENDERER_IDS, visibility="private", group_size=16,
+        groups_per_observation=2)
+    with pytest.raises(InfrastructureError, match="different frozen "
+                       "rule"):
+        telemetry.probe_report(groups, loaded=loaded,
+                               bound_cohort=bound,
+                               frozen_rule=other_rule)
+
+
 def test_equal_cell_view_refuses_partial_populations(
         telemetry_context):
     loaded, record = telemetry_context
@@ -637,30 +790,36 @@ def _entry(**overrides):
     return entry
 
 
-def _reserve(status="provisional", hours=7.0):
-    # basis: 3000 obs x 2.0 passes x 4.2 s / 3600 = 7.0 h exactly
+def _reserve(status="provisional", hours=7.0, seconds=4.2):
+    # basis: 3000 obs x 2.0 passes x 4.2 s / 3600 = 7.0 h; ceil = 7.0
     return {"status": status, "r_cycle_gpu_hours": hours,
             "assumed_cohort_size": 3000,
             "evaluation_multiplier": 2.0,
-            "measured_seconds_per_observation": 4.2,
-            "rounding": "ceil to whole GPU-hours"}
+            "measured_seconds_per_observation": seconds,
+            "rounding": "ceil_to_whole_gpu_hours"}
+
+
+def _note(**overrides):
+    """A bookkeeping (non-launch) entry for chain-mechanics tests."""
+    return _entry(kind="cycle_synthesis",
+                  budget_allocated_gpu_hours=0.0, **overrides)
 
 
 def test_ledger_append_requires_the_external_head(tmp_path):
     path = tmp_path / "ledger.md"
-    first = ledger.append_ledger_entry(_entry(), None, path)
+    first = ledger.append_ledger_entry(_note(), None, path)
     with pytest.raises(InfrastructureError, match="externally "
                        "committed head"):
-        ledger.append_ledger_entry(_entry(), None, path)
+        ledger.append_ledger_entry(_note(), None, path)
     second = ledger.append_ledger_entry(
-        _entry(question="q2"), first["entry_sha256"], path)
+        _note(question="q2"), first["entry_sha256"], path)
     assert ledger.ledger_head(path) == second["entry_sha256"]
 
 
 def test_ledger_detects_edits_removals_and_suffix_deletion(tmp_path):
     path = tmp_path / "ledger.md"
-    first = ledger.append_ledger_entry(_entry(), None, path)
-    ledger.append_ledger_entry(_entry(question="q2"),
+    first = ledger.append_ledger_entry(_note(), None, path)
+    ledger.append_ledger_entry(_note(question="q2"),
                                first["entry_sha256"], path)
     head = ledger.ledger_head(path)
     text = path.read_text()
@@ -675,7 +834,7 @@ def test_ledger_detects_edits_removals_and_suffix_deletion(tmp_path):
     with pytest.raises(InfrastructureError, match="chain broken"):
         ledger.read_ledger(path)
     # SUFFIX deletion passes the bare chain; the head catches it, and
-    # so does any subsequent append (which now requires the head)
+    # every boundary requires the head
     with open(path, "w") as handle:
         handle.write(blocks[0] + "\n## entry " + blocks[1])
     assert ledger.read_ledger(path)
@@ -684,47 +843,62 @@ def test_ledger_detects_edits_removals_and_suffix_deletion(tmp_path):
         ledger.verify_ledger_head(head, path)
     with pytest.raises(InfrastructureError, match="externally "
                        "committed head"):
-        ledger.append_ledger_entry(_entry(question="q3"), head, path)
+        ledger.append_ledger_entry(_note(question="q3"), head, path)
 
 
 def test_ledger_entry_schema_fails_closed(tmp_path):
     path = tmp_path / "ledger.md"
     with pytest.raises(InfrastructureError, match="missing required"):
-        ledger.append_ledger_entry(
+        ledger.admit_and_append_launch(
             {k: v for k, v in _entry().items() if k != "question"},
             None, path)
     with pytest.raises(InfrastructureError, match="unknown fields"):
-        ledger.append_ledger_entry(_entry(surprise=1), None, path)
+        ledger.admit_and_append_launch(_entry(surprise=1), None, path)
     with pytest.raises(InfrastructureError, match="unknown entry kind"):
-        ledger.append_ledger_entry(_entry(kind="vibes"), None, path)
+        ledger.admit_and_append_launch(_entry(kind="vibes"), None,
+                                       path)
     with pytest.raises(InfrastructureError, match="cohort_selection"):
-        ledger.append_ledger_entry(
+        ledger.admit_and_append_launch(
             _entry(cohort_selection="whatever"), None, path)
     with pytest.raises(InfrastructureError, match="linked closeout"):
-        ledger.append_ledger_entry(
+        ledger.admit_and_append_launch(
             _entry(budget_consumed_gpu_hours=0.1), None, path)
-    # 216_s F2: support/probe launches must declare outcome-blindness
     with pytest.raises(InfrastructureError, match="outcome_blind"):
-        ledger.append_ledger_entry(
-            _entry(kind="support_materialization"), None, path)
-    with pytest.raises(InfrastructureError, match="outcome_blind"):
-        ledger.append_ledger_entry(
+        ledger.admit_and_append_launch(
             _entry(kind="grouped_probe"), None, path)
+    # 218_s F2: launches cannot bypass admission via the plain append
+    with pytest.raises(InfrastructureError, match="admit_and_append"):
+        ledger.append_ledger_entry(_entry(), None, path)
+    # NaN budgets fail closed
+    with pytest.raises(InfrastructureError, match="finite"):
+        ledger.admit_and_append_launch(
+            _entry(budget_allocated_gpu_hours=float("nan")), None,
+            path)
 
 
-def test_reserve_requires_numerical_basis_and_recomputation(tmp_path):
+def test_reserve_requires_numerical_basis_and_exact_rounding(tmp_path):
     path = tmp_path / "ledger.md"
     incomplete = {"status": "provisional", "r_cycle_gpu_hours": 6.0}
     with pytest.raises(InfrastructureError, match="numerical basis"):
         ledger.append_ledger_entry(
             _entry(kind="reserve_update", reserve=incomplete,
                    budget_allocated_gpu_hours=0.0), None, path)
-    # 216_s: a reserve below its own basis refuses
-    with pytest.raises(InfrastructureError, match="below its own "
-                       "basis"):
-        ledger.append_ledger_entry(
-            _entry(kind="reserve_update", reserve=_reserve(hours=6.0),
-                   budget_allocated_gpu_hours=0.0), None, path)
+    # 218_s minor: the rounding POLICY is frozen and recomputed
+    # exactly — below-basis and above-ceil reserves both refuse
+    with pytest.raises(InfrastructureError, match="must recompute"):
+        ledger.validate_reserve(_reserve(hours=6.0))
+    with pytest.raises(InfrastructureError, match="must recompute"):
+        ledger.validate_reserve(_reserve(hours=9.0))
+    # measured 4.3 s -> implied 7.1667 -> exact ceil is 8.0
+    with pytest.raises(InfrastructureError, match="must recompute"):
+        ledger.validate_reserve(_reserve(hours=7.0, seconds=4.3))
+    ledger.validate_reserve(_reserve(hours=8.0, seconds=4.3))
+    with pytest.raises(InfrastructureError, match="frozen policy"):
+        ledger.validate_reserve(
+            dict(_reserve(), rounding="ceil to whole GPU-hours"))
+    with pytest.raises(InfrastructureError, match="finite"):
+        ledger.validate_reserve(
+            dict(_reserve(), r_cycle_gpu_hours=float("inf")))
     ledger.append_ledger_entry(
         _entry(kind="reserve_update", reserve=_reserve(),
                budget_allocated_gpu_hours=0.0), None, path)
@@ -732,8 +906,12 @@ def test_reserve_requires_numerical_basis_and_recomputation(tmp_path):
 
 def test_launch_closeout_linkage_and_envelope(tmp_path):
     path = tmp_path / "ledger.md"
-    launch = ledger.append_ledger_entry(
-        _entry(budget_allocated_gpu_hours=3.0), None, path)
+    reserve_entry = ledger.append_ledger_entry(
+        _entry(kind="reserve_update", reserve=_reserve(),
+               budget_allocated_gpu_hours=0.0), None, path)
+    launch = ledger.admit_and_append_launch(
+        _entry(budget_allocated_gpu_hours=3.0),
+        reserve_entry["entry_sha256"], path)
     state = ledger.envelope_state(ledger.read_ledger(path))
     assert state["consumed_gpu_hours"] == pytest.approx(3.0)
     assert state["open_launches"] == [launch["entry_sha256"]]
@@ -762,58 +940,68 @@ def test_launch_closeout_linkage_and_envelope(tmp_path):
             closeout["entry_sha256"], path)
 
 
-def test_admission_is_derived_from_the_verified_ledger(tmp_path):
+def test_admission_verifies_the_persisted_ledger_itself(tmp_path):
+    """218_s F2: admission takes the path + head + prospective entry;
+    there is no caller-supplied entries list to spoof, and the checked
+    kind/budget IS the recorded kind/budget."""
     path = tmp_path / "ledger.md"
-    # empty ledger: ONLY the first support materialization is
-    # admissible, against the bare envelope
-    entries = ledger.verify_ledger_head(None, path)
-    ledger.check_launch_admissible(
-        entries=entries, launch_kind="support_materialization",
-        launch_max_gpu_hours=4.0)
+    # empty ledger: ONLY the first support materialization launches
     with pytest.raises(InfrastructureError, match="FIRST support"):
-        ledger.check_launch_admissible(
-            entries=entries, launch_kind="engineering_smoke",
-            launch_max_gpu_hours=1.0)
-    # record the support launch; a SECOND support without a reserve
-    # now refuses — "first, exactly once" is derived, not asserted
-    support = ledger.append_ledger_entry(
+        ledger.admit_and_append_launch(
+            _entry(kind="training_run"), None, path)
+    support = ledger.admit_and_append_launch(
         _entry(kind="support_materialization",
                cohort_selection="outcome_blind",
                budget_allocated_gpu_hours=4.0), None, path)
-    entries = ledger.verify_ledger_head(support["entry_sha256"], path)
+    # the launch was RECORDED with the admitted kind/budget
+    entries = ledger.read_ledger(path)
+    assert entries[-1]["kind"] == "support_materialization"
+    assert entries[-1]["budget_allocated_gpu_hours"] == 4.0
+    # a SECOND support refuses — derived from the persisted chain;
+    # replaying the empty-ledger admission is impossible because the
+    # head no longer matches
     with pytest.raises(InfrastructureError, match="prior support"):
-        ledger.check_launch_admissible(
-            entries=entries, launch_kind="support_materialization",
-            launch_max_gpu_hours=4.0)
-    # with the reserve recorded, ordinary + closure rules apply
+        ledger.admit_and_append_launch(
+            _entry(kind="support_materialization",
+                   cohort_selection="outcome_blind",
+                   budget_allocated_gpu_hours=4.0),
+            support["entry_sha256"], path)
+    with pytest.raises(InfrastructureError, match="externally "
+                       "committed head"):
+        ledger.admit_and_append_launch(
+            _entry(kind="support_materialization",
+                   cohort_selection="outcome_blind",
+                   budget_allocated_gpu_hours=4.0), None, path)
     reserve_entry = ledger.append_ledger_entry(
         _entry(kind="reserve_update", reserve=_reserve(),
                budget_allocated_gpu_hours=0.0),
         support["entry_sha256"], path)
-    entries = ledger.verify_ledger_head(reserve_entry["entry_sha256"],
-                                        path)
-    state = ledger.check_launch_admissible(
-        entries=entries, launch_kind="grouped_probe",
-        launch_max_gpu_hours=3.0)
-    assert state["reserve"]["status"] == "provisional"
-    # remaining = 60 - 4 = 56; an ordinary launch of 50 would breach
-    # max + R_cycle (50 + 7 > 56)
+    head = reserve_entry["entry_sha256"]
+    probe = ledger.admit_and_append_launch(
+        _entry(kind="grouped_probe",
+               cohort_selection="outcome_blind",
+               budget_allocated_gpu_hours=3.0), head, path)
+    head = probe["entry_sha256"]
+    # remaining = 60 - 4 - 3 = 53; 50 + 7 > 53 refuses
     with pytest.raises(InfrastructureError, match="inadmissible"):
-        ledger.check_launch_admissible(
-            entries=entries, launch_kind="training_run",
-            launch_max_gpu_hours=50.0)
-    ledger.check_launch_admissible(
-        entries=entries, launch_kind="cycle_closure",
-        launch_max_gpu_hours=6.5)
+        ledger.admit_and_append_launch(
+            _entry(kind="training_run",
+                   budget_allocated_gpu_hours=50.0), head, path)
     with pytest.raises(InfrastructureError, match="exceeds the "
                        "reserved"):
-        ledger.check_launch_admissible(
-            entries=entries, launch_kind="cycle_closure",
-            launch_max_gpu_hours=7.5)
+        ledger.admit_and_append_launch(
+            _entry(kind="cycle_closure",
+                   budget_allocated_gpu_hours=7.5), head, path)
+    closure = ledger.admit_and_append_launch(
+        _entry(kind="cycle_closure", budget_allocated_gpu_hours=6.5),
+        head, path)
+    assert ledger.read_ledger(path)[-1]["entry_sha256"] == \
+        closure["entry_sha256"]
     with pytest.raises(InfrastructureError, match="not a launch kind"):
-        ledger.check_launch_admissible(
-            entries=entries, launch_kind="reserve_update",
-            launch_max_gpu_hours=1.0)
+        ledger.admit_and_append_launch(
+            _entry(kind="reserve_update", reserve=_reserve(),
+                   budget_allocated_gpu_hours=1.0),
+            closure["entry_sha256"], path)
 
 
 # --- checkpoint/resume (211_f §11; 216_s F5/F6) --------------------------------------
@@ -971,13 +1159,20 @@ def test_merge_segments_requires_exact_ranges():
     with pytest.raises(InfrastructureError, match="exact in-order"):
         checkpoint.merge_segments(
             [_segment("s1", "complete", 0, 2, [1, 0])])
-    # … and a complete segment must cover [resume_from, cutoff)
-    with pytest.raises(InfrastructureError, match="exact range"):
+    # … and every segment must carry its checkpointed groups: a
+    # complete segment short of its cutoff refuses (218_s F4 message)
+    with pytest.raises(InfrastructureError, match="omits checkpointed"):
         checkpoint.merge_segments(
             [_segment("s1", "complete", 0, 3, [0, 1])])
+    # rows BEYOND a complete segment's own checkpoint refuse
     with pytest.raises(InfrastructureError, match="exact range"):
         checkpoint.merge_segments(
             [_segment("s1", "complete", 0, 3, range(5))])
+    # 218_s F4: an ABORTED segment must also carry every checkpointed
+    # group — cutoff 3 with rows [0, 1] omits group 2
+    with pytest.raises(InfrastructureError, match="omits checkpointed"):
+        checkpoint.merge_segments(
+            [_segment("s1", "aborted", 0, 3, [0, 1])])
 
 
 def test_merge_segments_enforces_identity_and_linkage():

@@ -229,15 +229,29 @@ def _verify_dev_declaration(declaration: Mapping[str, Any],
 # --- materialization -----------------------------------------------------------
 
 def materialize_dev_support(rt: Any, declaration: Mapping[str, Any],
-                            out_dir: str | Path,
-                            execution_lock: Mapping[str, Any]
+                            out_dir: str | Path, *,
+                            launch_manifest: Mapping[str, Any],
+                            environment_manifest: Mapping[str, Any],
+                            expected_manifest_sha256: str
                             ) -> dict[str, Any]:
     """Execute the complete declared 4^S surface through a runtime
-    whose identity matches the declaration, CONSUMING the pre-launch
-    execution lock (216_s F1: revalidated with a live source-digest
-    recompute, then persisted beside the surface for the post-run
-    lock to extend). Mirrors the frozen Stage-0 materializer."""
-    execution_lock = validate_execution_lock(execution_lock)
+    whose identity matches the declaration, CONSUMING the externally
+    frozen support-launch manifest (218_s F1: rehash == the frozen
+    hash, declaration binding, live source-digest recompute, and the
+    canonical environment revalidated), then persisting the manifest
+    AND the environment bytes beside the surface for the post-run
+    lock to extend. Mirrors the frozen Stage-0 materializer."""
+    launch_manifest = validate_support_launch_manifest(
+        launch_manifest, declaration)
+    if launch_manifest["manifest_sha256"] != expected_manifest_sha256:
+        raise InfrastructureError(
+            "support-launch manifest is not the externally frozen one "
+            "(218_s F1)")
+    if launch_manifest["environment_manifest_sha256"] != \
+            validate_environment_manifest_binding(environment_manifest):
+        raise InfrastructureError(
+            "environment manifest is not the one the launch manifest "
+            "binds")
     for key, expected in (
             ("worker_visible_fingerprint", rt.worker_visible_fingerprint),
             ("worker_pool_fingerprint", rt.pool_fingerprint),
@@ -258,9 +272,11 @@ def materialize_dev_support(rt: Any, declaration: Mapping[str, Any],
     payoff_path = out_dir / "payoffs.jsonl"
     manifest_path = out_dir / "manifest.json"
     declaration_path = out_dir / "declaration.json"
-    execution_path = out_dir / "execution_lock.json"
+    launch_path = out_dir / "support_launch.json"
+    env_path = out_dir / "env_manifest.json"
     if payoff_path.exists() or manifest_path.exists() \
-            or declaration_path.exists() or execution_path.exists():
+            or declaration_path.exists() or launch_path.exists() \
+            or env_path.exists():
         raise InfrastructureError(
             f"{out_dir} already holds a materialized surface; refusing "
             "to overwrite a recorded artifact")
@@ -273,9 +289,12 @@ def materialize_dev_support(rt: Any, declaration: Mapping[str, Any],
     declaration_path.write_text(
         json.dumps(declaration, indent=1, sort_keys=True) + "\n",
         encoding="utf-8")
-    execution_path.write_text(
-        json.dumps(dict(execution_lock), indent=1, sort_keys=True)
+    launch_path.write_text(
+        json.dumps(dict(launch_manifest), indent=1, sort_keys=True)
         + "\n", encoding="utf-8")
+    env_path.write_text(
+        json.dumps(dict(environment_manifest), indent=1,
+                   sort_keys=True) + "\n", encoding="utf-8")
 
     started = time.monotonic()
     generations_before = getattr(rt.pool, "singleton_generations", 0)
@@ -343,118 +362,191 @@ def materialize_dev_support(rt: Any, declaration: Mapping[str, Any],
     return manifest
 
 
-# --- pre-launch execution lock and post-run surface lock (216_s F1) ------------
+# --- support-launch manifest and post-run surface lock (218_s F1) --------------
 #
-# The execution lock is built BEFORE materialization from the live
-# tree and the run's environment manifest — its source digest and
-# driver are RECOMPUTED, never caller-asserted — and materialization
-# CONSUMES it. The surface lock then extends the persisted execution
-# lock with the output hashes. Invented provenance has nowhere to
-# enter: a hash that does not recompute refuses.
+# ONE pre-launch manifest binds every prelaunch input: the exact
+# declaration (cohort + runtime/pool/cache identity), the frozen
+# probe rule, the search cap, the budget, the recomputed source
+# digest with the actual driver, and the CANONICAL Stage-1
+# environment manifest (validated by the stage1 validator, which
+# ties it to the current source identity — a fictional manifest
+# cannot pass). Materialization consumes the manifest's EXTERNALLY
+# frozen hash and persists both the manifest and the environment
+# bytes; the surface lock extends the persisted manifest with the
+# output hashes.
 
-EXECUTION_LOCK_KIND = "routing-dev-execution-lock-v1"
-SURFACE_LOCK_KIND = "routing-dev-surface-lock-v2"
-_EXECUTION_LOCK_KEYS = frozenset({
-    "lock", "routing_source_sha256", "driver",
-    "environment_manifest_sha256",
+SUPPORT_LAUNCH_KIND = "routing-dev-support-launch-v1"
+SURFACE_LOCK_KIND = "routing-dev-surface-lock-v3"
+_SUPPORT_LAUNCH_KEYS = frozenset({
+    "kind", "declaration_sha256", "namespace",
+    "worker_visible_fingerprint", "runtime_profile_fingerprint",
+    "worker_pool_fingerprint", "request_contract", "cache_identity",
+    "probe_rule_sha256", "search_cap", "budget_gpu_hours",
+    "routing_source_sha256", "driver", "environment_manifest_sha256",
 })
 _LOCK_KEYS = frozenset({
-    "lock", "support", "execution_lock_sha256", "declaration_sha256",
+    "lock", "support", "support_launch_sha256", "declaration_sha256",
     "manifest_sha256", "payoffs_sha256", "trace_manifest_sha256",
     "trace_steps_sha256", "worker_visible_fingerprint",
     "runtime_profile_fingerprint", "worker_pool_fingerprint",
-    "request_contract", "cache_identity", "routing_source_sha256",
-    "driver", "environment_manifest_sha256",
+    "request_contract", "cache_identity", "probe_rule_sha256",
+    "routing_source_sha256", "driver", "environment_manifest_sha256",
 })
 
 
 def validate_environment_manifest_binding(env: Mapping[str, Any]) -> str:
-    """The environment manifest must be self-consistent: its declared
-    execution identity must BE the canonical content hash of its body
-    (the stage1 convention). Returns the verified identity — a bare
-    64-hex string is refused."""
-    import hashlib
-    from tasks.conductor.profiles import canonical_json
-    declared = env.get("execution_manifest_sha256")
-    if not declared:
-        raise InfrastructureError(
-            "environment manifest carries no execution_manifest_sha256")
-    body = {k: v for k, v in env.items()
-            if k != "execution_manifest_sha256"}
-    recomputed = hashlib.sha256(
-        canonical_json(body).encode("utf-8")).hexdigest()
-    if recomputed != declared:
-        raise InfrastructureError(
-            "environment manifest hash mismatch — the execution "
-            "identity is not the hash of this manifest")
-    return declared
+    """218_s F1: the CANONICAL Stage-1 validator — manifest kind,
+    required fields, self-hash, AND the source identity bound to the
+    current tree. A self-consistent but fictional mapping refuses."""
+    from tasks.conductor.stage1_manifest import (
+        ManifestError, validate_env_manifest,
+    )
+    try:
+        return validate_env_manifest(env)
+    except ManifestError as error:
+        raise InfrastructureError(str(error)) from error
 
 
-def build_execution_lock(driver: Any,
-                         environment_manifest: Mapping[str, Any]
-                         ) -> dict[str, Any]:
-    """The PRE-LAUNCH lock: the routing source digest is computed HERE
-    from the tracked tree (with the driver-inclusion refusal), and the
-    environment identity is verified as a self-consistent manifest —
-    neither can be asserted (216_s F1)."""
+def build_support_launch_manifest(*, declaration: Mapping[str, Any],
+                                  frozen_probe_rule: Mapping[str, Any],
+                                  search_cap: int,
+                                  budget_gpu_hours: float,
+                                  driver: Any,
+                                  environment_manifest:
+                                  Mapping[str, Any]) -> dict[str, Any]:
+    """The ONE pre-launch record (218_s F1). Everything is validated
+    or recomputed here; the freeze commits this manifest's hash, and
+    materialization consumes it."""
+    import math
     from .charter import routing_execution_digest
+    from .cohorts import validate_probe_rule
+    validate_dev_cohort(declaration["namespace"], declaration["cohort"],
+                        declaration["renderers"],
+                        declaration["visibility"])
+    validate_probe_rule(frozen_probe_rule)
+    if not isinstance(search_cap, int) or isinstance(search_cap, bool) \
+            or search_cap < 1:
+        raise InfrastructureError(f"bad search_cap {search_cap!r}")
+    total = sum(len(indices)
+                for indices in declaration["cohort"].values())
+    if total > search_cap:
+        raise InfrastructureError(
+            f"declaration screens {total} latents, above the frozen "
+            f"search cap {search_cap}")
+    if not isinstance(budget_gpu_hours, (int, float)) \
+            or isinstance(budget_gpu_hours, bool) \
+            or not math.isfinite(budget_gpu_hours) \
+            or budget_gpu_hours <= 0:
+        raise InfrastructureError(
+            f"budget_gpu_hours must be finite and > 0, got "
+            f"{budget_gpu_hours!r}")
     digest = routing_execution_digest(driver)
-    lock = {
-        "lock": EXECUTION_LOCK_KIND,
+    manifest = {
+        "kind": SUPPORT_LAUNCH_KIND,
+        "declaration_sha256": content_sha256(dict(declaration)),
+        "namespace": declaration["namespace"],
+        "worker_visible_fingerprint":
+            declaration["worker_visible_fingerprint"],
+        "runtime_profile_fingerprint":
+            declaration["runtime_profile_fingerprint"],
+        "worker_pool_fingerprint":
+            declaration["worker_pool_fingerprint"],
+        "request_contract": declaration["request_contract"],
+        "cache_identity": declaration["cache_identity"],
+        "probe_rule_sha256": frozen_probe_rule["rule_sha256"],
+        "search_cap": search_cap,
+        "budget_gpu_hours": budget_gpu_hours,
         "routing_source_sha256": digest["routing_source_sha256"],
         "driver": digest["driver"],
         "environment_manifest_sha256":
             validate_environment_manifest_binding(environment_manifest),
     }
-    lock["lock_sha256"] = content_sha256(lock)
-    return lock
+    manifest["manifest_sha256"] = content_sha256(manifest)
+    return manifest
 
 
-def validate_execution_lock(lock: Mapping[str, Any], *,
-                            recompute: bool = True) -> dict[str, Any]:
-    """Closed schema + rehash; with `recompute` (the default, used at
-    materialization and surface-lock time in the same session) the
-    source digest must ALSO recompute from the current tree for the
-    named driver."""
-    if not isinstance(lock, Mapping) \
-            or set(lock) != _EXECUTION_LOCK_KEYS | {"lock_sha256"}:
+def validate_support_launch_manifest(manifest: Mapping[str, Any],
+                                     declaration: Mapping[str, Any],
+                                     *, recompute: bool = True
+                                     ) -> dict[str, Any]:
+    """Closed schema + rehash + the declaration must BE the bound
+    declaration; with `recompute` the source digest must also
+    recompute from the current tree for the named driver."""
+    if not isinstance(manifest, Mapping) \
+            or set(manifest) != _SUPPORT_LAUNCH_KEYS | \
+            {"manifest_sha256"}:
         raise InfrastructureError(
-            "execution lock keys do not match the closed schema")
-    if lock["lock"] != EXECUTION_LOCK_KIND:
+            "support-launch manifest keys do not match the closed "
+            "schema")
+    if manifest["kind"] != SUPPORT_LAUNCH_KIND:
         raise InfrastructureError(
-            f"unknown execution lock kind {lock['lock']!r}")
-    body = {k: v for k, v in lock.items() if k != "lock_sha256"}
-    if content_sha256(body) != lock["lock_sha256"]:
-        raise InfrastructureError("execution lock does not rehash")
+            f"unknown launch-manifest kind {manifest['kind']!r}")
+    body = {k: v for k, v in manifest.items() if k != "manifest_sha256"}
+    if content_sha256(body) != manifest["manifest_sha256"]:
+        raise InfrastructureError(
+            "support-launch manifest does not rehash")
+    if manifest["declaration_sha256"] != \
+            content_sha256(dict(declaration)):
+        raise InfrastructureError(
+            "support-launch manifest is bound to a different "
+            "declaration (218_s F1)")
+    for key in ("namespace", "worker_visible_fingerprint",
+                "runtime_profile_fingerprint",
+                "worker_pool_fingerprint", "request_contract",
+                "cache_identity"):
+        if manifest[key] != declaration[key]:
+            raise InfrastructureError(
+                f"support-launch manifest {key} does not match the "
+                "declaration")
     if recompute:
         from .charter import routing_execution_digest
-        digest = routing_execution_digest(lock["driver"])
+        digest = routing_execution_digest(manifest["driver"])
         if digest["routing_source_sha256"] != \
-                lock["routing_source_sha256"]:
+                manifest["routing_source_sha256"]:
             raise InfrastructureError(
-                "execution lock source digest does not recompute from "
-                "the tree — the source moved after the lock (216_s F1)")
-    return dict(lock)
+                "support-launch source digest does not recompute from "
+                "the tree — the source moved after the freeze")
+    return dict(manifest)
+
+
+def _load_persisted_launch(out_dir: Path, *, recompute: bool
+                           ) -> dict[str, Any]:
+    """Read + revalidate the persisted launch manifest and environment
+    bytes from a surface directory."""
+    launch_path = out_dir / "support_launch.json"
+    env_path = out_dir / "env_manifest.json"
+    if not launch_path.exists() or not env_path.exists():
+        raise InfrastructureError(
+            f"{out_dir} lacks the persisted launch/environment "
+            "manifests — not materialized under a support launch "
+            "(218_s F1)")
+    declaration = json.loads(
+        (out_dir / "declaration.json").read_text(encoding="utf-8"))
+    launch = validate_support_launch_manifest(
+        json.loads(launch_path.read_text(encoding="utf-8")),
+        declaration, recompute=recompute)
+    env = json.loads(env_path.read_text(encoding="utf-8"))
+    if recompute:
+        if validate_environment_manifest_binding(env) != \
+                launch["environment_manifest_sha256"]:
+            raise InfrastructureError(
+                "persisted environment manifest does not match the "
+                "launch manifest binding")
+    return launch
 
 
 def build_surface_lock(out_dir: str | Path) -> dict[str, Any]:
-    """The POST-RUN lock: extends the persisted, revalidated execution
-    lock with the output hashes. No identity is caller-supplied —
-    everything is read from the surface directory or recomputed.
-    Written as `surface_lock.json`; its self-hash is what the tranche
-    freeze commits, and every consumer requires it."""
+    """The POST-RUN lock: extends the persisted, revalidated
+    support-launch manifest with the output hashes. No identity is
+    caller-supplied — everything is read from the surface directory
+    or recomputed. Written as `surface_lock.json`; its self-hash is
+    what the tranche freeze commits, and every consumer requires it."""
     out_dir = Path(out_dir)
     declaration = json.loads(
         (out_dir / "declaration.json").read_text(encoding="utf-8"))
     manifest = json.loads(
         (out_dir / "manifest.json").read_text(encoding="utf-8"))
-    execution_path = out_dir / "execution_lock.json"
-    if not execution_path.exists():
-        raise InfrastructureError(
-            f"{out_dir} holds no execution lock — the surface was not "
-            "materialized under a pre-launch lock (216_s F1)")
-    execution = validate_execution_lock(
-        json.loads(execution_path.read_text(encoding="utf-8")))
+    launch = _load_persisted_launch(out_dir, recompute=True)
     lock_path = out_dir / "surface_lock.json"
     if lock_path.exists():
         raise InfrastructureError(
@@ -462,7 +554,7 @@ def build_surface_lock(out_dir: str | Path) -> dict[str, Any]:
     lock = {
         "lock": SURFACE_LOCK_KIND,
         "support": manifest["support"],
-        "execution_lock_sha256": execution["lock_sha256"],
+        "support_launch_sha256": launch["manifest_sha256"],
         "declaration_sha256": _sha_file(out_dir / "declaration.json"),
         "manifest_sha256": _sha_file(out_dir / "manifest.json"),
         "payoffs_sha256": manifest["payoffs_sha256"],
@@ -476,10 +568,11 @@ def build_surface_lock(out_dir: str | Path) -> dict[str, Any]:
             declaration["worker_pool_fingerprint"],
         "request_contract": declaration["request_contract"],
         "cache_identity": declaration["cache_identity"],
-        "routing_source_sha256": execution["routing_source_sha256"],
-        "driver": execution["driver"],
+        "probe_rule_sha256": launch["probe_rule_sha256"],
+        "routing_source_sha256": launch["routing_source_sha256"],
+        "driver": launch["driver"],
         "environment_manifest_sha256":
-            execution["environment_manifest_sha256"],
+            launch["environment_manifest_sha256"],
     }
     if manifest["declaration_sha256"] != lock["declaration_sha256"]:
         raise InfrastructureError(
@@ -515,15 +608,9 @@ def validate_surface_lock(out_dir: str | Path,
             "to consume a surface under an unrelated lock (214_s P1)")
     manifest = json.loads(
         (out_dir / "manifest.json").read_text(encoding="utf-8"))
-    execution_path = out_dir / "execution_lock.json"
-    if not execution_path.exists():
-        raise InfrastructureError(
-            f"{out_dir} holds no execution lock")
-    execution = validate_execution_lock(
-        json.loads(execution_path.read_text(encoding="utf-8")),
-        recompute=False)
+    launch = _load_persisted_launch(out_dir, recompute=False)
     checks = {
-        "execution_lock_sha256": execution["lock_sha256"],
+        "support_launch_sha256": launch["manifest_sha256"],
         "declaration_sha256": _sha_file(out_dir / "declaration.json"),
         "manifest_sha256": _sha_file(out_dir / "manifest.json"),
         "payoffs_sha256": _sha_file(out_dir / "payoffs.jsonl"),
@@ -532,10 +619,11 @@ def validate_surface_lock(out_dir: str | Path,
         "trace_steps_sha256":
             _sha_file(out_dir / "traces" / "traces" / "steps.jsonl"),
         "support": manifest["support"],
-        "routing_source_sha256": execution["routing_source_sha256"],
-        "driver": execution["driver"],
+        "probe_rule_sha256": launch["probe_rule_sha256"],
+        "routing_source_sha256": launch["routing_source_sha256"],
+        "driver": launch["driver"],
         "environment_manifest_sha256":
-            execution["environment_manifest_sha256"],
+            launch["environment_manifest_sha256"],
     }
     for key, actual in checks.items():
         if lock[key] != actual:

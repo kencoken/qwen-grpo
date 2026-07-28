@@ -383,11 +383,12 @@ def merge_segments(segments: list[Mapping[str, Any]]) -> dict[str, Any]:
                     f"consumed counter {resume_from}, but its parent "
                     f"checkpoint recorded "
                     f"{previous['checkpoint_consumed_groups']}")
-        # 216_s F6: the ORIGINAL row sequence must be the exact
-        # ascending range from the resume point — reordered rows are
-        # refused, and a complete segment must cover [resume_from,
-        # cutoff) exactly (no rows missing before its own checkpoint,
-        # none beyond it).
+        # 216_s F6 + 218_s F4: the ORIGINAL row sequence must be the
+        # exact ascending range from the resume point, and EVERY
+        # segment must contain its checkpointed groups [resume_from,
+        # cutoff) in full — a checkpoint cannot have consumed groups
+        # the segment does not carry. Only an aborted segment's
+        # POST-cutoff tail is optional (it is excluded as evidence).
         sequence = [g["global_group_index"] for g in segment["groups"]]
         if sequence != list(range(resume_from,
                                   resume_from + len(sequence))):
@@ -395,6 +396,13 @@ def merge_segments(segments: list[Mapping[str, Any]]) -> dict[str, Any]:
                 f"segment {segment['segment_id']!r} rows are not the "
                 f"exact in-order range from its resume point "
                 f"{resume_from}: {sequence[:6]}…")
+        if len(sequence) < cutoff - resume_from:
+            raise InfrastructureError(
+                f"segment {segment['segment_id']!r} omits "
+                f"checkpointed groups: rows reach "
+                f"{sequence[-1] if sequence else None}, but its "
+                f"checkpoint consumed through {cutoff - 1} — an "
+                "impossible history (218_s F4)")
         if status == "complete" \
                 and sequence != list(range(resume_from, cutoff)):
             raise InfrastructureError(
