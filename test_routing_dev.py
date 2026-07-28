@@ -1760,3 +1760,75 @@ def test_final_state_cross_checks_the_frozen_schedule(step4_support):
     with pytest.raises(InfrastructureError, match="frozen schedule"):
         resume_validation._final_state(final, accountant, rows,
                                        swapped)
+
+
+def test_hf_equivalence_is_strict(tmp_path):
+    """239_s F3: a missing adapter file refuses; adapter comparison
+    goes through normalized names; missing RNG streams refuse."""
+    import torch
+    from safetensors.torch import save_file
+    bundle = tmp_path / "bundle"
+    hf = tmp_path / "checkpoint-3"
+    bundle.mkdir()
+    hf.mkdir()
+    tensor = torch.ones(2)
+    save_file({"base_model.model.layers.0.q_proj.lora_A.default"
+               ".weight": tensor},
+              str(bundle / checkpoint.CHECKPOINT_BUNDLE_FILENAMES[
+                  "adapter"]))
+    optimizer = {"state": {}, "param_groups": []}
+    torch.save(optimizer, bundle / "optimizer.pt")
+    torch.save({"last_epoch": 3}, bundle / "scheduler.pt")
+    rng = dict(RNG_STATE)
+    checkpoint.persist_rng_state(bundle, rng)
+    torch.save(optimizer, hf / "optimizer.pt")
+    torch.save({"last_epoch": 3}, hf / "scheduler.pt")
+    torch.save({"cpu": torch.tensor(RNG_STATE["torch_cpu"],
+                                    dtype=torch.uint8),
+                "python": (3, tuple(RNG_STATE["python"][
+                    "internal_state"]), None),
+                "numpy": ("MT19937", torch.tensor([1]).numpy(), 0, 0,
+                          0.0)},
+               hf / "rng_state.pth")
+
+    def _record():
+        return {"sampler_position": {"hf_checkpoint_sha256":
+                resume_validation._hf_checkpoint_hashes(hf)}}
+
+    # missing adapter file refuses (never skipped)
+    with pytest.raises(InfrastructureError, match="lacks "
+                       "adapter_model"):
+        resume_validation.verify_hf_checkpoint_against_bundle(
+            bundle, hf, _record())
+    # matching adapter under a DIFFERENT name grammar passes the
+    # normalized comparison
+    save_file({"base_model.model.layers.0.q_proj.lora_A.weight":
+               tensor}, str(hf / "adapter_model.safetensors"))
+    resume_validation.verify_hf_checkpoint_against_bundle(
+        bundle, hf, _record())
+    # a changed tensor refuses through the normalized names
+    save_file({"base_model.model.layers.0.q_proj.lora_A.weight":
+               tensor * 2}, str(hf / "adapter_model.safetensors"))
+    with pytest.raises(InfrastructureError, match="hf-vs-bundle "
+                       "adapter"):
+        resume_validation.verify_hf_checkpoint_against_bundle(
+            bundle, hf, _record())
+    # a missing python RNG stream refuses
+    save_file({"base_model.model.layers.0.q_proj.lora_A.weight":
+               tensor}, str(hf / "adapter_model.safetensors"))
+    torch.save({"cpu": torch.tensor(RNG_STATE["torch_cpu"],
+                                    dtype=torch.uint8)},
+               hf / "rng_state.pth")
+    with pytest.raises(InfrastructureError, match="python stream"):
+        resume_validation.verify_hf_checkpoint_against_bundle(
+            bundle, hf, _record())
+
+
+def test_attested_environment_hash_survives_the_freeze_commit():
+    env_a = _env_manifest(git_commit="deadbeef")
+    env_b = _env_manifest(git_commit="feedbeef")
+    assert resume_validation.attested_environment_sha256(env_a) == \
+        resume_validation.attested_environment_sha256(env_b)
+    drifted = _env_manifest(torch="9.9")
+    assert resume_validation.attested_environment_sha256(env_a) != \
+        resume_validation.attested_environment_sha256(drifted)
