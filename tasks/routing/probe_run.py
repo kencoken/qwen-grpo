@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import time
 from pathlib import Path
 from typing import Any, Mapping
@@ -394,7 +395,10 @@ def _verify_probe_preflight(preflight: Mapping[str, Any]) -> None:
         raise InfrastructureError("preflight total < free")
 
 
-def verify_probe_run(run_root: str | Path) -> dict[str, Any]:
+def verify_probe_run(run_root: str | Path,
+                     expected_identity_sha256: str,
+                     expected_environment_sha256: str
+                     ) -> dict[str, Any]:
     """The independent archive verifier (248_s F3): from persisted
     bytes alone it rehashes and cross-binds the environment (self-
     hash + attested identity), the identity manifest, the preflight
@@ -402,8 +406,15 @@ def verify_probe_run(run_root: str | Path) -> dict[str, Any]:
     rederived 432-row schedule, the exact trace cardinality / order /
     observation ids / global indices, the record headers and frozen
     identities, the zero-mutation gate over the TWO PERSISTED hash
-    maps, the design-derived counters, and the exact rederivation of
-    the persisted report."""
+    maps, the design-derived counters, the complete execution-
+    telemetry schema, and the exact rederivation of the persisted
+    report.
+
+    250_s P1 — external root of trust: internal coherence is not
+    identity. A coherently relabelled archive (manifests altered,
+    REHASHED, record pointers updated) is self-consistent, so the
+    verifier REQUIRES the two REVIEWED launch identities and anchors
+    both manifests and the record fields to them."""
     from .dev_support import validate_env_self_hash
     run_root = Path(run_root)
     record = json.loads(
@@ -425,6 +436,11 @@ def verify_probe_run(run_root: str | Path) -> dict[str, Any]:
             record["attested_environment_sha256"]:
         raise InfrastructureError(
             "archived environment does not match the attested binding")
+    if record["attested_environment_sha256"] != \
+            expected_environment_sha256:
+        raise InfrastructureError(
+            "archived environment is not the REVIEWED one (250_s P1: "
+            "coherent relabelling refused by the external anchor)")
     # identity manifest: rehash + record binding + frozen fields
     identity_manifest = json.loads(
         (run_root / "identity_manifest.json").read_text("utf-8"))
@@ -436,6 +452,11 @@ def verify_probe_run(run_root: str | Path) -> dict[str, Any]:
             record["identity_manifest_sha256"]:
         raise InfrastructureError(
             "archived identity manifest does not rehash or bind")
+    if identity_manifest["manifest_sha256"] != expected_identity_sha256:
+        raise InfrastructureError(
+            "archived identity manifest is not the REVIEWED one "
+            "(250_s P1: coherent relabelling refused by the external "
+            "anchor)")
     if identity_manifest["config_sha256"] != CONFIG_SHA256 \
             or identity_manifest["probe_rule_sha256"] != \
             PROBE_CONFIG["probe_rule_sha256"] \
@@ -518,8 +539,16 @@ def verify_probe_run(run_root: str | Path) -> dict[str, Any]:
         raise InfrastructureError(
             f"counters {record['counters']} != the design-derived "
             f"{expected_counters}")
-    # execution telemetry: rederivable parts
+    # execution telemetry: complete schema + rederivable parts
+    # (250_s nonblocking tightening)
     telemetry_block = record["execution_telemetry"]
+    if set(telemetry_block) != {
+            "group_accounting", "surface_reward_lookups",
+            "live_worker_calls", "worker_cache", "wall_seconds",
+            "deadline_seconds", "peak_reserved_vram_mib",
+            "session_preflight"}:
+        raise InfrastructureError(
+            "execution-telemetry schema is not exact")
     valid_completions = sum(
         1 for row in trace_rows for action in row["actions"]
         if action is not None)
@@ -529,6 +558,25 @@ def verify_probe_run(run_root: str | Path) -> dict[str, Any]:
     if telemetry_block["live_worker_calls"] != 0:
         raise InfrastructureError(
             "the probe performs no live worker calls")
+    if telemetry_block["group_accounting"] != record["counters"]:
+        raise InfrastructureError(
+            "telemetry group accounting does not equal the counters")
+    if telemetry_block["session_preflight"] != preflight:
+        raise InfrastructureError(
+            "telemetry preflight does not equal the archived one")
+    if telemetry_block["deadline_seconds"] != \
+            PROBE_CONFIG["ceiling_gpu_hours"] * 3600.0:
+        raise InfrastructureError(
+            "telemetry deadline is not the frozen ceiling")
+    wall = telemetry_block["wall_seconds"]
+    vram = telemetry_block["peak_reserved_vram_mib"]
+    if not (isinstance(wall, (int, float)) and math.isfinite(wall)
+            and wall >= 0):
+        raise InfrastructureError(
+            "telemetry wall_seconds must be finite and non-negative")
+    if not (isinstance(vram, int) and vram >= 0):
+        raise InfrastructureError(
+            "telemetry peak VRAM must be a non-negative int")
     # the report itself: exact rederivation
     rederived = build_probe_report(run_root)
     persisted = json.loads(
@@ -804,7 +852,9 @@ def execute_probe(*, expected_freeze_sha256: str,
             path.write_text(json.dumps(payload, indent=1,
                                        sort_keys=True) + "\n",
                             encoding="utf-8")
-        verify_probe_run(run_root)
+        verify_probe_run(run_root,
+                         expected_identity_sha256,
+                         expected_environment_sha256)
     except BaseException as error:
         measured = round((time.monotonic() - started) / 3600.0, 4)
         append_ledger_entry(

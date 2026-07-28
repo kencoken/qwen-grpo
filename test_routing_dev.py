@@ -2136,12 +2136,22 @@ def test_probe_archive_verifier_lifecycle(step4_support, tmp_path,
         },
     }
     report = probe_run.build_probe_report(run_root)
-    for name, payload in (("probe_report.json", report),
-                          ("probe_record.json", record)):
-        (run_root / name).write_text(
+
+    def write_record(payload):
+        (run_root / "probe_record.json").write_text(
             json.dumps(payload, indent=1, sort_keys=True) + "\n",
             encoding="utf-8")
-    assert probe_run.verify_probe_run(run_root)["verdict"] == "PASS"
+
+    def verify():
+        return probe_run.verify_probe_run(
+            run_root, identity["manifest_sha256"],
+            record["attested_environment_sha256"])
+
+    (run_root / "probe_report.json").write_text(
+        json.dumps(report, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    write_record(record)
+    assert verify()["verdict"] == "PASS"
     assert report["support_matrix"]["code_atomic|resource_first|tied"] \
         > 0
 
@@ -2153,7 +2163,7 @@ def test_probe_archive_verifier_lifecycle(step4_support, tmp_path,
     schedule_path.write_text(json.dumps(swapped, indent=1) + "\n",
                              encoding="utf-8")
     with pytest.raises(InfrastructureError, match="schedule"):
-        probe_run.verify_probe_run(run_root)
+        verify()
     schedule_path.write_text(good_schedule, encoding="utf-8")
 
     # provenance (identity manifest) tampering refuses
@@ -2165,8 +2175,64 @@ def test_probe_archive_verifier_lifecycle(step4_support, tmp_path,
         json.dumps(tampered, indent=1, sort_keys=True) + "\n",
         encoding="utf-8")
     with pytest.raises(InfrastructureError, match="rehash or bind"):
-        probe_run.verify_probe_run(run_root)
+        verify()
     identity_path.write_text(good_identity, encoding="utf-8")
+
+    # 250_s P1 reproduction: COHERENT relabelling — alter the identity
+    # manifest, REHASH it, and update the record pointer; internal
+    # coherence holds, the external anchor refuses
+    relabelled = json.loads(good_identity)
+    relabelled["seed"] = "1"
+    del relabelled["manifest_sha256"]
+    relabelled["manifest_sha256"] = charter.content_sha256(relabelled)
+    identity_path.write_text(
+        json.dumps(relabelled, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    relabelled_record = dict(
+        record, identity_manifest_sha256=relabelled["manifest_sha256"])
+    write_record(relabelled_record)
+    with pytest.raises(InfrastructureError,
+                       match="not the REVIEWED one"):
+        verify()
+    identity_path.write_text(good_identity, encoding="utf-8")
+    write_record(record)
+
+    # 250_s P1 reproduction: coherently relabelled ENVIRONMENT —
+    # altered, rehashed, both record hashes updated; the attested
+    # anchor refuses
+    env_path = run_root / "environment_manifest.json"
+    good_env = env_path.read_text("utf-8")
+    fake_env = json.loads(good_env)
+    fake_env["torch"] = "9.9.9"
+    body = {k: v for k, v in fake_env.items()
+            if k != "execution_manifest_sha256"}
+    from tasks.conductor.profiles import canonical_json
+    fake_env["execution_manifest_sha256"] = hashlib.sha256(
+        canonical_json(body).encode("utf-8")).hexdigest()
+    env_path.write_text(
+        json.dumps(fake_env, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    relabelled_record = dict(
+        record,
+        environment_manifest_sha256=fake_env[
+            "execution_manifest_sha256"],
+        attested_environment_sha256=resume_validation
+        .attested_environment_sha256(fake_env))
+    write_record(relabelled_record)
+    with pytest.raises(InfrastructureError,
+                       match="not the REVIEWED one"):
+        verify()
+    env_path.write_text(good_env, encoding="utf-8")
+    write_record(record)
+
+    # telemetry-schema tightening (250_s nonblocking): a wrong
+    # deadline refuses
+    bad_telemetry = dict(record["execution_telemetry"],
+                         deadline_seconds=1.0)
+    write_record(dict(record, execution_telemetry=bad_telemetry))
+    with pytest.raises(InfrastructureError, match="frozen ceiling"):
+        verify()
+    write_record(record)
 
     # final-map mismatch refuses on the PERSISTED maps
     final_path = run_root / "checkpoint_final_hashes.json"
@@ -2176,6 +2242,6 @@ def test_probe_archive_verifier_lifecycle(step4_support, tmp_path,
                    sort_keys=True) + "\n", encoding="utf-8")
     with pytest.raises(InfrastructureError,
                        match="zero-mutation gate FAILS"):
-        probe_run.verify_probe_run(run_root)
+        verify()
     final_path.write_text(good_final, encoding="utf-8")
-    assert probe_run.verify_probe_run(run_root)["verdict"] == "PASS"
+    assert verify()["verdict"] == "PASS"
