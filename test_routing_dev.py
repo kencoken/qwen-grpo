@@ -1879,3 +1879,14 @@ def test_bundle_identities_must_match_the_archived_manifests(
     with pytest.raises(InfrastructureError, match="prompt_sha256"):
         resume_validation.expected_bundle_identities(truncated,
                                                      env_sha)
+
+
+def test_tensor_mismatch_message_names_the_dtypes():
+    """243_f: the Step-5 abort message lacked the actual dtypes — the
+    refusal now states them."""
+    import torch
+    a = {"w": torch.ones(2, dtype=torch.bfloat16)}
+    b = {"w": torch.ones(2, dtype=torch.float32)}
+    with pytest.raises(InfrastructureError,
+                       match="bfloat16.*float32|float32.*bfloat16"):
+        resume_validation.compare_tensor_states(a, b, 0.0, "adapter")

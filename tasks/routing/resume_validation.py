@@ -60,7 +60,7 @@ from .dev_support import load_dev_surface
 # --- frozen tranche configuration (hashed into the lightweight freeze) --------
 
 RESUME_VALIDATION_CONFIG: dict[str, Any] = {
-    "tranche": "routing-dev-resume-validation-v3",
+    "tranche": "routing-dev-resume-validation-v4",
     # the Step-4 surface this trains on (231_f)
     "surface_lock_sha256": ("61c4e85a53683c9e2dbcbf15f60794935a76a"
                             "86d979a69412a97f44ea9f2562b"),
@@ -99,7 +99,7 @@ RESUME_VALIDATION_CONFIG: dict[str, Any] = {
     "comparison_tolerance": 0.0,
     # 212_f reminder 2: the tranche's EXACT operational ceiling
     "ceiling_gpu_hours": 0.5,
-    "run_root": "runs/routing-dev/resume-validation-v3",
+    "run_root": "runs/routing-dev/resume-validation-v4",
 }
 
 CONFIG_SHA256 = content_sha256(RESUME_VALIDATION_CONFIG)
@@ -321,7 +321,9 @@ def compare_tensor_states(state_a: Mapping[str, Any],
         if isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor):
             if a.shape != b.shape or a.dtype != b.dtype:
                 raise InfrastructureError(
-                    f"{label}: {key} shape/dtype mismatch")
+                    f"{label}: {key} shape/dtype mismatch — "
+                    f"{tuple(a.shape)}/{a.dtype} vs "
+                    f"{tuple(b.shape)}/{b.dtype}")
             fa = a.detach().float().cpu()
             fb = b.detach().float().cpu()
             # 237_s F5: NaN vs finite silently passes `> worst` — an
@@ -610,6 +612,16 @@ def _build_trainer(rows, reward, run_dir: Path, save_at: int | None,
         train_dataset=Dataset.from_list(list(rows)),
         processing_class=processing_class, reward_funcs=[reward],
         peft_config=peft_config)
+    # 243_f (Step-5 abort root cause): fresh PEFT construction under a
+    # bf16 base initializes LoRA in bf16, but HF resume_from_checkpoint
+    # -> PEFT load_adapter restores it in fp32 — two precisions, so the
+    # resumed arm can never equal the uninterrupted one at the frozen
+    # exact tolerance. Pin the adapters to fp32 on EVERY construction
+    # (the standard k-bit setup); the optimizer does not exist yet, so
+    # the cast is safe and both code paths land identical.
+    for name, parameter in trainer.model.named_parameters():
+        if "lora" in name:
+            parameter.data = parameter.data.to(torch.float32)
     for callback in extra_callbacks:
         trainer.add_callback(callback)
     return trainer
