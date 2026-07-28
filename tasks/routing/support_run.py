@@ -64,15 +64,16 @@ _PRELAUNCH_FILES = ("declaration.json", "env_manifest.json",
 _OUTPUT_FILES = ("disclosure.json", "c_fixed_dev.json",
                  "probe_cohort.json", "run_record.json")
 
-# 222_s F2: the load-bearing environment fields that must be IDENTICAL
-# between the frozen prepare-time snapshot and the live execute-time
-# environment. `git_commit` is deliberately absent: the freeze
+# 224_s F1: attestation compares the COMPLETE manifest body — every
+# field the canonical builder emits (python, cuda, transformers, trl,
+# peft, bitsandbytes, datasets, pyproject_sha256, …) — excluding ONLY
+# the explicitly allowed documentation-commit fields. The freeze
 # document itself is a documentation-only commit between preparation
-# and launch. A source change shows up in stage1_source_sha256 and
+# and launch; a source change shows up in stage1_source_sha256 and
 # refuses.
-ATTESTED_ENV_FIELDS = ("gpu", "torch", "numpy", "scipy",
-                       "uv_lock_sha256", "stage1_source_sha256",
-                       "stage1_source_files", "git_dirty")
+ATTESTATION_EXEMPT_FIELDS = frozenset({
+    "git_commit", "git_tree", "execution_manifest_sha256",
+})
 
 
 def _default_runtime():
@@ -90,16 +91,18 @@ def _default_environment() -> dict[str, Any]:
 
 def attest_environment(frozen: Mapping[str, Any],
                        live: Mapping[str, Any]) -> None:
-    """222_s F2: the archived environment must describe the actual
-    run. Every load-bearing field must match the live host; only
-    git_commit may differ (the freeze commit)."""
-    mismatches = [field for field in ATTESTED_ENV_FIELDS
-                  if frozen.get(field) != live.get(field)]
+    """222_s F2 / 224_s F1: the archived environment must describe
+    the actual run. The COMPLETE validated manifest bodies are
+    compared — a field present in either manifest is attested unless
+    it is an explicitly exempt documentation-commit field."""
+    fields = (set(frozen) | set(live)) - ATTESTATION_EXEMPT_FIELDS
+    mismatches = sorted(field for field in fields
+                        if frozen.get(field) != live.get(field))
     if mismatches:
         raise InfrastructureError(
             f"live environment differs from the frozen snapshot on "
             f"{mismatches} — the archived environment would not "
-            "describe the actual run (222_s F2)")
+            "describe the actual run (222_s F2, 224_s F1)")
 
 
 def prepare_support_launch(*, run_dir: str | Path, tag: str,
@@ -155,6 +158,47 @@ def _load_prelaunch(run_dir: Path) -> dict[str, Any]:
         out[name.split(".")[0]] = json.loads(
             path.read_text(encoding="utf-8"))
     return out
+
+
+def _sha_file(path: Path) -> str:
+    import hashlib
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _hash_directory(run_dir: Path) -> dict[str, str]:
+    """Content-hash every file currently under the run root — the
+    aborted closeout binds this map, so partial evidence is preserved
+    by hash, not by a mutable directory pointer (224_s F2)."""
+    return {str(path.relative_to(run_dir)): _sha_file(path)
+            for path in sorted(run_dir.rglob("*")) if path.is_file()}
+
+
+def verify_terminal_outputs(run_dir: str | Path,
+                            closeout: Mapping[str, Any]) -> None:
+    """224_s F1: re-verify the terminal artifacts a closeout binds.
+    For a complete closeout: the run record and execute-time
+    environment bytes; for an aborted closeout: every partial
+    artifact in the bound hash map."""
+    run_dir = Path(run_dir)
+    freeze = closeout.get("freeze", {})
+    if closeout.get("terminal_status") == "complete":
+        for name, key in (("run_record.json", "run_record_file_sha256"),
+                          ("execute_env_manifest.json",
+                           "execute_env_file_sha256")):
+            if _sha_file(run_dir / name) != freeze.get(key):
+                raise InfrastructureError(
+                    f"{name} does not match the closeout binding — "
+                    "the terminal artifact was altered (224_s F1)")
+    elif closeout.get("terminal_status") == "aborted":
+        bound = freeze.get("partial_artifact_hashes", {})
+        for name, expected in bound.items():
+            path = run_dir / name
+            if not path.exists() or _sha_file(path) != expected:
+                raise InfrastructureError(
+                    f"partial artifact {name} is missing or altered "
+                    "(224_s F2)")
+    else:
+        raise InfrastructureError("not a terminal closeout")
 
 
 def _persist_verified(path: Path, payload: Mapping[str, Any]) -> None:
@@ -226,6 +270,10 @@ def execute_support_run(*, run_dir: str | Path,
         "freeze": {
             "support_launch_sha256": manifest["manifest_sha256"],
             "probe_rule_sha256": manifest["probe_rule_sha256"],
+            # 224_s F2: the design identity the recovery rule holds
+            # every aborted-retry to
+            "scientific_design_sha256":
+                dev_support.scientific_design_sha256(manifest),
         },
         "parent": None,
         "budget_allocated_gpu_hours": manifest["budget_gpu_hours"],
@@ -281,8 +329,14 @@ def execute_support_run(*, run_dir: str | Path,
         append_ledger_entry(
             {"kind": "closeout", "question": question,
              "motivating_evidence": "support run ABORTED",
-             "freeze": {"support_launch_sha256":
-                        manifest["manifest_sha256"]},
+             "freeze": {
+                 "support_launch_sha256": manifest["manifest_sha256"],
+                 # 224_s F2: a content-hashed manifest of the partial
+                 # evidence — a mutable directory pointer is not
+                 # preservation
+                 "partial_artifact_hashes":
+                     _hash_directory(run_dir),
+             },
              "parent": head,
              "budget_allocated_gpu_hours": 0.0,
              "budget_consumed_gpu_hours": measured,
@@ -295,11 +349,20 @@ def execute_support_run(*, run_dir: str | Path,
         raise
 
     # --- 4. SUCCESS closeout (only after verified outputs) -------------
+    # 224_s F1: the closeout binds the terminal artifact bytes — the
+    # run record AND the execute-time environment — so replacing them
+    # after completion is detectable from the hash-chained ledger.
     measured = round((time.monotonic() - started) / 3600.0, 4)
     closeout = append_ledger_entry(
         {"kind": "closeout", "question": question,
          "motivating_evidence": "measured support run cost",
-         "freeze": {"surface_lock_sha256": lock["lock_sha256"]},
+         "freeze": {
+             "surface_lock_sha256": lock["lock_sha256"],
+             "run_record_file_sha256":
+                 _sha_file(run_dir / "run_record.json"),
+             "execute_env_file_sha256":
+                 _sha_file(run_dir / "execute_env_manifest.json"),
+         },
          "parent": head,
          "budget_allocated_gpu_hours": 0.0,
          "budget_consumed_gpu_hours": measured,

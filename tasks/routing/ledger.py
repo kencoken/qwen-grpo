@@ -147,12 +147,18 @@ def validate_reserve(reserve: Any) -> None:
                                   "reserve record")
     required = {"status", "r_cycle_gpu_hours", "assumed_cohort_size",
                 "evaluation_multiplier",
-                "measured_seconds_per_observation", "rounding"}
+                "measured_seconds_per_observation",
+                "measured_support_gpu_hours", "rounding"}
     missing = required - set(reserve)
     if missing:
         raise InfrastructureError(
             f"reserve record missing numerical basis {sorted(missing)} "
-            "(212_f reminder 1)")
+            "(212_f reminder 1 / 224_s F3)")
+    support_hours = reserve["measured_support_gpu_hours"]
+    if not _finite_number(support_hours) or support_hours < 0:
+        raise InfrastructureError(
+            f"measured_support_gpu_hours must be finite and >= 0, "
+            f"got {support_hours!r}")
     if reserve["status"] not in ("provisional", "final"):
         raise InfrastructureError(
             f"reserve status {reserve['status']!r} must be provisional "
@@ -280,6 +286,47 @@ def _append(entry: Mapping[str, Any],
         if target in already:
             raise InfrastructureError(
                 f"launch entry {target!r} is already closed out")
+    if entry["kind"] == "reserve_update":
+        # 224_s F3: a reserve exists only downstream of a SUCCESSFUL
+        # support run — bound to its closeout, its authenticated
+        # surface, and its measured cost, with nothing left open.
+        closeouts = {e["closes_entry_sha256"]: e for e in existing
+                     if e["kind"] == "closeout"}
+        complete = {sha: e for sha, e in closeouts.items()
+                    if e.get("terminal_status") == "complete"
+                    and any(le["entry_sha256"] == sha
+                            and le["kind"] == "support_materialization"
+                            for le in existing)}
+        if not complete:
+            raise InfrastructureError(
+                "a reserve requires a terminal_status='complete' "
+                "support closeout on record (224_s F3)")
+        state = envelope_state(existing)
+        if state["open_launches"]:
+            raise InfrastructureError(
+                "a reserve cannot be recorded while a launch is open "
+                "(224_s F3)")
+        freeze = entry["freeze"]
+        named = freeze.get("support_closeout_sha256")
+        target = None
+        for sha, closeout in complete.items():
+            if closeout["entry_sha256"] == named:
+                target = closeout
+        if target is None:
+            raise InfrastructureError(
+                "the reserve's freeze must name a completed support "
+                "closeout's entry hash (224_s F3)")
+        if freeze.get("surface_lock_sha256") != \
+                target["freeze"].get("surface_lock_sha256"):
+            raise InfrastructureError(
+                "the reserve must bind the completed support's "
+                "authenticated surface lock (224_s F3)")
+        if entry["reserve"]["measured_support_gpu_hours"] != \
+                target["budget_consumed_gpu_hours"]:
+            raise InfrastructureError(
+                "the reserve's measured_support_gpu_hours must equal "
+                "the completed support closeout's measured cost "
+                "(224_s F3)")
     record = dict(entry)
     record["previous_entry_sha256"] = (
         existing[-1]["entry_sha256"] if existing else None)
@@ -347,10 +394,13 @@ def admit_and_append_launch(entry: Mapping[str, Any],
     `append_ledger_entry`; launch entries must come through here.
 
     211_f §10 as corrected by 210_s issue 4: ordinary pre-closure
-    launches keep the reserve intact; `cycle_closure` consumes it;
-    the FIRST `support_materialization` — only while no reserve
-    exists and no prior support launch is recorded in the verified
-    chain — is admissible against the bare envelope."""
+    launches keep the reserve intact; `cycle_closure` consumes it. A
+    `support_materialization` is admissible against the bare envelope
+    only while no reserve exists AND every prior support launch in
+    the verified chain (if any) is an ABORTED-closed,
+    design-preserving attempt (the 222_s/224_s recovery rule — open
+    or completed support launches block, and a changed scientific
+    design refuses)."""
     path = Path(path)
     entries = verify_ledger_head(expected_head_sha256, path)
     validate_entry(entry)
@@ -382,33 +432,57 @@ def admit_and_append_launch(entry: Mapping[str, Any],
                 f"the admitted budget {launch_max} differs from the "
                 f"manifest budget "
                 f"{launch_manifest.get('budget_gpu_hours')} (220_s F1)")
+        # 224_s F2: the entry carries the manifest's scientific-design
+        # identity, verified — the retry rule below compares it.
+        from .dev_support import scientific_design_sha256
+        design = entry["freeze"].get("scientific_design_sha256")
+        if design != scientific_design_sha256(launch_manifest):
+            raise InfrastructureError(
+                "the support entry's freeze must carry the manifest's "
+                "scientific_design_sha256 (224_s F2)")
     state = envelope_state(entries, CYCLE_ENVELOPE_GPU_HOURS)
     remaining = state["remaining_gpu_hours"]
     reserve = state["reserve"]
     if reserve is None:
-        # 222_s F1 recovery rule: a prior support launch blocks a new
-        # no-reserve support launch UNLESS it was closed out ABORTED —
-        # an engineering failure may be retried under a NEW reviewed
-        # freeze; open or completed support launches still block.
+        # 222_s F1 recovery rule as tightened by 224_s F2: a prior
+        # support launch blocks a new no-reserve support launch UNLESS
+        # it was closed out ABORTED, and an aborted-support retry must
+        # PRESERVE the scientific design — an abort can be
+        # outcome-bearing (the surface may exist), so a changed
+        # cohort/rule/worker/request identity is an outcome-informed
+        # successor, not a retry, and cannot take this path.
         closeout_status = {e["closes_entry_sha256"]:
                            e.get("terminal_status")
                            for e in entries if e["kind"] == "closeout"}
-        blocking = [e for e in entries
-                    if e["kind"] == "support_materialization"
-                    and closeout_status.get(e["entry_sha256"])
+        prior_support = [e for e in entries
+                         if e["kind"] == "support_materialization"]
+        blocking = [e for e in prior_support
+                    if closeout_status.get(e["entry_sha256"])
                     != "aborted"]
         if launch_kind == "support_materialization" and not blocking:
+            for aborted in prior_support:
+                if aborted["freeze"].get("scientific_design_sha256") \
+                        != entry["freeze"].get(
+                            "scientific_design_sha256"):
+                    raise InfrastructureError(
+                        "an aborted-support retry must preserve the "
+                        "scientific design (declaration/cohort, probe "
+                        "rule, worker/request/cache identities); a "
+                        "changed design is an outcome-informed "
+                        "successor and needs its own reviewed path "
+                        "(224_s F2)")
             if remaining < launch_max:
                 raise InfrastructureError(
                     f"remaining {remaining} GPU-h cannot cover the "
                     f"initial support maximum {launch_max}")
         else:
             raise InfrastructureError(
-                "no reserve on record — only the FIRST support "
-                "materialization may launch without one, and the "
-                f"ledger shows {len(blocking)} prior support "
-                "launch(es) that are open or completed (216_s F2, "
-                "222_s F1)")
+                "no reserve on record — the no-reserve path admits "
+                "only a support materialization whose predecessors "
+                "(if any) are all ABORTED-closed design-preserving "
+                f"attempts; the ledger shows {len(blocking)} prior "
+                "support launch(es) that are open or completed "
+                "(216_s F2, 222_s F1, 224_s F2)")
     else:
         validate_reserve(reserve)
         r_cycle = reserve["r_cycle_gpu_hours"]

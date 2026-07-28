@@ -534,6 +534,31 @@ def build_support_launch_manifest(*, declaration: Mapping[str, Any],
     return manifest
 
 
+# 224_s F2: the SCIENTIFIC design of a support launch — everything an
+# aborted-retry may NOT change without becoming an outcome-informed
+# successor. Source/environment/budget/driver are absent on purpose:
+# an infrastructure repair may change them.
+_SCIENTIFIC_DESIGN_FIELDS = (
+    "declaration_sha256", "namespace", "worker_visible_fingerprint",
+    "runtime_profile_fingerprint", "worker_pool_fingerprint",
+    "request_contract", "cache_identity", "probe_rule_sha256",
+    "search_cap",
+)
+
+
+def scientific_design_sha256(manifest: Mapping[str, Any]) -> str:
+    """The frozen scientific-design identity of a support-launch
+    manifest (224_s F2): declaration/cohort, probe rule,
+    worker/request/cache identities and the search cap."""
+    missing = [f for f in _SCIENTIFIC_DESIGN_FIELDS
+               if f not in manifest]
+    if missing:
+        raise InfrastructureError(
+            f"manifest lacks scientific-design fields {missing}")
+    return content_sha256(
+        {field: manifest[field] for field in _SCIENTIFIC_DESIGN_FIELDS})
+
+
 def validate_support_launch_manifest(manifest: Mapping[str, Any],
                                      declaration: Mapping[str, Any],
                                      *, recompute: bool = True

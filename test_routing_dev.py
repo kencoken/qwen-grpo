@@ -308,6 +308,45 @@ def test_execute_validates_before_the_irreversible_admission(
     assert ledger.read_ledger(fresh_ledger) == []
 
 
+def test_attestation_compares_the_complete_body():
+    """224_s F1 reproduction: a changed field the old allow-list never
+    named (transformers) must refuse; only documentation-commit
+    fields are exempt."""
+    frozen = _env_manifest(transformers="4.0", python="3.12")
+    live_ok = _env_manifest(transformers="4.0", python="3.12",
+                            git_commit="feedbeef")
+    support_run.attest_environment(frozen, live_ok)
+    drifted = _env_manifest(transformers="5.13", python="3.12")
+    with pytest.raises(InfrastructureError, match="transformers"):
+        support_run.attest_environment(frozen, drifted)
+    # a field present on only one side is attested too
+    extra = _env_manifest(python="3.12")
+    with pytest.raises(InfrastructureError, match="transformers"):
+        support_run.attest_environment(frozen, extra)
+
+
+def test_success_closeout_binds_terminal_artifacts(
+        support_run_fixture, tmp_path):
+    """224_s F1: replacing execute_env_manifest.json or the run
+    record after completion is detectable from the closeout."""
+    fx = support_run_fixture
+    entries = ledger.read_ledger(fx["ledger_path"])
+    closeout = entries[-1]
+    assert closeout["freeze"]["execute_env_file_sha256"]
+    assert closeout["freeze"]["run_record_file_sha256"]
+    replica = tmp_path / "run"
+    replica.mkdir()
+    for name in ("run_record.json", "execute_env_manifest.json"):
+        shutil.copy2(fx["run_dir"] / name, replica / name)
+    support_run.verify_terminal_outputs(replica, closeout)
+    (replica / "execute_env_manifest.json").write_text(
+        json.dumps(_env_manifest(gpu="other"), indent=1,
+                   sort_keys=True) + "\n")
+    with pytest.raises(InfrastructureError, match="terminal artifact "
+                       "was altered"):
+        support_run.verify_terminal_outputs(replica, closeout)
+
+
 def test_post_admission_failure_aborts_closed(tmp_path):
     """222_s F1: a runtime failure AFTER admission appends an ABORTED
     closeout with the measured cost and preserves partial evidence —
@@ -342,31 +381,47 @@ def test_post_admission_failure_aborts_closed(tmp_path):
     assert "CUDA fell over" in entries[1]["interpretation"]
     state = ledger.envelope_state(entries)
     assert state["open_launches"] == []
-    # partial evidence preserved
-    assert (run_dir / "execute_env_manifest.json").exists()
-    # recovery rule: the aborted support launch does not block a NEW
-    # no-reserve support admission (fresh reviewed freeze)
+    # 224_s F2: the aborted closeout binds a content-hashed manifest
+    # of the partial evidence, and it verifies
+    partial = entries[1]["freeze"]["partial_artifact_hashes"]
+    assert "execute_env_manifest.json" in partial
+    assert "prelaunch/declaration.json" in partial
+    support_run.verify_terminal_outputs(run_dir, entries[1])
+    (run_dir / "execute_env_manifest.json").write_text("{}\n")
+    with pytest.raises(InfrastructureError, match="missing or "
+                       "altered"):
+        support_run.verify_terminal_outputs(run_dir, entries[1])
+    design = dev_support.scientific_design_sha256(manifest)
+    retry = {"kind": "support_materialization", "question": "retry",
+             "motivating_evidence": "aborted engineering failure",
+             "freeze": {"support_launch_sha256":
+                        manifest["manifest_sha256"],
+                        "scientific_design_sha256": design},
+             "parent": None, "budget_allocated_gpu_hours": 1.0,
+             "outcome_informed": False,
+             "cohort_selection": "outcome_blind"}
+    # 224_s F2: a CHANGED scientific design (self-consistent manifest
+    # + entry, but a different cohort/rule identity) is not a retry
+    changed_manifest = dict(manifest, search_cap=SEARCH_CAP + 6,
+                            manifest_sha256="cd" * 32)
+    changed = dict(retry, freeze={
+        "support_launch_sha256": "cd" * 32,
+        "scientific_design_sha256":
+            dev_support.scientific_design_sha256(changed_manifest)})
+    with pytest.raises(InfrastructureError, match="preserve the "
+                       "scientific design"):
+        ledger.admit_and_append_launch(
+            changed, entries[-1]["entry_sha256"], ledger_path,
+            launch_manifest=changed_manifest)
+    # a design-preserving retry is admissible (fresh reviewed freeze)
     ledger.admit_and_append_launch(
-        {"kind": "support_materialization", "question": "retry",
-         "motivating_evidence": "aborted engineering failure",
-         "freeze": {"support_launch_sha256":
-                    manifest["manifest_sha256"]},
-         "parent": None, "budget_allocated_gpu_hours": 1.0,
-         "outcome_informed": False,
-         "cohort_selection": "outcome_blind"},
-        entries[-1]["entry_sha256"], ledger_path,
+        retry, entries[-1]["entry_sha256"], ledger_path,
         launch_manifest=manifest)
     # …but an OPEN (unclosed) support launch still blocks
     entries = ledger.read_ledger(ledger_path)
     with pytest.raises(InfrastructureError, match="open or completed"):
         ledger.admit_and_append_launch(
-            {"kind": "support_materialization", "question": "again",
-             "motivating_evidence": "m",
-             "freeze": {"support_launch_sha256":
-                        manifest["manifest_sha256"]},
-             "parent": None, "budget_allocated_gpu_hours": 1.0,
-             "outcome_informed": False,
-             "cohort_selection": "outcome_blind"},
+            dict(retry, question="again"),
             entries[-1]["entry_sha256"], ledger_path,
             launch_manifest=manifest)
 
@@ -391,16 +446,10 @@ def test_materialization_cannot_run_unadmitted(support_run_fixture,
             expected_manifest_sha256=manifest["manifest_sha256"],
             ledger_path=empty_ledger, expected_head_sha256=None)
     # an admitted entry naming a DIFFERENT manifest also refuses
+    fake = _fake_manifest(budget=1.0)
     other = ledger.admit_and_append_launch(
-        {"kind": "support_materialization", "question": "q",
-         "motivating_evidence": "m",
-         "freeze": {"support_launch_sha256": "ab" * 32},
-         "parent": None, "budget_allocated_gpu_hours": 1.0,
-         "outcome_informed": False,
-         "cohort_selection": "outcome_blind"},
-        None, empty_ledger,
-        launch_manifest={"manifest_sha256": "ab" * 32,
-                         "budget_gpu_hours": 1.0})
+        _support_entry(fake), None, empty_ledger,
+        launch_manifest=fake)
     with pytest.raises(InfrastructureError, match="different "
                        "support-launch manifest"):
         dev_support.materialize_dev_support(
@@ -414,13 +463,8 @@ def test_materialization_cannot_run_unadmitted(support_run_fixture,
 
 def test_support_admission_requires_the_manifest_linkage(tmp_path):
     path = tmp_path / "ledger.md"
-    entry = {"kind": "support_materialization", "question": "q",
-             "motivating_evidence": "m",
-             "freeze": {"support_launch_sha256": "ab" * 32},
-             "parent": None, "budget_allocated_gpu_hours": 2.0,
-             "outcome_informed": False,
-             "cohort_selection": "outcome_blind"}
-    manifest = {"manifest_sha256": "ab" * 32, "budget_gpu_hours": 2.0}
+    manifest = _fake_manifest(budget=2.0)
+    entry = _support_entry(manifest)
     # without the manifest: refuse
     with pytest.raises(InfrastructureError, match="admitted WITH"):
         ledger.admit_and_append_launch(entry, None, path)
@@ -428,14 +472,15 @@ def test_support_admission_requires_the_manifest_linkage(tmp_path):
     with pytest.raises(InfrastructureError, match="exact "
                        "support-launch manifest"):
         ledger.admit_and_append_launch(
-            {**entry, "freeze": {"support_launch_sha256": "cd" * 32}},
+            {**entry, "freeze": {**entry["freeze"],
+                                 "support_launch_sha256": "cd" * 32}},
             None, path, launch_manifest=manifest)
     # budget mismatch: refuse
     with pytest.raises(InfrastructureError, match="differs from the "
                        "manifest budget"):
         ledger.admit_and_append_launch(
             {**entry, "budget_allocated_gpu_hours": 3.0}, None, path,
-            launch_manifest={**manifest, "budget_gpu_hours": 2.0})
+            launch_manifest=manifest)
     ledger.admit_and_append_launch(entry, None, path,
                                    launch_manifest=manifest)
 
@@ -933,7 +978,62 @@ def _reserve(status="provisional", hours=7.0, seconds=4.2):
             "assumed_cohort_size": 3000,
             "evaluation_multiplier": 2.0,
             "measured_seconds_per_observation": seconds,
+            "measured_support_gpu_hours": 1.5,
             "rounding": "ceil_to_whole_gpu_hours"}
+
+
+
+def _fake_manifest(budget=4.0, cap=108):
+    manifest = {field: f"{field}-v"
+                for field in dev_support._SCIENTIFIC_DESIGN_FIELDS
+                if field != "search_cap"}
+    manifest["search_cap"] = cap
+    manifest["manifest_sha256"] = "ab" * 32
+    manifest["budget_gpu_hours"] = budget
+    return manifest
+
+
+def _support_entry(manifest, **overrides):
+    entry = {"kind": "support_materialization", "question": "q",
+             "motivating_evidence": "m",
+             "freeze": {"support_launch_sha256":
+                        manifest["manifest_sha256"],
+                        "scientific_design_sha256":
+                        dev_support.scientific_design_sha256(manifest)},
+             "parent": None,
+             "budget_allocated_gpu_hours":
+                 manifest["budget_gpu_hours"],
+             "outcome_informed": False,
+             "cohort_selection": "outcome_blind"}
+    entry.update(overrides)
+    return entry
+
+
+def _complete_support_chain(path, budget=4.0, consumed=1.5):
+    """support launch + complete closeout — the prerequisite every
+    reserve now has (224_s F3)."""
+    manifest = _fake_manifest(budget)
+    support = ledger.admit_and_append_launch(
+        _support_entry(manifest), None, path, launch_manifest=manifest)
+    closeout = ledger.append_ledger_entry(
+        _note(kind="closeout",
+              closes_entry_sha256=support["entry_sha256"],
+              budget_consumed_gpu_hours=consumed,
+              terminal_status="complete",
+              freeze={"surface_lock_sha256": "5f" * 32}),
+        support["entry_sha256"], path)
+    return manifest, support, closeout
+
+
+def _bound_reserve_entry(closeout, **reserve_overrides):
+    reserve = _reserve(**reserve_overrides)
+    reserve["measured_support_gpu_hours"] = \
+        closeout["budget_consumed_gpu_hours"]
+    return _note(kind="reserve_update", reserve=reserve,
+                 freeze={"support_closeout_sha256":
+                         closeout["entry_sha256"],
+                         "surface_lock_sha256":
+                         closeout["freeze"]["surface_lock_sha256"]})
 
 
 def test_ledger_chain_and_head_mechanics(tmp_path):
@@ -999,13 +1099,10 @@ def test_ledger_entry_schema_fails_closed(tmp_path):
             path)
 
 
-def test_reserve_requires_numerical_basis_and_exact_rounding(tmp_path):
-    path = tmp_path / "ledger.md"
+def test_reserve_requires_numerical_basis_and_exact_rounding():
     incomplete = {"status": "provisional", "r_cycle_gpu_hours": 6.0}
     with pytest.raises(InfrastructureError, match="numerical basis"):
-        ledger.append_ledger_entry(
-            _note(kind="reserve_update", reserve=incomplete), None,
-            path)
+        ledger.validate_reserve(incomplete)
     with pytest.raises(InfrastructureError, match="must recompute"):
         ledger.validate_reserve(_reserve(hours=6.0))
     with pytest.raises(InfrastructureError, match="must recompute"):
@@ -1019,19 +1116,64 @@ def test_reserve_requires_numerical_basis_and_exact_rounding(tmp_path):
     with pytest.raises(InfrastructureError, match="finite"):
         ledger.validate_reserve(
             dict(_reserve(), r_cycle_gpu_hours=float("inf")))
-    ledger.append_ledger_entry(
-        _note(kind="reserve_update", reserve=_reserve()), None, path)
+    with pytest.raises(InfrastructureError, match="finite"):
+        ledger.validate_reserve(
+            dict(_reserve(), measured_support_gpu_hours=float("nan")))
+
+
+def test_reserve_requires_completed_support_and_binding(tmp_path):
+    """224_s F3: no reserve on an empty ledger, an unbound reserve,
+    or a reserve while a launch is open."""
+    path = tmp_path / "ledger.md"
+    with pytest.raises(InfrastructureError, match="complete.*support "
+                       "closeout|support closeout on record"):
+        ledger.append_ledger_entry(
+            _note(kind="reserve_update", reserve=_reserve()), None,
+            path)
+    manifest, support, closeout = _complete_support_chain(path)
+    head = closeout["entry_sha256"]
+    # unbound freeze refuses
+    with pytest.raises(InfrastructureError, match="must name a "
+                       "completed support closeout"):
+        ledger.append_ledger_entry(
+            _note(kind="reserve_update", reserve=dict(
+                _reserve(), measured_support_gpu_hours=1.5)),
+            head, path)
+    # wrong surface lock refuses
+    bad = _bound_reserve_entry(closeout)
+    bad["freeze"]["surface_lock_sha256"] = "0" * 64
+    with pytest.raises(InfrastructureError, match="authenticated "
+                       "surface lock"):
+        ledger.append_ledger_entry(bad, head, path)
+    # measured-cost mismatch refuses
+    bad = _bound_reserve_entry(closeout)
+    bad["reserve"]["measured_support_gpu_hours"] = 2.0
+    with pytest.raises(InfrastructureError, match="measured cost"):
+        ledger.append_ledger_entry(bad, head, path)
+    reserve_entry = ledger.append_ledger_entry(
+        _bound_reserve_entry(closeout), head, path)
+    # a second reserve while a launch is OPEN refuses
+    probe = ledger.admit_and_append_launch(
+        _entry(kind="grouped_probe", cohort_selection="outcome_blind",
+               budget_allocated_gpu_hours=3.0),
+        reserve_entry["entry_sha256"], path)
+    with pytest.raises(InfrastructureError, match="launch is open"):
+        ledger.append_ledger_entry(
+            _bound_reserve_entry(closeout), probe["entry_sha256"],
+            path)
 
 
 def test_launch_closeout_linkage_and_envelope(tmp_path):
     path = tmp_path / "ledger.md"
+    manifest, support, support_closeout = _complete_support_chain(path)
     reserve_entry = ledger.append_ledger_entry(
-        _note(kind="reserve_update", reserve=_reserve()), None, path)
+        _bound_reserve_entry(support_closeout),
+        support_closeout["entry_sha256"], path)
     launch = ledger.admit_and_append_launch(
         _entry(budget_allocated_gpu_hours=3.0),
         reserve_entry["entry_sha256"], path)
     state = ledger.envelope_state(ledger.read_ledger(path))
-    assert state["consumed_gpu_hours"] == pytest.approx(3.0)
+    assert state["consumed_gpu_hours"] == pytest.approx(1.5 + 3.0)
     closeout = ledger.append_ledger_entry(
         _note(kind="closeout",
               closes_entry_sha256=launch["entry_sha256"],
@@ -1039,7 +1181,7 @@ def test_launch_closeout_linkage_and_envelope(tmp_path):
               terminal_status="complete"),
         launch["entry_sha256"], path)
     state = ledger.envelope_state(ledger.read_ledger(path))
-    assert state["consumed_gpu_hours"] == pytest.approx(1.25)
+    assert state["consumed_gpu_hours"] == pytest.approx(1.5 + 1.25)
     assert state["open_launches"] == []
     with pytest.raises(InfrastructureError, match="already closed"):
         ledger.append_ledger_entry(
@@ -1059,37 +1201,48 @@ def test_launch_closeout_linkage_and_envelope(tmp_path):
 
 def test_admission_verifies_the_persisted_ledger_itself(tmp_path):
     path = tmp_path / "ledger.md"
-    manifest = {"manifest_sha256": "ab" * 32, "budget_gpu_hours": 4.0}
-    support_entry = _entry(
-        kind="support_materialization",
-        cohort_selection="outcome_blind",
-        freeze={"support_launch_sha256": "ab" * 32},
-        budget_allocated_gpu_hours=4.0)
-    with pytest.raises(InfrastructureError, match="FIRST support"):
+    manifest = _fake_manifest(budget=4.0)
+    with pytest.raises(InfrastructureError, match="ABORTED-closed"):
         ledger.admit_and_append_launch(
             _entry(kind="training_run"), None, path)
+    # design identity is required and verified against the manifest
+    missing_design = _support_entry(manifest)
+    missing_design["freeze"] = {"support_launch_sha256":
+                                manifest["manifest_sha256"]}
+    with pytest.raises(InfrastructureError, match="scientific_design"):
+        ledger.admit_and_append_launch(missing_design, None, path,
+                                       launch_manifest=manifest)
     support = ledger.admit_and_append_launch(
-        support_entry, None, path, launch_manifest=manifest)
+        _support_entry(manifest), None, path, launch_manifest=manifest)
     entries = ledger.read_ledger(path)
-    assert entries[-1]["kind"] == "support_materialization"
     assert entries[-1]["budget_allocated_gpu_hours"] == 4.0
-    with pytest.raises(InfrastructureError, match="prior support"):
+    # a SECOND support while one is OPEN refuses
+    with pytest.raises(InfrastructureError, match="open or completed"):
         ledger.admit_and_append_launch(
-            support_entry, support["entry_sha256"], path,
+            _support_entry(manifest), support["entry_sha256"], path,
             launch_manifest=manifest)
-    with pytest.raises(InfrastructureError, match="externally "
-                       "committed head"):
-        ledger.admit_and_append_launch(
-            support_entry, None, path, launch_manifest=manifest)
-    reserve_entry = ledger.append_ledger_entry(
-        _note(kind="reserve_update", reserve=_reserve()),
+    closeout = ledger.append_ledger_entry(
+        _note(kind="closeout",
+              closes_entry_sha256=support["entry_sha256"],
+              budget_consumed_gpu_hours=1.5,
+              terminal_status="complete",
+              freeze={"surface_lock_sha256": "5f" * 32}),
         support["entry_sha256"], path)
+    # COMPLETED support also blocks a new no-reserve support
+    with pytest.raises(InfrastructureError, match="open or completed"):
+        ledger.admit_and_append_launch(
+            _support_entry(manifest), closeout["entry_sha256"], path,
+            launch_manifest=manifest)
+    reserve_entry = ledger.append_ledger_entry(
+        _bound_reserve_entry(closeout), closeout["entry_sha256"],
+        path)
     head = reserve_entry["entry_sha256"]
     probe = ledger.admit_and_append_launch(
         _entry(kind="grouped_probe",
                cohort_selection="outcome_blind",
                budget_allocated_gpu_hours=3.0), head, path)
     head = probe["entry_sha256"]
+    # remaining = 60 - 1.5 - 3 = 55.5; 50 + 7 > 55.5 refuses
     with pytest.raises(InfrastructureError, match="inadmissible"):
         ledger.admit_and_append_launch(
             _entry(kind="training_run",
@@ -1106,6 +1259,7 @@ def test_admission_verifies_the_persisted_ledger_itself(tmp_path):
         ledger.admit_and_append_launch(
             _note(kind="reserve_update", reserve=_reserve()),
             closure["entry_sha256"], path)
+
 
 
 # --- checkpoint/resume (unchanged contracts, 216_s F5/F6 + 218_s F4) -------------
