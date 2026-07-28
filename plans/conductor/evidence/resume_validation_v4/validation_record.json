@@ -1,0 +1,51 @@
+{
+ "attested_environment_sha256": "372f958f5e5aa30805222d338f2e90d665cf8188a7c2ac8d559d231b3f53cd42",
+ "checkpoint_adapter_sha256": "dd0344e82346b2e90206a4654c399c781182a73d4c9fd076cd38e5b0283d944c",
+ "checkpoint_record_sha256": "d13e9e1a229d047000fdc318405e7bec05dbd3dff91970cae4a100bdccf92c5c",
+ "checkpoint_zero_adapter_sha256": "92d9ae4a422f7b82002753e12086c3dde7fc0825b3e8e7ab85a9a96298995f34",
+ "comparison": {
+  "adapter_keys": 504,
+  "tolerance": 0.0,
+  "trace_groups": 6,
+  "verdict": "PASS"
+ },
+ "config_sha256": "40e1ecc5169111be33f93f00cd50f1819c1c55492957a64d3b0e4d6f831ff2f6",
+ "counters": {
+  "consumed_groups": 6,
+  "generated_groups": 6,
+  "optimizer_updates": 6,
+  "sampled_completions": 48
+ },
+ "environment_manifest_sha256": "f9c2bd2f79e98db81f207d81ddead122b4ad748707c8e0bdbdb0411316031cbd",
+ "excluded_tail_groups": [
+  3
+ ],
+ "final_state_sha256": {
+  "resumed": {
+   "adapter.safetensors": "b9853a60b35b81c6b8b4e12bfdaf6a54201add76e1268b88ac4e96f482704179",
+   "cursor.json": "1bbb913f8edd512469e6317d87d0fb809b5f65cf122ac846187b346ad2df7ee7",
+   "optimizer.pt": "2a0081d9e3c985b3c950c9823b022f67bd812540072b6b95a45286bcfc6d5fd7",
+   "scheduler.pt": "51e38dd1b409772167eaac5bea07e67925403fdd6e714095ddd2daabf6699880"
+  },
+  "uninterrupted": {
+   "adapter.safetensors": "b9853a60b35b81c6b8b4e12bfdaf6a54201add76e1268b88ac4e96f482704179",
+   "cursor.json": "1bbb913f8edd512469e6317d87d0fb809b5f65cf122ac846187b346ad2df7ee7",
+   "optimizer.pt": "2a0081d9e3c985b3c950c9823b022f67bd812540072b6b95a45286bcfc6d5fd7",
+   "scheduler.pt": "51e38dd1b409772167eaac5bea07e67925403fdd6e714095ddd2daabf6699880"
+  }
+ },
+ "freeze_sha256": "c73107e0813f2b5ef63a248ae76e958ba78697352233a52786593d5b0c73fd6a",
+ "identity_manifest_sha256": "3af6b03a64debb66a17b70771f599682432373ee2271f8500b7662b3d24f974c",
+ "merged_groups": 6,
+ "reward_varying_groups": [
+  0,
+  3
+ ],
+ "session_preflight": {
+  "floor_mib": 20000,
+  "free_mib": 24079,
+  "total_mib": 24564
+ },
+ "session_preflight_sha256": "7e79f947786a7a5859aaedbebedd5decc0b3cb6439d1c8da545adbd7c6ecb08e",
+ "tranche": "routing-dev-resume-validation-v4"
+}

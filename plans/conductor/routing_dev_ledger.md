@@ -240,3 +240,113 @@ chains the previous entry's hash. Never edit a recorded entry.
  "terminal_status": "complete"
 }
 ```
+
+## entry 8 — resume_validation
+
+```json
+{
+ "budget_allocated_gpu_hours": 0.5,
+ "entry_sha256": "8b0df6b0e5956bf6562457a664ee567597ea7ff438cc0890e9cecf21deca29a4",
+ "freeze": {
+  "attested_environment_sha256": "372f958f5e5aa30805222d338f2e90d665cf8188a7c2ac8d559d231b3f53cd42",
+  "config_sha256": "40e1ecc5169111be33f93f00cd50f1819c1c55492957a64d3b0e4d6f831ff2f6",
+  "environment_manifest_sha256": "f9c2bd2f79e98db81f207d81ddead122b4ad748707c8e0bdbdb0411316031cbd",
+  "freeze_sha256": "c73107e0813f2b5ef63a248ae76e958ba78697352233a52786593d5b0c73fd6a",
+  "identity_manifest_sha256": "3af6b03a64debb66a17b70771f599682432373ee2271f8500b7662b3d24f974c",
+  "session_preflight_sha256": "7e79f947786a7a5859aaedbebedd5decc0b3cb6439d1c8da545adbd7c6ecb08e"
+ },
+ "kind": "resume_validation",
+ "motivating_evidence": "243_f rev6 freeze; aborted rev5 closeout 237d4c21d07c\u2026; outcome-informed dtype-smoke closeout 943b9d7ce8c7\u2026",
+ "outcome_informed": true,
+ "parent": "943b9d7ce8c7ebcd908101489a8f0a866ccc575c8538f727d633415e918ca212",
+ "previous_entry_sha256": "943b9d7ce8c7ebcd908101489a8f0a866ccc575c8538f727d633415e918ca212",
+ "question": "Does the v1 checkpoint contract hold on the real GRPOTrainer stack \u2014 boundary-only checkpoints, exact counter/RNG/sampler restoration, aborted tails preserved-but-excluded, and an interrupted run indistinguishable from an uninterrupted one?"
+}
+```
+
+## entry 9 — closeout
+
+```json
+{
+ "budget_allocated_gpu_hours": 0.0,
+ "budget_consumed_gpu_hours": 0.0237,
+ "closes_entry_sha256": "8b0df6b0e5956bf6562457a664ee567597ea7ff438cc0890e9cecf21deca29a4",
+ "entry_sha256": "1a8d41fde4ffb64a9d9d9886f8fbcf9dc20578ab33c3c0d72a44fa8ea9b6a44a",
+ "freeze": {
+  "freeze_sha256": "c73107e0813f2b5ef63a248ae76e958ba78697352233a52786593d5b0c73fd6a",
+  "terminal_artifact_hashes": {
+   "checkpoint_zero_hashes.json": "5c8454510e7df36eb9246969328d15d977d2c045b9ad76cd616f9cf9882e04fa",
+   "environment_manifest.json": "5075c5a64bb8b319c1363844378fb85353afa3ca310d0705aa33a26aa7885b5e",
+   "final_resumed/adapter.safetensors": "b9853a60b35b81c6b8b4e12bfdaf6a54201add76e1268b88ac4e96f482704179",
+   "final_resumed/cursor.json": "1bbb913f8edd512469e6317d87d0fb809b5f65cf122ac846187b346ad2df7ee7",
+   "final_resumed/optimizer.pt": "2a0081d9e3c985b3c950c9823b022f67bd812540072b6b95a45286bcfc6d5fd7",
+   "final_resumed/scheduler.pt": "51e38dd1b409772167eaac5bea07e67925403fdd6e714095ddd2daabf6699880",
+   "final_uninterrupted/adapter.safetensors": "b9853a60b35b81c6b8b4e12bfdaf6a54201add76e1268b88ac4e96f482704179",
+   "final_uninterrupted/cursor.json": "1bbb913f8edd512469e6317d87d0fb809b5f65cf122ac846187b346ad2df7ee7",
+   "final_uninterrupted/optimizer.pt": "2a0081d9e3c985b3c950c9823b022f67bd812540072b6b95a45286bcfc6d5fd7",
+   "final_uninterrupted/scheduler.pt": "51e38dd1b409772167eaac5bea07e67925403fdd6e714095ddd2daabf6699880",
+   "identity_manifest.json": "45e84b608531eb45a6d3b307aedff53d5cecf60377c40f3552c6bb7ce02ba3c0",
+   "interrupted/README.md": "486cc0ee115fc43260172a6a99cab4122a1fc8816521cb83e3607af43f2a489b",
+   "interrupted/actions.jsonl": "0253cffa0009fc588a220cdfc7662d15baaa85739e52e5ef798785b86bda3dc7",
+   "interrupted/bundle/adapter.safetensors": "18657f10014453011e4ec9223dd3f87ca8e0151451f06b261f8bc87f2c704626",
+   "interrupted/bundle/checkpoint_record.json": "391165c359c90748767c3f26957155a2cacad756cd1e4d871cd0123ff6af42d5",
+   "interrupted/bundle/optimizer.pt": "93e6212735c28342957bf1c43ff56cd59f75e568b044fd122acbca5b89ffd77f",
+   "interrupted/bundle/rng_state.json": "2d3a5a4d77001a2763e96b5c0594bc0a4bc44ce769a23a2edc1a81250556a64e",
+   "interrupted/bundle/scheduler.pt": "aa9d429ddb46e5dcbd5d675fddea3c1fc689eda5c0591f942ee11e2c397da60b",
+   "interrupted/checkpoint-3/README.md": "019d86d85224adc7d5a1e8b06ea654167055137f2531ff4f8b985d05b40bea76",
+   "interrupted/checkpoint-3/adapter_config.json": "bc2c19cbe88157be949ea028d425bc2968bb32330cbaad3078faab94e1674b60",
+   "interrupted/checkpoint-3/adapter_model.safetensors": "1a5fab25f7f62d20fb9e3eb61c3053999b8b8d74614cf38e41aa44606f6e8064",
+   "interrupted/checkpoint-3/chat_template.jinja": "cd8e9439f0570856fd70470bf8889ebd8b5d1107207f67a5efb46e342330527f",
+   "interrupted/checkpoint-3/optimizer.pt": "93e6212735c28342957bf1c43ff56cd59f75e568b044fd122acbca5b89ffd77f",
+   "interrupted/checkpoint-3/rng_state.pth": "362b1757c728b526cc02c86cd4f56ddaeaef5f99f9b4ca8ceda7aca8c46a60b1",
+   "interrupted/checkpoint-3/scheduler.pt": "aa9d429ddb46e5dcbd5d675fddea3c1fc689eda5c0591f942ee11e2c397da60b",
+   "interrupted/checkpoint-3/tokenizer.json": "3fd169731d2cbde95e10bf356d66d5997fd885dd8dbb6fb4684da3f23b2585d8",
+   "interrupted/checkpoint-3/tokenizer_config.json": "04b1682c59acbd057f4c9072297faa73d56fc9de053094c659cdb4c464f58f86",
+   "interrupted/checkpoint-3/trainer_state.json": "2cec4e764c597547461d901c5948a50ea7355ae9d28cf554bbf4e22635b0b1d6",
+   "interrupted/checkpoint-3/training_args.bin": "046b8afc09be74ede74119b9ab714b3d3c45368bab41270c636e0b7e2879c026",
+   "resume/actions.jsonl": "d3c630c7041e05e88e101e6e7ad7c6eb016eaf8430dbc684e4ae32e389663187",
+   "schedule.json": "ec14b7f16add230d70333fae5b0343bb0844c1c2c1026d04aa869fadd9e7dcc6",
+   "session_preflight.json": "b60be37258c4d5463829a56ba6d26806ed7010dae946373b0626b4c34065f3f4",
+   "uninterrupted/README.md": "699e127b85dfe88ed9a780c6531c05df744cb88e48030daef8ddbf7550e2705f",
+   "uninterrupted/actions.jsonl": "f409ce38341ac9feeb6eb19a546aee7b8ac473a0c434db520f83c52e1eeab3d7",
+   "uninterrupted/bundle/adapter.safetensors": "18657f10014453011e4ec9223dd3f87ca8e0151451f06b261f8bc87f2c704626",
+   "uninterrupted/bundle/checkpoint_record.json": "f6cabecda464de5afc06a881eec53cd72efeb6683e1ab7ea9d951e2ab0d1f939",
+   "uninterrupted/bundle/optimizer.pt": "93e6212735c28342957bf1c43ff56cd59f75e568b044fd122acbca5b89ffd77f",
+   "uninterrupted/bundle/rng_state.json": "2d3a5a4d77001a2763e96b5c0594bc0a4bc44ce769a23a2edc1a81250556a64e",
+   "uninterrupted/bundle/scheduler.pt": "aa9d429ddb46e5dcbd5d675fddea3c1fc689eda5c0591f942ee11e2c397da60b",
+   "uninterrupted/checkpoint-3/README.md": "019d86d85224adc7d5a1e8b06ea654167055137f2531ff4f8b985d05b40bea76",
+   "uninterrupted/checkpoint-3/adapter_config.json": "bc2c19cbe88157be949ea028d425bc2968bb32330cbaad3078faab94e1674b60",
+   "uninterrupted/checkpoint-3/adapter_model.safetensors": "1a5fab25f7f62d20fb9e3eb61c3053999b8b8d74614cf38e41aa44606f6e8064",
+   "uninterrupted/checkpoint-3/chat_template.jinja": "cd8e9439f0570856fd70470bf8889ebd8b5d1107207f67a5efb46e342330527f",
+   "uninterrupted/checkpoint-3/optimizer.pt": "93e6212735c28342957bf1c43ff56cd59f75e568b044fd122acbca5b89ffd77f",
+   "uninterrupted/checkpoint-3/rng_state.pth": "362b1757c728b526cc02c86cd4f56ddaeaef5f99f9b4ca8ceda7aca8c46a60b1",
+   "uninterrupted/checkpoint-3/scheduler.pt": "aa9d429ddb46e5dcbd5d675fddea3c1fc689eda5c0591f942ee11e2c397da60b",
+   "uninterrupted/checkpoint-3/tokenizer.json": "3fd169731d2cbde95e10bf356d66d5997fd885dd8dbb6fb4684da3f23b2585d8",
+   "uninterrupted/checkpoint-3/tokenizer_config.json": "04b1682c59acbd057f4c9072297faa73d56fc9de053094c659cdb4c464f58f86",
+   "uninterrupted/checkpoint-3/trainer_state.json": "cce2261ecfe5cd530301132a8c97abeb58a53a32ff2e20be9859b304a915924e",
+   "uninterrupted/checkpoint-3/training_args.bin": "88adedcfb726d0017b43fd8cb1f0613b459b64cf7c85da67d9d3d44290286321",
+   "uninterrupted/checkpoint-6/README.md": "019d86d85224adc7d5a1e8b06ea654167055137f2531ff4f8b985d05b40bea76",
+   "uninterrupted/checkpoint-6/adapter_config.json": "bc2c19cbe88157be949ea028d425bc2968bb32330cbaad3078faab94e1674b60",
+   "uninterrupted/checkpoint-6/adapter_model.safetensors": "6b564247484405ef1e047383e9284805aa89fcbb4cdf982b215e45b7ccd6fdd0",
+   "uninterrupted/checkpoint-6/chat_template.jinja": "cd8e9439f0570856fd70470bf8889ebd8b5d1107207f67a5efb46e342330527f",
+   "uninterrupted/checkpoint-6/optimizer.pt": "acbee947422b3ba060804e99ab13d76deee0fef69dda69a9d55baa9995d8accd",
+   "uninterrupted/checkpoint-6/rng_state.pth": "8dddc5b359db4893722fb5ea6c1600ce3d3909b9bebba9f182e06882ac89a2a0",
+   "uninterrupted/checkpoint-6/scheduler.pt": "51e38dd1b409772167eaac5bea07e67925403fdd6e714095ddd2daabf6699880",
+   "uninterrupted/checkpoint-6/tokenizer.json": "3fd169731d2cbde95e10bf356d66d5997fd885dd8dbb6fb4684da3f23b2585d8",
+   "uninterrupted/checkpoint-6/tokenizer_config.json": "04b1682c59acbd057f4c9072297faa73d56fc9de053094c659cdb4c464f58f86",
+   "uninterrupted/checkpoint-6/trainer_state.json": "2db049a2532556f71ca2a782163babb90856d1b87f33664619e948753dc52052",
+   "uninterrupted/checkpoint-6/training_args.bin": "88adedcfb726d0017b43fd8cb1f0613b459b64cf7c85da67d9d3d44290286321",
+   "validation_record.json": "ea6442141862475e2a078650764cf2046e3a6ea594933962793ccdde01bdf5aa"
+  },
+  "validation_record_file_sha256": "ea6442141862475e2a078650764cf2046e3a6ea594933962793ccdde01bdf5aa"
+ },
+ "kind": "closeout",
+ "motivating_evidence": "resume validation complete",
+ "outcome_informed": false,
+ "outcome_pointer": "runs/routing-dev/resume-validation-v4/validation_record.json",
+ "parent": "8b0df6b0e5956bf6562457a664ee567597ea7ff438cc0890e9cecf21deca29a4",
+ "previous_entry_sha256": "8b0df6b0e5956bf6562457a664ee567597ea7ff438cc0890e9cecf21deca29a4",
+ "question": "Does the v1 checkpoint contract hold on the real GRPOTrainer stack \u2014 boundary-only checkpoints, exact counter/RNG/sampler restoration, aborted tails preserved-but-excluded, and an interrupted run indistinguishable from an uninterrupted one?",
+ "terminal_status": "complete"
+}
+```

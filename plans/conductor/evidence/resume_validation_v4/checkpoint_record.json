@@ -1,0 +1,51 @@
+{
+ "checkpoint_sha256": "d13e9e1a229d047000fdc318405e7bec05dbd3dff91970cae4a100bdccf92c5c",
+ "counters": {
+  "consumed_groups": 3,
+  "generated_groups": 3,
+  "optimizer_updates": 3,
+  "sampled_completions": 24
+ },
+ "identities": {
+  "cache_identity": "worker_completions/slw/worker-blocks-task-last-v1",
+  "config_sha256": "40e1ecc5169111be33f93f00cd50f1819c1c55492957a64d3b0e4d6f831ff2f6",
+  "environment_manifest_sha256": "f9c2bd2f79e98db81f207d81ddead122b4ad748707c8e0bdbdb0411316031cbd",
+  "prompt_sha256": "fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070",
+  "renderer_schedule_sha256": "328c3150a5d7e701ce99db1f58319e66d81418c37be8f4ef6a08452f25c75541",
+  "routing_source_sha256": "33f953497e3c8f543878f8004441ae23b1ff10c7a0dc10bea98b8cbc65f76f40",
+  "seed": "20260728",
+  "surface_manifest_sha256": "beb975d36c4ea4282c9a4acfd739fabb2b487a4ffc9d163a92d34623e2b58915",
+  "training_cohort_sha256": "8cd89cad884f7684cdb128c3b79f5f52798fa124a3da6f67002e70a03d95df0b",
+  "worker_pool_fingerprint": "wp-197e286115f56e4a"
+ },
+ "parent_checkpoint": null,
+ "rng_state_sha256": "58070d7ddeac7260baf8c2146408083cfd5a532cb8706ad1732597ad557a7886",
+ "run_id": "resume-validation",
+ "sampler_position": {
+  "hf_checkpoint_dir": "runs/routing-dev/resume-validation-v4/interrupted/checkpoint-3",
+  "hf_checkpoint_sha256": {
+   "README.md": "019d86d85224adc7d5a1e8b06ea654167055137f2531ff4f8b985d05b40bea76",
+   "adapter_config.json": "bc2c19cbe88157be949ea028d425bc2968bb32330cbaad3078faab94e1674b60",
+   "adapter_model.safetensors": "1a5fab25f7f62d20fb9e3eb61c3053999b8b8d74614cf38e41aa44606f6e8064",
+   "chat_template.jinja": "cd8e9439f0570856fd70470bf8889ebd8b5d1107207f67a5efb46e342330527f",
+   "optimizer.pt": "93e6212735c28342957bf1c43ff56cd59f75e568b044fd122acbca5b89ffd77f",
+   "rng_state.pth": "362b1757c728b526cc02c86cd4f56ddaeaef5f99f9b4ca8ceda7aca8c46a60b1",
+   "scheduler.pt": "aa9d429ddb46e5dcbd5d675fddea3c1fc689eda5c0591f942ee11e2c397da60b",
+   "tokenizer.json": "3fd169731d2cbde95e10bf356d66d5997fd885dd8dbb6fb4684da3f23b2585d8",
+   "tokenizer_config.json": "04b1682c59acbd057f4c9072297faa73d56fc9de053094c659cdb4c464f58f86",
+   "trainer_state.json": "2cec4e764c597547461d901c5948a50ea7355ae9d28cf554bbf4e22635b0b1d6",
+   "training_args.bin": "046b8afc09be74ede74119b9ab714b3d3c45368bab41270c636e0b7e2879c026"
+  },
+  "hf_global_step": 3,
+  "next_global_group_index": 3
+ },
+ "schema": "routing-dev-checkpoint-v1",
+ "segment_id": "interrupted",
+ "state_artifact_sha256": {
+  "adapter": "18657f10014453011e4ec9223dd3f87ca8e0151451f06b261f8bc87f2c704626",
+  "optimizer": "93e6212735c28342957bf1c43ff56cd59f75e568b044fd122acbca5b89ffd77f",
+  "rng": "2d3a5a4d77001a2763e96b5c0594bc0a4bc44ce769a23a2edc1a81250556a64e",
+  "scaler": null,
+  "scheduler": "aa9d429ddb46e5dcbd5d675fddea3c1fc689eda5c0591f942ee11e2c397da60b"
+ }
+}
