@@ -1,4 +1,4 @@
-"""Step-5 GPU resume-validation tranche (211_f §11; rev2 per 235_s).
+"""Step-5 GPU resume-validation tranche (211_f §11; rev3 per 235_s/237_s).
 
 The infrastructure-acceptance run for the v1 checkpoint contract on
 the REAL training stack: GRPOTrainer (NF4 + LoRA, the stage-0C
@@ -60,7 +60,7 @@ from .dev_support import load_dev_surface
 # --- frozen tranche configuration (hashed into the lightweight freeze) --------
 
 RESUME_VALIDATION_CONFIG: dict[str, Any] = {
-    "tranche": "routing-dev-resume-validation-v2",
+    "tranche": "routing-dev-resume-validation-v3",
     # the Step-4 surface this trains on (231_f)
     "surface_lock_sha256": ("61c4e85a53683c9e2dbcbf15f60794935a76a"
                             "86d979a69412a97f44ea9f2562b"),
@@ -92,11 +92,14 @@ RESUME_VALIDATION_CONFIG: dict[str, Any] = {
     # 235_s F6: allocated VRAM must return below this before the
     # next phase constructs a trainer
     "release_max_allocated_mib": 1024,
+    # 237_s F6: the charter's session preflight — free VRAM required
+    # BEFORE ledger admission (an ollama-resident model refuses here)
+    "min_free_vram_mib": 20000,
     # §11 acceptance: the comparison tolerance, frozen BEFORE the test
     "comparison_tolerance": 0.0,
     # 212_f reminder 2: the tranche's EXACT operational ceiling
     "ceiling_gpu_hours": 0.5,
-    "run_root": "runs/routing-dev/resume-validation-v2",
+    "run_root": "runs/routing-dev/resume-validation-v3",
 }
 
 CONFIG_SHA256 = content_sha256(RESUME_VALIDATION_CONFIG)
@@ -310,9 +313,16 @@ def compare_tensor_states(state_a: Mapping[str, Any],
             if a.shape != b.shape or a.dtype != b.dtype:
                 raise InfrastructureError(
                     f"{label}: {key} shape/dtype mismatch")
-            diff = (a.detach().float().cpu()
-                    - b.detach().float().cpu()).abs().max().item() \
-                if a.numel() else 0.0
+            fa = a.detach().float().cpu()
+            fb = b.detach().float().cpu()
+            # 237_s F5: NaN vs finite silently passes `> worst` — an
+            # exact comparison requires FINITE tensors
+            if a.numel() and not (torch.isfinite(fa).all()
+                                  and torch.isfinite(fb).all()):
+                raise InfrastructureError(
+                    f"{label}: {key} contains non-finite values — "
+                    "exact comparison refuses (237_s F5)")
+            diff = (fa - fb).abs().max().item() if a.numel() else 0.0
         elif a == b:
             diff = 0.0
         else:
@@ -382,7 +392,10 @@ def compare_runs(final_a: Mapping[str, Any], final_b: Mapping[str, Any]
 
 
 def trace_sequence(groups: list[Mapping[str, Any]]) -> list[list[Any]]:
+    """237_s F3: the FULL row content — completions, parsed actions
+    and semantic assignments, not just ids and rewards."""
     return [[g["global_group_index"], g["observation_id"],
+             g["completions"], g["actions"], g["assignments"],
              g["rewards"]] for g in groups]
 
 # --- the GPU phases (exercised by the tranche run, not by CPU tests) ----------
@@ -400,6 +413,54 @@ def _seed_everything() -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def gpu_session_preflight() -> dict[str, Any]:
+    """237_s F6: the charter's session preflight, BEFORE admission —
+    free VRAM must clear the frozen floor (an ollama-resident model
+    or stray process refuses here). Persisted into the validation
+    record."""
+    import subprocess
+    out = subprocess.run(
+        ["nvidia-smi", "--query-gpu=memory.free,memory.total",
+         "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, check=True).stdout.strip()
+    free_mib, total_mib = (int(x.strip()) for x in out.split(","))
+    floor = RESUME_VALIDATION_CONFIG["min_free_vram_mib"]
+    record = {"free_mib": free_mib, "total_mib": total_mib,
+              "floor_mib": floor}
+    if free_mib < floor:
+        raise InfrastructureError(
+            f"session preflight: {free_mib} MiB free < {floor} MiB "
+            "floor — resolve (ollama?) before admission (237_s F6)")
+    return record
+
+
+def static_identity_manifest(loaded: Mapping[str, Any],
+                             rows: list[Mapping[str, Any]]
+                             ) -> dict[str, Any]:
+    """237_s F4: the REVIEWED execution identity — everything in
+    `_identities` except the run-time environment (which is
+    live-built and attested separately). The freeze document records
+    this manifest's hash in full; admission requires it to
+    recompute."""
+    from .charter import routing_execution_digest
+    digest = routing_execution_digest(
+        "tasks/routing/resume_validation.py")
+    lock = loaded["lock"]
+    manifest = {
+        "kind": "routing-dev-resume-validation-identity-v1",
+        "routing_source_sha256": digest["routing_source_sha256"],
+        "config_sha256": CONFIG_SHA256,
+        "surface_manifest_sha256": lock["manifest_sha256"],
+        "surface_lock_sha256": lock["lock_sha256"],
+        "worker_pool_fingerprint": lock["worker_pool_fingerprint"],
+        "cache_identity": lock["cache_identity"],
+        "seed": str(RESUME_VALIDATION_CONFIG["grpo"]["seed"]),
+        **schedule_identities(rows),
+    }
+    manifest["manifest_sha256"] = content_sha256(manifest)
+    return manifest
 
 
 def _identities(loaded: Mapping[str, Any],
@@ -574,6 +635,16 @@ class _BoundaryCallback:
             def on_save(self, args, state, control, **kw):
                 if outer.bundle_dir is None:
                     return
+                # 237_s F1: HF saves at EVERY save_steps multiple
+                # (updates 3 AND 6 here) — the bundle is written at
+                # the checkpoint step only, exactly once
+                if state.global_step != outer.checkpoint_at:
+                    return
+                if outer.record is not None:
+                    raise InfrastructureError(
+                        "a second bundle write at the checkpoint "
+                        "step — the v1 bundle is written exactly "
+                        "once (237_s F1)")
                 outer.write_bundle(kw["model"], kw.get("optimizer"),
                                    kw.get("lr_scheduler"), state)
 
@@ -695,12 +766,47 @@ def verify_hf_checkpoint_against_bundle(bundle_dir: str | Path,
             "HF torch-CPU RNG state does not equal the validated "
             "bundle RNG (235_s F2)")
     if rng_json["torch_cuda"] is not None:
+        # 237_s F2: on the frozen single-GPU runtime HF stores ONE
+        # tensor, not a list — normalize before comparing
         hf_cuda = hf_rng.get("cuda")
-        if hf_cuda is None or \
-                [s.tolist() for s in hf_cuda] != rng_json["torch_cuda"]:
+        if isinstance(hf_cuda, torch.Tensor):
+            hf_cuda_lists = [hf_cuda.tolist()]
+        elif hf_cuda is not None:
+            hf_cuda_lists = [s.tolist() for s in hf_cuda]
+        else:
+            hf_cuda_lists = None
+        if hf_cuda_lists != rng_json["torch_cuda"]:
             raise InfrastructureError(
                 "HF CUDA RNG state does not equal the validated "
                 "bundle RNG (235_s F2)")
+    # 237_s F2: HF restores python and numpy RNG too — they must
+    # equal the validated bundle states
+    hf_python = hf_rng.get("python")
+    bundle_python = rng_json["python"]
+    if hf_python is not None:
+        version, internal, gauss = (hf_python[0],
+                                    list(hf_python[1]),
+                                    hf_python[2])
+        if version != bundle_python["version"] \
+                or internal != bundle_python["internal_state"] \
+                or gauss != bundle_python["gauss_next"]:
+            raise InfrastructureError(
+                "HF python RNG state does not equal the validated "
+                "bundle RNG (237_s F2)")
+    hf_numpy = hf_rng.get("numpy")
+    bundle_numpy = rng_json["numpy"]
+    if hf_numpy is not None:
+        name, keys, pos, has_gauss, cached = hf_numpy
+        keys_list = keys.tolist() if hasattr(keys, "tolist") \
+            else list(keys)
+        if name != bundle_numpy["name"] \
+                or keys_list != bundle_numpy["keys"] \
+                or int(pos) != bundle_numpy["pos"] \
+                or int(has_gauss) != bundle_numpy["has_gauss"] \
+                or float(cached) != bundle_numpy["cached_gaussian"]:
+            raise InfrastructureError(
+                "HF numpy RNG state does not equal the validated "
+                "bundle RNG (237_s F2)")
 
 def run_training_segment(*, rows, surface, run_dir: Path,
                          save_at: int | None, identities,
@@ -762,6 +868,17 @@ def _final_state(final: Mapping[str, Any], accountant, rows,
                  merged_groups: list[Mapping[str, Any]]
                  ) -> dict[str, Any]:
     consumed = accountant.consumed_groups
+    # 237_s F6: the actual trace observation ids must BE the frozen
+    # schedule prefix before the next-sampler cursor means anything
+    for i, group in enumerate(merged_groups):
+        if group["observation_id"] != rows[i]["observation_id"] \
+                or group["global_group_index"] != i:
+            raise InfrastructureError(
+                f"trace group {i} is "
+                f"{group['observation_id']} (index "
+                f"{group['global_group_index']}), not the frozen "
+                f"schedule row {rows[i]['observation_id']} "
+                "(237_s F6)")
     next_row = (rows[consumed]["observation_id"]
                 if consumed < len(rows) else "END")
     return {
@@ -816,25 +933,104 @@ def _load_final(run_root: Path, name: str) -> dict[str, Any]:
 
 
 def verify_resume_validation(run_root: str | Path) -> dict[str, Any]:
-    """The independent verifier (235_s F4): reloads the archive alone
-    — persisted final states, traces, the bundle record — rederives
-    the merge, the gates and the §11.5 comparison, and requires the
-    persisted validation record to match the rederivation exactly."""
+    """The independent verifier (235_s F4, strengthened per 237_s F3):
+    from the archive ALONE it re-hashes the persisted final states,
+    revalidates the bundle files and the consumed HF checkpoint,
+    rederives checkpoint-zero/checkpoint equality gates from
+    persisted hash maps and the bundle adapter, re-checks the A/B
+    prefix equality, rederives the merge and the §11.5 comparison
+    over FULL traces, and requires the persisted validation record to
+    match everything exactly."""
+    from .support_run import _sha_file
     run_root = Path(run_root)
     record = json.loads(
         (run_root / "validation_record.json").read_text("utf-8"))
+    bundle_b = run_root / "interrupted" / "bundle"
     bundle_record = json.loads(
-        (run_root / "interrupted" / "bundle" /
-         "checkpoint_record.json").read_text("utf-8"))
+        (bundle_b / "checkpoint_record.json").read_text("utf-8"))
     body = {k: v for k, v in bundle_record.items()
             if k != "checkpoint_sha256"}
     if content_sha256(body) != bundle_record["checkpoint_sha256"]:
         raise InfrastructureError("bundle record does not rehash")
+    if record["checkpoint_record_sha256"] != \
+            bundle_record["checkpoint_sha256"]:
+        raise InfrastructureError(
+            "validation record is not bound to this bundle record "
+            "(237_s F3)")
+    # bundle state files re-hash against the record, and the RNG
+    # artifact cross-binds
+    filenames = {name: (ckpt.CHECKPOINT_BUNDLE_FILENAMES[name]
+                        if bundle_record["state_artifact_sha256"]
+                        .get(name) is not None else None)
+                 for name in ckpt.REQUIRED_STATE_ARTIFACTS
+                 + ckpt.OPTIONAL_STATE_ARTIFACTS}
+    if ckpt.hash_state_artifacts(bundle_b, filenames) != \
+            bundle_record["state_artifact_sha256"]:
+        raise InfrastructureError(
+            "bundle state files do not match the record (237_s F3)")
+    rng_state = json.loads(
+        (bundle_b / ckpt.CHECKPOINT_BUNDLE_FILENAMES["rng"])
+        .read_text("utf-8"))
+    if content_sha256(rng_state) != bundle_record["rng_state_sha256"]:
+        raise InfrastructureError(
+            "bundle RNG artifact does not cross-bind (237_s F3)")
+    # the consumed HF checkpoint revalidates against the bundle
+    hf_dir = Path(
+        bundle_record["sampler_position"]["hf_checkpoint_dir"])
+    if not hf_dir.is_absolute():
+        candidate = run_root / "interrupted" / hf_dir.name
+        hf_dir = candidate if candidate.exists() else hf_dir
+    verify_hf_checkpoint_against_bundle(bundle_b, hf_dir,
+                                        bundle_record)
+    # persisted final states re-hash against the record
+    for name, key in (("final_uninterrupted", "uninterrupted"),
+                      ("final_resumed", "resumed")):
+        out = run_root / name
+        actual = {str(p.relative_to(out)): _sha_file(p)
+                  for p in sorted(out.iterdir())}
+        if actual != record["final_state_sha256"][key]:
+            raise InfrastructureError(
+                f"{name} files do not match final_state_sha256 "
+                "(237_s F3)")
     checkpoint_at = RESUME_VALIDATION_CONFIG["checkpoint_at_update"]
     total = RESUME_VALIDATION_CONFIG["total_updates"]
     trace_a = read_trace(run_root / "uninterrupted" / "actions.jsonl")
     trace_b = read_trace(run_root / "interrupted" / "actions.jsonl")
     trace_c = read_trace(run_root / "resume" / "actions.jsonl")
+    # A/B checkpoint-prefix equality and bundle equality rederive
+    if trace_sequence(trace_a[:checkpoint_at]) != \
+            trace_sequence(trace_b[:checkpoint_at]):
+        raise InfrastructureError(
+            "A/B pre-checkpoint traces differ (gate 2; 237_s F3)")
+    bundle_a = run_root / "uninterrupted" / "bundle"
+    for name in ("adapter", "optimizer", "scheduler", "rng"):
+        filename = ckpt.CHECKPOINT_BUNDLE_FILENAMES[name]
+        if _sha_file(bundle_a / filename) != \
+                _sha_file(bundle_b / filename):
+            raise InfrastructureError(
+                f"A/B checkpoint {name} differs (gate 2; 237_s F3)")
+    # gates 1 + 4 rederive from persisted evidence: the checkpoint-
+    # zero hash map file and the bundle adapter on disk
+    zero_map = json.loads(
+        (run_root / "checkpoint_zero_hashes.json").read_text("utf-8"))
+    if content_sha256(zero_map) != \
+            record["checkpoint_zero_adapter_sha256"]:
+        raise InfrastructureError(
+            "checkpoint-zero hash map does not match the record "
+            "(gate 1; 237_s F3)")
+    from safetensors.torch import load_file
+    bundle_adapter_hashes = tensor_state_hashes(load_file(
+        str(bundle_b / ckpt.CHECKPOINT_BUNDLE_FILENAMES["adapter"])))
+    if content_sha256(bundle_adapter_hashes) != \
+            record["checkpoint_adapter_sha256"]:
+        raise InfrastructureError(
+            "bundle adapter does not rederive "
+            "checkpoint_adapter_sha256 (237_s F3)")
+    if record["checkpoint_zero_adapter_sha256"] == \
+            record["checkpoint_adapter_sha256"]:
+        raise InfrastructureError(
+            "checkpoint-zero equals checkpoint adapter — gate 4 "
+            "fails (zero-gradient trajectory)")
     merged = ckpt.merge_segments([
         {"segment_id": "interrupted", "run_id": "resume-validation",
          "config_sha256": CONFIG_SHA256, "status": "aborted",
@@ -861,6 +1057,7 @@ def verify_resume_validation(run_root: str | Path) -> dict[str, Any]:
     final_a = _load_final(run_root, "final_uninterrupted")
     final_c = _load_final(run_root, "final_resumed")
     comparison = compare_runs(final_a, final_c)
+    # the persisted cursors must equal the FULL traces on disk
     if final_a["trace_sequence"] != trace_sequence(trace_a):
         raise InfrastructureError(
             "persisted uninterrupted cursor does not match its trace")
@@ -869,16 +1066,10 @@ def verify_resume_validation(run_root: str | Path) -> dict[str, Any]:
         raise InfrastructureError(
             "persisted resumed cursor does not match the merged "
             "trajectory")
-    # gates 3 + 4 rederive from the archive
     varying = [g for g in trace_a if len(set(g["rewards"])) > 1]
     if not varying:
         raise InfrastructureError(
             "no reward-varying group — gate 3 fails (235_s)")
-    if record["checkpoint_zero_adapter_sha256"] == \
-            record["checkpoint_adapter_sha256"]:
-        raise InfrastructureError(
-            "checkpoint-zero equals checkpoint-3 adapter — gate 4 "
-            "fails (zero-gradient trajectory; 235_s)")
     rederived = {
         "comparison": comparison,
         "merged_groups": merged["merged_groups"],
@@ -897,14 +1088,19 @@ def verify_resume_validation(run_root: str | Path) -> dict[str, Any]:
 
 
 def execute_resume_validation(*, expected_freeze_sha256: str,
+                              expected_identity_sha256: str,
                               expected_head_sha256: str,
                               ledger_path: str | Path | None = None,
                               _environment_builder=None
                               ) -> dict[str, Any]:
     """The full Step-5 tranche. Requires the EXTERNALLY REVIEWED
-    freeze hash (235_s F5); admits, runs the three arms, applies the
-    gates, persists everything, verifies its own archive, and closes
-    out (aborted with measured cost on any post-admission failure)."""
+    freeze hash (235_s F5) AND the reviewed static execution-identity
+    manifest hash (237_s F4 — prompt/source/cohort/renderer/surface
+    identities, so a code or prompt change after review refuses);
+    runs the charter session preflight BEFORE admission (237_s F6);
+    admits, runs the three arms, applies the gates, persists
+    everything, verifies its own archive, and closes out (aborted
+    with measured cost on any post-admission failure)."""
     from .ledger import LEDGER_PATH, admit_and_append_launch, \
         append_ledger_entry
     from .support_run import _hash_directory, _sha_file
@@ -925,7 +1121,14 @@ def execute_resume_validation(*, expected_freeze_sha256: str,
     env_sha = validate_environment_manifest_binding(environment)
     loaded = load_locked_support()
     rows = training_schedule(loaded)
+    identity_manifest = static_identity_manifest(loaded, rows)
+    if identity_manifest["manifest_sha256"] != expected_identity_sha256:
+        raise InfrastructureError(
+            "the execution identity is not the reviewed one — "
+            "prompt/source/cohort/renderer/surface identities moved "
+            "after review (237_s F4)")
     identities = _identities(loaded, rows, env_sha)
+    preflight = gpu_session_preflight()
     run_root = Path(config["run_root"])
     if run_root.exists():
         raise InfrastructureError(
@@ -934,9 +1137,11 @@ def execute_resume_validation(*, expected_freeze_sha256: str,
     entry = {
         "kind": "resume_validation",
         "question": frozen["question"],
-        "motivating_evidence": "236_f rev2 freeze; 232_s item 2",
+        "motivating_evidence": "238_f rev3 freeze; 232_s item 2",
         "freeze": {"freeze_sha256": frozen["freeze_sha256"],
-                   "config_sha256": CONFIG_SHA256},
+                   "config_sha256": CONFIG_SHA256,
+                   "identity_manifest_sha256":
+                       identity_manifest["manifest_sha256"]},
         "parent": None,
         "budget_allocated_gpu_hours": config["ceiling_gpu_hours"],
         "outcome_informed": False,
@@ -952,6 +1157,9 @@ def execute_resume_validation(*, expected_freeze_sha256: str,
         (run_root / "environment_manifest.json").write_text(
             json.dumps(environment, indent=1, sort_keys=True) + "\n",
             encoding="utf-8")
+        (run_root / "identity_manifest.json").write_text(
+            json.dumps(identity_manifest, indent=1, sort_keys=True)
+            + "\n", encoding="utf-8")
         checkpoint_at = config["checkpoint_at_update"]
         total = config["total_updates"]
         surface = loaded["surface"]
@@ -1010,6 +1218,11 @@ def execute_resume_validation(*, expected_freeze_sha256: str,
             __import__("safetensors.torch", fromlist=["load_file"])
             .load_file(str(bundle_b / ckpt.CHECKPOINT_BUNDLE_FILENAMES[
                 "adapter"])))
+        # 237_s F3: persist the checkpoint-zero hash map so gate 1/4
+        # rederive from the archive alone
+        (run_root / "checkpoint_zero_hashes.json").write_text(
+            json.dumps(segment_b["checkpoint_zero"], indent=1,
+                       sort_keys=True) + "\n", encoding="utf-8")
         zero_sha = content_sha256(segment_b["checkpoint_zero"])
         checkpoint_sha = content_sha256(checkpoint_adapter_hashes)
         if zero_sha == checkpoint_sha:
@@ -1090,6 +1303,9 @@ def execute_resume_validation(*, expected_freeze_sha256: str,
             "counters": final_c["counters"],
             "final_state_sha256": {"uninterrupted": hashes_a,
                                    "resumed": hashes_c},
+            "identity_manifest_sha256":
+                identity_manifest["manifest_sha256"],
+            "session_preflight": preflight,
         }
         (run_root / "validation_record.json").write_text(
             json.dumps(validation, indent=1, sort_keys=True) + "\n",

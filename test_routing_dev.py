@@ -1677,3 +1677,86 @@ def test_tensor_state_hashes_distinguish_and_stabilize():
     other = {"a": torch.ones(2, dtype=torch.bfloat16) * 2,
              "b": torch.zeros(3)}
     assert first != resume_validation.tensor_state_hashes(other)
+
+
+def test_bundle_written_only_at_the_checkpoint_step():
+    """237_s F1: HF saves at updates 3 AND 6 — the bundle gate skips
+    non-checkpoint steps and refuses a duplicate write."""
+    class _State:
+        def __init__(self, step):
+            self.global_step = step
+
+    bc = resume_validation._BoundaryCallback(
+        checkpoint.GroupAccountant(), Path("unused-bundle"),
+        {}, "run", "seg", hf_output_dir=Path("unused"),
+        checkpoint_at=3)
+    # a save at update 6 is a no-op for the bundle
+    bc.callback.on_save(None, _State(6), None, model=None)
+    assert bc.record is None
+    # a second write at the checkpoint step refuses
+    bc.record = {"sentinel": True}
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        bc.callback.on_save(None, _State(3), None, model=None)
+
+
+def test_identity_manifest_is_deterministic(step4_support):
+    loaded = step4_support
+    rows = resume_validation.training_schedule(loaded)
+    first = resume_validation.static_identity_manifest(loaded, rows)
+    second = resume_validation.static_identity_manifest(loaded, rows)
+    assert first == second
+    assert first["surface_lock_sha256"] == \
+        resume_validation.RESUME_VALIDATION_CONFIG[
+            "surface_lock_sha256"]
+    assert first["manifest_sha256"] == charter.content_sha256(
+        {k: v for k, v in first.items() if k != "manifest_sha256"})
+
+
+def test_exact_comparison_refuses_non_finite():
+    import copy
+
+    import torch
+    base = {
+        "adapter": {"lora.w": torch.ones(2, 2)},
+        "optimizer": {"state": {}, "param_groups": []},
+        "scheduler": {"last_epoch": 6},
+        "next_sampler_identity": "obs-7",
+        "counters": {"generated_groups": 6, "consumed_groups": 6,
+                     "optimizer_updates": 6,
+                     "sampled_completions": 48},
+        "trace_sequence": [], "trace_cardinality": 0,
+    }
+    poisoned = copy.deepcopy(base)
+    poisoned["adapter"]["lora.w"] = torch.full((2, 2), float("nan"))
+    with pytest.raises(InfrastructureError, match="non-finite"):
+        resume_validation.compare_runs(base, poisoned)
+    # NaN on BOTH sides refuses too (237_s F5 reproduction)
+    both = copy.deepcopy(poisoned)
+    with pytest.raises(InfrastructureError, match="non-finite"):
+        resume_validation.compare_runs(poisoned, both)
+
+
+def test_final_state_cross_checks_the_frozen_schedule(step4_support):
+    """237_s F6: trace observation ids must BE the schedule prefix."""
+    loaded = step4_support
+    rows = resume_validation.training_schedule(loaded)
+    accountant = checkpoint.GroupAccountant()
+    accountant.record_generation(groups=2, completions=16)
+    accountant.record_update(consumed_groups=1)
+    accountant.record_update(consumed_groups=1)
+    good = [{"global_group_index": i,
+             "observation_id": rows[i]["observation_id"],
+             "completions": ["x"] * 8, "actions": [None] * 8,
+             "assignments": [None] * 8, "rewards": [0.0] * 8}
+            for i in range(2)]
+    final = {"adapter": {}, "optimizer": {}, "scheduler": {}}
+    state = resume_validation._final_state(final, accountant, rows,
+                                           good)
+    assert state["next_sampler_identity"] == \
+        rows[2]["observation_id"]
+    swapped = [dict(good[0],
+                    observation_id=rows[5]["observation_id"])] \
+        + good[1:]
+    with pytest.raises(InfrastructureError, match="frozen schedule"):
+        resume_validation._final_state(final, accountant, rows,
+                                       swapped)
