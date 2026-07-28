@@ -1,0 +1,962 @@
+{
+ "pair_table": {
+  "code_atomic:routing_dev:00000:e23a43bd:bound_var:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00000:e23a43bd:goal_first:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00000:e23a43bd:resource_first:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00001:85e103ea:bound_var:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00001:85e103ea:goal_first:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00001:85e103ea:resource_first:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00002:cce293cd:bound_var:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00002:cce293cd:goal_first:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00002:cce293cd:resource_first:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00003:3e9f4f5d:bound_var:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00003:3e9f4f5d:goal_first:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00003:3e9f4f5d:resource_first:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00004:0f42d9b1:bound_var:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00004:0f42d9b1:goal_first:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00004:0f42d9b1:resource_first:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00005:bcd17865:bound_var:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "code_atomic:routing_dev:00005:bcd17865:goal_first:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": 2,
+   "distinct_payoff": true,
+   "payoff_w2": 1.0,
+   "payoff_w3": 0.5
+  },
+  "code_atomic:routing_dev:00005:bcd17865:resource_first:private": {
+   "assignment_w2": [
+    2
+   ],
+   "assignment_w3": [
+    3
+   ],
+   "cell_id": "code_atomic",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00000:204cdb4c:bound_var:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00000:204cdb4c:goal_first:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00000:204cdb4c:resource_first:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00001:3b8d777f:bound_var:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": 2,
+   "distinct_payoff": true,
+   "payoff_w2": 1.0,
+   "payoff_w3": 0.5
+  },
+  "fork_join:routing_dev:00001:3b8d777f:goal_first:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": 2,
+   "distinct_payoff": true,
+   "payoff_w2": 1.0,
+   "payoff_w3": 0.5
+  },
+  "fork_join:routing_dev:00001:3b8d777f:resource_first:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00002:bb9270d3:bound_var:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00002:bb9270d3:goal_first:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00002:bb9270d3:resource_first:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00003:899d9519:bound_var:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00003:899d9519:goal_first:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00003:899d9519:resource_first:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00004:ad49a5ba:bound_var:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00004:ad49a5ba:goal_first:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00004:ad49a5ba:resource_first:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00005:ef8a0767:bound_var:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "fork_join:routing_dev:00005:ef8a0767:goal_first:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": 2,
+   "distinct_payoff": true,
+   "payoff_w2": 1.0,
+   "payoff_w3": 0.5
+  },
+  "fork_join:routing_dev:00005:ef8a0767:resource_first:private": {
+   "assignment_w2": [
+    0,
+    2,
+    1
+   ],
+   "assignment_w3": [
+    0,
+    3,
+    1
+   ],
+   "cell_id": "fork_join",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00000:9d7ce28e:bound_var:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00000:9d7ce28e:goal_first:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00000:9d7ce28e:resource_first:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00001:1cbc63ba:bound_var:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00001:1cbc63ba:goal_first:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00001:1cbc63ba:resource_first:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00002:b12ffffe:bound_var:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00002:b12ffffe:goal_first:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": 3,
+   "distinct_payoff": true,
+   "payoff_w2": 0.5,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00002:b12ffffe:resource_first:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00003:819311fa:bound_var:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00003:819311fa:goal_first:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": 3,
+   "distinct_payoff": true,
+   "payoff_w2": 0.5,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00003:819311fa:resource_first:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00004:11a0fe95:bound_var:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00004:11a0fe95:goal_first:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00004:11a0fe95:resource_first:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00005:b4473490:bound_var:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00005:b4473490:goal_first:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  },
+  "math_code:routing_dev:00005:b4473490:resource_first:private": {
+   "assignment_w2": [
+    1,
+    2
+   ],
+   "assignment_w3": [
+    1,
+    3
+   ],
+   "cell_id": "math_code",
+   "direction": null,
+   "distinct_payoff": false,
+   "payoff_w2": 1.0,
+   "payoff_w3": 1.0
+  }
+ },
+ "per_cell": {
+  "code_atomic": {
+   "no_pair": 0,
+   "tied": 17,
+   "w2_favoured": 1,
+   "w3_favoured": 0
+  },
+  "fork_join": {
+   "no_pair": 0,
+   "tied": 15,
+   "w2_favoured": 3,
+   "w3_favoured": 0
+  },
+  "lookup_atomic": {
+   "no_pair": 18,
+   "tied": 0,
+   "w2_favoured": 0,
+   "w3_favoured": 0
+  },
+  "lookup_math": {
+   "no_pair": 18,
+   "tied": 0,
+   "w2_favoured": 0,
+   "w3_favoured": 0
+  },
+  "math_atomic": {
+   "no_pair": 18,
+   "tied": 0,
+   "w2_favoured": 0,
+   "w3_favoured": 0
+  },
+  "math_code": {
+   "no_pair": 0,
+   "tied": 16,
+   "w2_favoured": 0,
+   "w3_favoured": 2
+  }
+ },
+ "per_observation": {
+  "code_atomic:routing_dev:00000:e23a43bd:bound_var:private": "tied",
+  "code_atomic:routing_dev:00000:e23a43bd:goal_first:private": "tied",
+  "code_atomic:routing_dev:00000:e23a43bd:resource_first:private": "tied",
+  "code_atomic:routing_dev:00001:85e103ea:bound_var:private": "tied",
+  "code_atomic:routing_dev:00001:85e103ea:goal_first:private": "tied",
+  "code_atomic:routing_dev:00001:85e103ea:resource_first:private": "tied",
+  "code_atomic:routing_dev:00002:cce293cd:bound_var:private": "tied",
+  "code_atomic:routing_dev:00002:cce293cd:goal_first:private": "tied",
+  "code_atomic:routing_dev:00002:cce293cd:resource_first:private": "tied",
+  "code_atomic:routing_dev:00003:3e9f4f5d:bound_var:private": "tied",
+  "code_atomic:routing_dev:00003:3e9f4f5d:goal_first:private": "tied",
+  "code_atomic:routing_dev:00003:3e9f4f5d:resource_first:private": "tied",
+  "code_atomic:routing_dev:00004:0f42d9b1:bound_var:private": "tied",
+  "code_atomic:routing_dev:00004:0f42d9b1:goal_first:private": "tied",
+  "code_atomic:routing_dev:00004:0f42d9b1:resource_first:private": "tied",
+  "code_atomic:routing_dev:00005:bcd17865:bound_var:private": "tied",
+  "code_atomic:routing_dev:00005:bcd17865:goal_first:private": "w2_favoured",
+  "code_atomic:routing_dev:00005:bcd17865:resource_first:private": "tied",
+  "fork_join:routing_dev:00000:204cdb4c:bound_var:private": "tied",
+  "fork_join:routing_dev:00000:204cdb4c:goal_first:private": "tied",
+  "fork_join:routing_dev:00000:204cdb4c:resource_first:private": "tied",
+  "fork_join:routing_dev:00001:3b8d777f:bound_var:private": "w2_favoured",
+  "fork_join:routing_dev:00001:3b8d777f:goal_first:private": "w2_favoured",
+  "fork_join:routing_dev:00001:3b8d777f:resource_first:private": "tied",
+  "fork_join:routing_dev:00002:bb9270d3:bound_var:private": "tied",
+  "fork_join:routing_dev:00002:bb9270d3:goal_first:private": "tied",
+  "fork_join:routing_dev:00002:bb9270d3:resource_first:private": "tied",
+  "fork_join:routing_dev:00003:899d9519:bound_var:private": "tied",
+  "fork_join:routing_dev:00003:899d9519:goal_first:private": "tied",
+  "fork_join:routing_dev:00003:899d9519:resource_first:private": "tied",
+  "fork_join:routing_dev:00004:ad49a5ba:bound_var:private": "tied",
+  "fork_join:routing_dev:00004:ad49a5ba:goal_first:private": "tied",
+  "fork_join:routing_dev:00004:ad49a5ba:resource_first:private": "tied",
+  "fork_join:routing_dev:00005:ef8a0767:bound_var:private": "tied",
+  "fork_join:routing_dev:00005:ef8a0767:goal_first:private": "w2_favoured",
+  "fork_join:routing_dev:00005:ef8a0767:resource_first:private": "tied",
+  "lookup_atomic:routing_dev:00000:4d035a11:bound_var:private": "no_pair",
+  "lookup_atomic:routing_dev:00000:4d035a11:goal_first:private": "no_pair",
+  "lookup_atomic:routing_dev:00000:4d035a11:resource_first:private": "no_pair",
+  "lookup_atomic:routing_dev:00001:bb356885:bound_var:private": "no_pair",
+  "lookup_atomic:routing_dev:00001:bb356885:goal_first:private": "no_pair",
+  "lookup_atomic:routing_dev:00001:bb356885:resource_first:private": "no_pair",
+  "lookup_atomic:routing_dev:00002:554b9478:bound_var:private": "no_pair",
+  "lookup_atomic:routing_dev:00002:554b9478:goal_first:private": "no_pair",
+  "lookup_atomic:routing_dev:00002:554b9478:resource_first:private": "no_pair",
+  "lookup_atomic:routing_dev:00003:25492be4:bound_var:private": "no_pair",
+  "lookup_atomic:routing_dev:00003:25492be4:goal_first:private": "no_pair",
+  "lookup_atomic:routing_dev:00003:25492be4:resource_first:private": "no_pair",
+  "lookup_atomic:routing_dev:00004:e80c89f7:bound_var:private": "no_pair",
+  "lookup_atomic:routing_dev:00004:e80c89f7:goal_first:private": "no_pair",
+  "lookup_atomic:routing_dev:00004:e80c89f7:resource_first:private": "no_pair",
+  "lookup_atomic:routing_dev:00005:fc95d0c7:bound_var:private": "no_pair",
+  "lookup_atomic:routing_dev:00005:fc95d0c7:goal_first:private": "no_pair",
+  "lookup_atomic:routing_dev:00005:fc95d0c7:resource_first:private": "no_pair",
+  "lookup_math:routing_dev:00000:cd07db47:bound_var:private": "no_pair",
+  "lookup_math:routing_dev:00000:cd07db47:goal_first:private": "no_pair",
+  "lookup_math:routing_dev:00000:cd07db47:resource_first:private": "no_pair",
+  "lookup_math:routing_dev:00001:9673b863:bound_var:private": "no_pair",
+  "lookup_math:routing_dev:00001:9673b863:goal_first:private": "no_pair",
+  "lookup_math:routing_dev:00001:9673b863:resource_first:private": "no_pair",
+  "lookup_math:routing_dev:00002:7f518a59:bound_var:private": "no_pair",
+  "lookup_math:routing_dev:00002:7f518a59:goal_first:private": "no_pair",
+  "lookup_math:routing_dev:00002:7f518a59:resource_first:private": "no_pair",
+  "lookup_math:routing_dev:00003:ff1bc53c:bound_var:private": "no_pair",
+  "lookup_math:routing_dev:00003:ff1bc53c:goal_first:private": "no_pair",
+  "lookup_math:routing_dev:00003:ff1bc53c:resource_first:private": "no_pair",
+  "lookup_math:routing_dev:00004:5f146975:bound_var:private": "no_pair",
+  "lookup_math:routing_dev:00004:5f146975:goal_first:private": "no_pair",
+  "lookup_math:routing_dev:00004:5f146975:resource_first:private": "no_pair",
+  "lookup_math:routing_dev:00005:48082bba:bound_var:private": "no_pair",
+  "lookup_math:routing_dev:00005:48082bba:goal_first:private": "no_pair",
+  "lookup_math:routing_dev:00005:48082bba:resource_first:private": "no_pair",
+  "math_atomic:routing_dev:00000:a2799752:bound_var:private": "no_pair",
+  "math_atomic:routing_dev:00000:a2799752:goal_first:private": "no_pair",
+  "math_atomic:routing_dev:00000:a2799752:resource_first:private": "no_pair",
+  "math_atomic:routing_dev:00001:65fd8714:bound_var:private": "no_pair",
+  "math_atomic:routing_dev:00001:65fd8714:goal_first:private": "no_pair",
+  "math_atomic:routing_dev:00001:65fd8714:resource_first:private": "no_pair",
+  "math_atomic:routing_dev:00002:1d4b33cf:bound_var:private": "no_pair",
+  "math_atomic:routing_dev:00002:1d4b33cf:goal_first:private": "no_pair",
+  "math_atomic:routing_dev:00002:1d4b33cf:resource_first:private": "no_pair",
+  "math_atomic:routing_dev:00003:53749f5b:bound_var:private": "no_pair",
+  "math_atomic:routing_dev:00003:53749f5b:goal_first:private": "no_pair",
+  "math_atomic:routing_dev:00003:53749f5b:resource_first:private": "no_pair",
+  "math_atomic:routing_dev:00004:3d9091ab:bound_var:private": "no_pair",
+  "math_atomic:routing_dev:00004:3d9091ab:goal_first:private": "no_pair",
+  "math_atomic:routing_dev:00004:3d9091ab:resource_first:private": "no_pair",
+  "math_atomic:routing_dev:00005:7ff28757:bound_var:private": "no_pair",
+  "math_atomic:routing_dev:00005:7ff28757:goal_first:private": "no_pair",
+  "math_atomic:routing_dev:00005:7ff28757:resource_first:private": "no_pair",
+  "math_code:routing_dev:00000:9d7ce28e:bound_var:private": "tied",
+  "math_code:routing_dev:00000:9d7ce28e:goal_first:private": "tied",
+  "math_code:routing_dev:00000:9d7ce28e:resource_first:private": "tied",
+  "math_code:routing_dev:00001:1cbc63ba:bound_var:private": "tied",
+  "math_code:routing_dev:00001:1cbc63ba:goal_first:private": "tied",
+  "math_code:routing_dev:00001:1cbc63ba:resource_first:private": "tied",
+  "math_code:routing_dev:00002:b12ffffe:bound_var:private": "tied",
+  "math_code:routing_dev:00002:b12ffffe:goal_first:private": "w3_favoured",
+  "math_code:routing_dev:00002:b12ffffe:resource_first:private": "tied",
+  "math_code:routing_dev:00003:819311fa:bound_var:private": "tied",
+  "math_code:routing_dev:00003:819311fa:goal_first:private": "w3_favoured",
+  "math_code:routing_dev:00003:819311fa:resource_first:private": "tied",
+  "math_code:routing_dev:00004:11a0fe95:bound_var:private": "tied",
+  "math_code:routing_dev:00004:11a0fe95:goal_first:private": "tied",
+  "math_code:routing_dev:00004:11a0fe95:resource_first:private": "tied",
+  "math_code:routing_dev:00005:b4473490:bound_var:private": "tied",
+  "math_code:routing_dev:00005:b4473490:goal_first:private": "tied",
+  "math_code:routing_dev:00005:b4473490:resource_first:private": "tied"
+ }
+}

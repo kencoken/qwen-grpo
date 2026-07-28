@@ -1,0 +1,47 @@
+{
+ "c_fixed_dev_sha256": "c65a15e681c813549036f5cb4b99dec955d54bf701bddd3b0484b446cef149b7",
+ "direction_yields": {
+  "code_atomic": {
+   "no_pair": 0,
+   "tied": 17,
+   "w2_favoured": 1,
+   "w3_favoured": 0
+  },
+  "fork_join": {
+   "no_pair": 0,
+   "tied": 15,
+   "w2_favoured": 3,
+   "w3_favoured": 0
+  },
+  "lookup_atomic": {
+   "no_pair": 18,
+   "tied": 0,
+   "w2_favoured": 0,
+   "w3_favoured": 0
+  },
+  "lookup_math": {
+   "no_pair": 18,
+   "tied": 0,
+   "w2_favoured": 0,
+   "w3_favoured": 0
+  },
+  "math_atomic": {
+   "no_pair": 18,
+   "tied": 0,
+   "w2_favoured": 0,
+   "w3_favoured": 0
+  },
+  "math_code": {
+   "no_pair": 0,
+   "tied": 16,
+   "w2_favoured": 0,
+   "w3_favoured": 2
+  }
+ },
+ "launch_entry_sha256": "f0d4651cdec35f0a555d464175ffca4ce27148cda857b250ac180a94f7edd3f2",
+ "probe_cohort_sha256": "7f31bd091aaa97664e71ecb86b17078861b4e28af284162ee6ac50338d661e3b",
+ "run": "routing-dev-support-materialization-v1",
+ "support_launch_sha256": "ea4c28061f49275e5902d811a3626e772867c1d99de566978353764e0e67ca22",
+ "surface_dir": "runs/routing-dev/support-v1/surface",
+ "surface_lock_sha256": "61c4e85a53683c9e2dbcbf15f60794935a76a86d979a69412a97f44ea9f2562b"
+}

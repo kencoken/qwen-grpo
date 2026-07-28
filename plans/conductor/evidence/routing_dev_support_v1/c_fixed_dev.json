@@ -1,0 +1,19 @@
+{
+ "c_fixed_dev": 2,
+ "candidate_scores": {
+  "2": 0.9814814814814815,
+  "3": 0.9629629629629629
+ },
+ "code_bearing_cells": [
+  "code_atomic",
+  "fork_join",
+  "math_code"
+ ],
+ "comparator": "c_fixed_dev-v1",
+ "development_only": true,
+ "payoffs_sha256": "109669f85e98a4be33830185e8e83f260ddce035fb9f60738fa5c96f31073464",
+ "record_sha256": "c65a15e681c813549036f5cb4b99dec955d54bf701bddd3b0484b446cef149b7",
+ "rule": "argmax over w in {2,3} of equal-weight family-correct terminal payoff, renderer-within-latent, latent-within-cell, equal Code-bearing cell weights; tie -> worker 2 (211_f section 4)",
+ "surface_lock_sha256": "61c4e85a53683c9e2dbcbf15f60794935a76a86d979a69412a97f44ea9f2562b",
+ "tie": false
+}
