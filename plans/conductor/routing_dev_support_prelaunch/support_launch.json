@@ -1,0 +1,17 @@
+{
+ "budget_gpu_hours": 1.0,
+ "cache_identity": "worker_completions/slw/worker-blocks-task-last-v1",
+ "declaration_sha256": "290c741079d3b4a63f3fbcbeb9e700e8ece0b650cbe1500feafa1b575d9551ed",
+ "driver": "tasks/routing/support_run.py",
+ "environment_manifest_sha256": "b7a2ce8fda3b27c840b9077469adcc403180ea8ae291dd09ad7585c7a60891ff",
+ "kind": "routing-dev-support-launch-v1",
+ "manifest_sha256": "ea4c28061f49275e5902d811a3626e772867c1d99de566978353764e0e67ca22",
+ "namespace": "routing_dev",
+ "probe_rule_sha256": "0b616b8863bf73263c11c63cd8cc1572b880e6586f15059bde642c2a397c9f7b",
+ "request_contract": "worker-blocks-task-last-v1",
+ "routing_source_sha256": "ac90348a7d8a47148d7bd80d27ac2a98757cd4e3399c1840d3a2bd99367708e9",
+ "runtime_profile_fingerprint": "rtp-8510479a336ee0dc",
+ "search_cap": 108,
+ "worker_pool_fingerprint": "wp-197e286115f56e4a",
+ "worker_visible_fingerprint": "wv-4e196a1c467d108b"
+}

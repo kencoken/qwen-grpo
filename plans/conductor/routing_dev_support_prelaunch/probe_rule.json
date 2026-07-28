@@ -1,0 +1,16 @@
+{
+ "rule": {
+  "group_size": 8,
+  "groups_per_observation": 4,
+  "kind": "routing-dev-first-probe-v1",
+  "namespace": "routing_dev",
+  "prefix_length_per_cell": 6,
+  "renderers": [
+   "resource_first",
+   "goal_first",
+   "bound_var"
+  ],
+  "visibility": "private"
+ },
+ "rule_sha256": "0b616b8863bf73263c11c63cd8cc1572b880e6586f15059bde642c2a397c9f7b"
+}
