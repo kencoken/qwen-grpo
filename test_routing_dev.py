@@ -1832,3 +1832,50 @@ def test_attested_environment_hash_survives_the_freeze_commit():
     drifted = _env_manifest(torch="9.9")
     assert resume_validation.attested_environment_sha256(env_a) != \
         resume_validation.attested_environment_sha256(drifted)
+
+
+def test_preflight_semantics_must_have_passed():
+    """241_s P1: self-consistently archived but FAILED or malformed
+    preflights refuse."""
+    floor = resume_validation.RESUME_VALIDATION_CONFIG[
+        "min_free_vram_mib"]
+    good = {"free_mib": floor + 100, "total_mib": 24564,
+            "floor_mib": floor}
+    resume_validation.verify_preflight_semantics(good)
+    with pytest.raises(InfrastructureError, match="FAILED"):
+        resume_validation.verify_preflight_semantics(
+            dict(good, free_mib=floor - 1))
+    with pytest.raises(InfrastructureError, match="not the frozen"):
+        resume_validation.verify_preflight_semantics(
+            dict(good, floor_mib=1))
+    with pytest.raises(InfrastructureError, match="impossible"):
+        resume_validation.verify_preflight_semantics(
+            dict(good, total_mib=floor))
+    with pytest.raises(InfrastructureError, match="schema"):
+        resume_validation.verify_preflight_semantics(
+            {**good, "extra": 1})
+    with pytest.raises(InfrastructureError, match="non-negative int"):
+        resume_validation.verify_preflight_semantics(
+            dict(good, free_mib=float("nan")))
+
+
+def test_bundle_identities_must_match_the_archived_manifests(
+        step4_support):
+    """241_s P1: every ckpt.IDENTITY_KEYS field is pinned by the
+    archived identity/environment manifests — a relabelled field
+    (self-consistently rehashed) refuses."""
+    loaded = step4_support
+    rows = resume_validation.training_schedule(loaded)
+    manifest = resume_validation.static_identity_manifest(loaded, rows)
+    env_sha = "ab" * 32
+    expected = resume_validation.expected_bundle_identities(
+        manifest, env_sha)
+    assert set(expected) == set(checkpoint.IDENTITY_KEYS)
+    assert expected["environment_manifest_sha256"] == env_sha
+    assert expected["prompt_sha256"] == manifest["prompt_sha256"]
+    # a manifest lacking an identity field refuses
+    truncated = {k: v for k, v in manifest.items()
+                 if k != "prompt_sha256"}
+    with pytest.raises(InfrastructureError, match="prompt_sha256"):
+        resume_validation.expected_bundle_identities(truncated,
+                                                     env_sha)

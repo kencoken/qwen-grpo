@@ -439,6 +439,57 @@ def attested_environment_sha256(env: Mapping[str, Any]) -> str:
                            if k not in ENV_BINDING_EXEMPT_FIELDS})
 
 
+def verify_preflight_semantics(preflight: Mapping[str, Any]) -> None:
+    """241_s P1: an archived preflight must have actually PASSED —
+    exact schema, integer values, the frozen floor, and the
+    free/total invariants; hash agreement alone proves duplication,
+    not success."""
+    if set(preflight) != {"free_mib", "total_mib", "floor_mib"}:
+        raise InfrastructureError(
+            f"preflight schema {sorted(preflight)} is not exactly "
+            "{{free_mib, total_mib, floor_mib}} (241_s)")
+    for field in ("free_mib", "total_mib", "floor_mib"):
+        value = preflight[field]
+        if not isinstance(value, int) or isinstance(value, bool) \
+                or value < 0:
+            raise InfrastructureError(
+                f"preflight {field} must be a non-negative int, got "
+                f"{value!r}")
+    if preflight["floor_mib"] != \
+            RESUME_VALIDATION_CONFIG["min_free_vram_mib"]:
+        raise InfrastructureError(
+            f"preflight floor {preflight['floor_mib']} is not the "
+            f"frozen {RESUME_VALIDATION_CONFIG['min_free_vram_mib']} "
+            "(241_s)")
+    if preflight["free_mib"] < preflight["floor_mib"]:
+        raise InfrastructureError(
+            "the archived preflight FAILED (free < floor) — it "
+            "cannot verify as PASS (241_s)")
+    if preflight["total_mib"] < preflight["free_mib"]:
+        raise InfrastructureError(
+            "preflight total < free — an impossible reading (241_s)")
+
+
+def expected_bundle_identities(identity_manifest: Mapping[str, Any],
+                               environment_manifest_sha256: str
+                               ) -> dict[str, str]:
+    """241_s P1: the COMPLETE ten-key checkpoint identity mapping,
+    constructed from the archived identity manifest plus the archived
+    environment hash — the verifier requires exact equality with the
+    bundle record, so no identity can be relabelled."""
+    expected = {key: identity_manifest[key]
+                for key in ckpt.IDENTITY_KEYS
+                if key in identity_manifest}
+    expected["environment_manifest_sha256"] = \
+        environment_manifest_sha256
+    missing = set(ckpt.IDENTITY_KEYS) - set(expected)
+    if missing:
+        raise InfrastructureError(
+            f"identity manifest lacks checkpoint identity fields "
+            f"{sorted(missing)} (241_s)")
+    return expected
+
+
 def gpu_session_preflight() -> dict[str, Any]:
     """237_s F6: the charter's session preflight, BEFORE admission —
     free VRAM must clear the frozen floor (an ollama-resident model
@@ -1075,6 +1126,15 @@ def verify_resume_validation(run_root: str | Path) -> dict[str, Any]:
         raise InfrastructureError(
             "archived session preflight does not match the record "
             "(239_s F2)")
+    verify_preflight_semantics(preflight)
+    # 241_s P1: the duplicated record header fields cross-check
+    if record["tranche"] != RESUME_VALIDATION_CONFIG["tranche"] \
+            or record["config_sha256"] != CONFIG_SHA256 \
+            or record["freeze_sha256"] != \
+            tranche_freeze()["freeze_sha256"]:
+        raise InfrastructureError(
+            "validation record tranche/config/freeze fields do not "
+            "match the frozen configuration (241_s)")
     # 239_s F1: the identity manifest re-validates, and the schedule
     # list binds to its cohort identity
     identity_manifest = json.loads(
@@ -1088,12 +1148,19 @@ def verify_resume_validation(run_root: str | Path) -> dict[str, Any]:
         raise InfrastructureError(
             "archived identity manifest does not rehash or does not "
             "match the record (239_s F1)")
-    if bundle_record["identities"]["config_sha256"] != CONFIG_SHA256 \
-            or bundle_record["identities"]["training_cohort_sha256"] \
-            != identity_manifest["training_cohort_sha256"]:
+    # 241_s P1: the COMPLETE ten-key identity contract must equal
+    # the archived manifests — no field can be relabelled
+    expected_identities = expected_bundle_identities(
+        identity_manifest, record["environment_manifest_sha256"])
+    if dict(bundle_record["identities"]) != expected_identities:
+        differing = sorted(
+            key for key in ckpt.IDENTITY_KEYS
+            if bundle_record["identities"].get(key)
+            != expected_identities.get(key))
         raise InfrastructureError(
-            "bundle identities do not match the archived identity "
-            "manifest (239_s F1)")
+            f"bundle identities do not match the archived "
+            f"identity/environment manifests on {differing} "
+            "(241_s P1)")
     schedule = json.loads(
         (run_root / "schedule.json").read_text("utf-8"))
     if content_sha256(schedule) != \
