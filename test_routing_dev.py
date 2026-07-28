@@ -1890,3 +1890,17 @@ def test_tensor_mismatch_message_names_the_dtypes():
     with pytest.raises(InfrastructureError,
                        match="bfloat16.*float32|float32.*bfloat16"):
         resume_validation.compare_tensor_states(a, b, 0.0, "adapter")
+
+
+def test_rev6_declares_precision_and_lineage():
+    """244_s: the fp32 adapter amendment and the outcome-informed
+    relaunch lineage are FROZEN config, not code side-effects."""
+    config = resume_validation.RESUME_VALIDATION_CONFIG
+    assert config["lora"]["adapter_dtype"] == "float32"
+    lineage = config["lineage"]
+    assert lineage["outcome_informed"] is True
+    assert lineage["parent_entry_sha256"] == (
+        "943b9d7ce8c7ebcd908101489a8f0a866ccc575c8538f727d633415e"
+        "918ca212")
+    assert "243_f" in lineage["motivating_evidence"]
+    assert "237d4c21" in lineage["motivating_evidence"]

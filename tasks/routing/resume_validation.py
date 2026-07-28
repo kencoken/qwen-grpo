@@ -70,7 +70,12 @@ RESUME_VALIDATION_CONFIG: dict[str, Any] = {
     "revision": "aa8e72537993ba99e69dfaafa59ed015b17504d1",
     "quantization": {"load_in_4bit": True, "quant_type": "nf4",
                      "double_quant": True, "compute_dtype": "bfloat16"},
+    # 244_s F2: adapter precision is a DECLARED training amendment
+    # (REV6): fp32 adapters over the NF4 base — normative for the
+    # forthcoming P0 builder; a later bf16 P0 would not be covered by
+    # this validation.
     "lora": {"r": 16, "alpha": 32, "dropout": 0.05,
+             "adapter_dtype": "float32",
              "targets": ["q_proj", "k_proj", "v_proj", "o_proj",
                          "gate_proj", "up_proj", "down_proj"]},
     "grpo": {"beta": 1e-3, "group_size": 8, "temperature": 1.0,
@@ -100,6 +105,18 @@ RESUME_VALIDATION_CONFIG: dict[str, Any] = {
     # 212_f reminder 2: the tranche's EXACT operational ceiling
     "ceiling_gpu_hours": 0.5,
     "run_root": "runs/routing-dev/resume-validation-v4",
+    # 244_s F1: this relaunch is the outcome-informed successor of the
+    # aborted rev5 run and its dtype diagnostic — the ledger entry
+    # records that lineage explicitly.
+    "lineage": {
+        "motivating_evidence":
+            ("243_f rev6 freeze; aborted rev5 closeout 237d4c21d07c…; "
+             "outcome-informed dtype-smoke closeout 943b9d7ce8c7…"),
+        "parent_entry_sha256":
+            ("943b9d7ce8c7ebcd908101489a8f0a866ccc575c8538f727d633"
+             "415e918ca212"),
+        "outcome_informed": True,
+    },
 }
 
 CONFIG_SHA256 = content_sha256(RESUME_VALIDATION_CONFIG)
@@ -616,12 +633,19 @@ def _build_trainer(rows, reward, run_dir: Path, save_at: int | None,
     # bf16 base initializes LoRA in bf16, but HF resume_from_checkpoint
     # -> PEFT load_adapter restores it in fp32 — two precisions, so the
     # resumed arm can never equal the uninterrupted one at the frozen
-    # exact tolerance. Pin the adapters to fp32 on EVERY construction
-    # (the standard k-bit setup); the optimizer does not exist yet, so
-    # the cast is safe and both code paths land identical.
+    # exact tolerance. The adapters are pinned on EVERY construction to
+    # the DECLARED precision (244_s F2: a frozen-config amendment, not
+    # a serialization detail); the optimizer does not exist yet, so the
+    # cast is safe and both code paths land identical.
+    adapter_dtype = getattr(torch, config["lora"]["adapter_dtype"])
+    if adapter_dtype is not torch.float32:
+        raise InfrastructureError(
+            "this validation covers float32 adapters only — a "
+            "different adapter_dtype needs its own reviewed tranche "
+            "(244_s F2)")
     for name, parameter in trainer.model.named_parameters():
         if "lora" in name:
-            parameter.data = parameter.data.to(torch.float32)
+            parameter.data = parameter.data.to(adapter_dtype)
     for callback in extra_callbacks:
         trainer.add_callback(callback)
     return trainer
@@ -1371,10 +1395,11 @@ def execute_resume_validation(*, expected_freeze_sha256: str,
             json.dumps(payload, indent=1, sort_keys=True) + "\n",
             encoding="utf-8")
 
+    lineage = config["lineage"]
     entry = {
         "kind": "resume_validation",
         "question": frozen["question"],
-        "motivating_evidence": "240_f rev4 freeze; 232_s item 2",
+        "motivating_evidence": lineage["motivating_evidence"],
         "freeze": {"freeze_sha256": frozen["freeze_sha256"],
                    "config_sha256": CONFIG_SHA256,
                    "identity_manifest_sha256":
@@ -1385,9 +1410,11 @@ def execute_resume_validation(*, expected_freeze_sha256: str,
                    "attested_environment_sha256":
                        expected_environment_sha256,
                    "session_preflight_sha256": preflight_sha},
-        "parent": None,
+        # 244_s F1: the outcome-informed successor of the aborted run
+        # and its diagnostic, parented on the smoke closeout
+        "parent": lineage["parent_entry_sha256"],
         "budget_allocated_gpu_hours": config["ceiling_gpu_hours"],
-        "outcome_informed": False,
+        "outcome_informed": lineage["outcome_informed"],
     }
     admitted = admit_and_append_launch(entry, expected_head_sha256,
                                        ledger_path)
