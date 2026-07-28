@@ -1979,5 +1979,203 @@ def test_probe_groups_rebuild_from_trace_rows(step4_support):
     assert groups[0]["valid"] == 7
     assert groups[0]["parseable"] == 7
     tampered = dict(row, rewards=[0.5] * 7 + [0.0])
-    with pytest.raises(InfrastructureError, match="authenticated"):
+    with pytest.raises(InfrastructureError, match="re-derivation"):
         probe_run.groups_from_trace([tampered], loaded, record)
+    # 248_s F2 reproduction: a completion SELECTING worker 2 recorded
+    # as worker 3 with worker 3's authenticated reward refuses
+    flipped = dict(row,
+                   actions=[[3]] * 7 + [None],
+                   assignments=[[3]] * 7 + [None],
+                   rewards=[surface[(oid, (3,))]] * 7 + [0.0])
+    with pytest.raises(InfrastructureError, match="re-derivation"):
+        probe_run.groups_from_trace([flipped], loaded, record)
+    # unequal parallel arrays refuse rather than zip-truncate
+    short = dict(row, rewards=row["rewards"][:7])
+    with pytest.raises(InfrastructureError, match="parallel arrays"):
+        probe_run.groups_from_trace([short], loaded, record)
+    # a malformed completion recorded as valid refuses
+    fake_valid = dict(row,
+                      completions=["nope"] * 8,
+                      actions=[[2]] * 8, assignments=[[2]] * 8,
+                      rewards=[surface[(oid, (2,))]] * 8)
+    with pytest.raises(InfrastructureError, match="recorded as "
+                       "valid"):
+        probe_run.groups_from_trace([fake_valid], loaded, record)
+
+
+def test_probe_head_must_be_the_frozen_lineage_parent(tmp_path):
+    """248_s smaller item: the launch head cannot be substituted."""
+    with pytest.raises(InfrastructureError, match="lineage parent"):
+        probe_run.execute_probe(
+            expected_freeze_sha256=probe_run.tranche_freeze()[
+                "freeze_sha256"],
+            expected_identity_sha256="0" * 64,
+            expected_environment_sha256="0" * 64,
+            expected_head_sha256="0" * 64,
+            ledger_path=tmp_path / "ledger.md",
+            _environment_builder=lambda: (_ for _ in ()).throw(
+                AssertionError("must refuse before env build")))
+
+
+def test_probe_preflight_and_support_matrix(step4_support):
+    floor = probe_run.PROBE_CONFIG["min_free_vram_mib"]
+    good = {"free_mib": floor + 1, "total_mib": 24564,
+            "floor_mib": floor}
+    probe_run._verify_probe_preflight(good)
+    with pytest.raises(InfrastructureError, match="FAILED"):
+        probe_run._verify_probe_preflight(dict(good,
+                                               free_mib=floor - 1))
+    # the support matrix covers the COMPLETE grid incl. zeros
+    loaded = step4_support
+    record = dev_support.select_c_fixed_dev(loaded)
+    oid = _code_obs(loaded)
+    surface = loaded["surface"]
+    groups = probe_run.groups_from_trace([{
+        "global_group_index": 0, "observation_id": oid,
+        "completions": [json.dumps({"worker_ids": [2]})] * 8,
+        "actions": [[2]] * 8, "assignments": [[2]] * 8,
+        "rewards": [surface[(oid, (2,))]] * 8}], loaded, record)
+    matrix = probe_run.support_matrix(groups)
+    assert len(matrix) == 6 * 3 * 4
+    assert matrix["code_atomic|resource_first|tied"] == 1
+    assert sum(matrix.values()) == 1
+    # zero-denominator strata are PRESENT, not omitted (248_s)
+    assert set(v for k, v in matrix.items()
+               if k != "code_atomic|resource_first|tied") == {0}
+
+
+def test_probe_archive_verifier_lifecycle(step4_support, tmp_path,
+                                          monkeypatch):
+    """248_s smaller item: the independent verifier PASSES a complete
+    synthetic archive built from committed evidence, and refuses
+    schedule tampering, identity-manifest (provenance) tampering, and
+    a final-map mismatch."""
+    replica = tmp_path / "surface"
+    support_run.restore_surface_evidence(
+        "plans/conductor/evidence/routing_dev_support_v1/surface",
+        replica)
+    monkeypatch.setitem(probe_run.PROBE_CONFIG, "surface_dir",
+                        str(replica))
+    loaded = probe_run.load_locked_support()
+    cohort = probe_run.bound_cohort()
+    rows = probe_run.probe_schedule(loaded, cohort)
+    identity = probe_run.static_identity_manifest(loaded, cohort)
+    env = json.loads(Path(
+        "plans/conductor/evidence/resume_validation_v4/"
+        "environment_manifest.json").read_text("utf-8"))
+    config = probe_run.PROBE_CONFIG
+    preflight = {"free_mib": config["min_free_vram_mib"] + 79,
+                 "total_mib": 24564,
+                 "floor_mib": config["min_free_vram_mib"]}
+    run_root = tmp_path / "probe"
+    run_root.mkdir()
+    from tasks.conductor.grpo_task import positional_to_semantic
+    surface = loaded["surface"]
+    group_size = config["grpo"]["group_size"]
+    trace_lines = []
+    for i, row in enumerate(rows):
+        oid = row["observation_id"]
+        positions = json.loads(row["positions"])
+        action = [2] * row["num_steps"]
+        semantic = list(positional_to_semantic(action, positions))
+        reward = float(surface[(oid, tuple(semantic))])
+        text_ = json.dumps({"worker_ids": action})
+        trace_lines.append(json.dumps({
+            "global_group_index": i, "observation_id": oid,
+            "completions": [text_] * group_size,
+            "actions": [action] * group_size,
+            "assignments": [semantic] * group_size,
+            "rewards": [reward] * group_size}))
+    (run_root / "actions.jsonl").write_text(
+        "\n".join(trace_lines) + "\n", encoding="utf-8")
+    adapter_map = {"lora_A.default.weight": "aa" * 32}
+    for name in ("checkpoint_zero_hashes.json",
+                 "checkpoint_final_hashes.json"):
+        (run_root / name).write_text(
+            json.dumps(adapter_map, indent=1, sort_keys=True) + "\n",
+            encoding="utf-8")
+    for name, payload in (
+            ("environment_manifest.json", env),
+            ("identity_manifest.json", identity),
+            ("session_preflight.json", preflight),
+            ("schedule.json",
+             [row["observation_id"] for row in rows]),
+            ("bound_cohort.json", dict(cohort))):
+        (run_root / name).write_text(
+            json.dumps(payload, indent=1, sort_keys=True) + "\n",
+            encoding="utf-8")
+    total = config["total_groups"]
+    counters = {"generated_groups": total, "consumed_groups": total,
+                "optimizer_updates": total,
+                "sampled_completions": total * group_size}
+    record = {
+        "tranche": config["tranche"],
+        "freeze_sha256": probe_run.tranche_freeze()["freeze_sha256"],
+        "config_sha256": probe_run.CONFIG_SHA256,
+        "identity_manifest_sha256": identity["manifest_sha256"],
+        "environment_manifest_sha256":
+            dev_support.validate_env_self_hash(env),
+        "attested_environment_sha256":
+            resume_validation.attested_environment_sha256(env),
+        "session_preflight": preflight,
+        "session_preflight_sha256": charter.content_sha256(preflight),
+        "checkpoint_zero_adapter_sha256":
+            charter.content_sha256(adapter_map),
+        "final_adapter_sha256": charter.content_sha256(adapter_map),
+        "counters": counters,
+        "probe_cohort_sha256": cohort["cohort_sha256"],
+        "execution_telemetry": {
+            "group_accounting": counters,
+            "surface_reward_lookups": total * group_size,
+            "live_worker_calls": 0,
+            "worker_cache": "not-applicable",
+            "wall_seconds": 1.0,
+            "deadline_seconds": config["ceiling_gpu_hours"] * 3600.0,
+            "peak_reserved_vram_mib": 0,
+            "session_preflight": preflight,
+        },
+    }
+    report = probe_run.build_probe_report(run_root)
+    for name, payload in (("probe_report.json", report),
+                          ("probe_record.json", record)):
+        (run_root / name).write_text(
+            json.dumps(payload, indent=1, sort_keys=True) + "\n",
+            encoding="utf-8")
+    assert probe_run.verify_probe_run(run_root)["verdict"] == "PASS"
+    assert report["support_matrix"]["code_atomic|resource_first|tied"] \
+        > 0
+
+    # schedule tampering refuses
+    schedule_path = run_root / "schedule.json"
+    good_schedule = schedule_path.read_text("utf-8")
+    swapped = json.loads(good_schedule)
+    swapped[0], swapped[4] = swapped[4], swapped[0]
+    schedule_path.write_text(json.dumps(swapped, indent=1) + "\n",
+                             encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="schedule"):
+        probe_run.verify_probe_run(run_root)
+    schedule_path.write_text(good_schedule, encoding="utf-8")
+
+    # provenance (identity manifest) tampering refuses
+    identity_path = run_root / "identity_manifest.json"
+    good_identity = identity_path.read_text("utf-8")
+    tampered = json.loads(good_identity)
+    tampered["seed"] = "1"
+    identity_path.write_text(
+        json.dumps(tampered, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="rehash or bind"):
+        probe_run.verify_probe_run(run_root)
+    identity_path.write_text(good_identity, encoding="utf-8")
+
+    # final-map mismatch refuses on the PERSISTED maps
+    final_path = run_root / "checkpoint_final_hashes.json"
+    good_final = final_path.read_text("utf-8")
+    final_path.write_text(
+        json.dumps({"lora_A.default.weight": "bb" * 32}, indent=1,
+                   sort_keys=True) + "\n", encoding="utf-8")
+    with pytest.raises(InfrastructureError,
+                       match="zero-mutation gate FAILS"):
+        probe_run.verify_probe_run(run_root)
+    final_path.write_text(good_final, encoding="utf-8")
+    assert probe_run.verify_probe_run(run_root)["verdict"] == "PASS"
