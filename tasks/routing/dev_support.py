@@ -62,7 +62,10 @@ def validate_dev_cohort(namespace: str,
                         visibility: str) -> None:
     """A development cohort spec is exact: a dev namespace, per-cell
     duplicate-free integer index lists inside the namespace cap, known
-    renderers, one visibility condition."""
+    renderers, one visibility condition. 214_s: every development
+    cohort covers ALL SIX cells and the COMPLETE renderer crossing —
+    the charter's populations (support, probe, val, cycle) all do,
+    and a partial population must never masquerade as one."""
     from tasks.conductor.program import namespace_cap
     from tasks.conductor.types import RENDERER_IDS, VISIBILITY_CONDITIONS
     if namespace not in DEV_NAMESPACES:
@@ -71,6 +74,10 @@ def validate_dev_cohort(namespace: str,
             f"{DEV_NAMESPACES}")
     if not cohort:
         raise InfrastructureError("empty development cohort")
+    if set(cohort) != set(CELL_IDS):
+        raise InfrastructureError(
+            f"development cohorts cover all six cells "
+            f"{sorted(CELL_IDS)}; got {sorted(cohort)} (214_s)")
     for cell, indices in cohort.items():
         if cell not in CELL_IDS:
             raise InfrastructureError(f"unknown cell {cell!r}")
@@ -91,11 +98,10 @@ def validate_dev_cohort(namespace: str,
             seen.add(idx)
     if not renderers:
         raise InfrastructureError("cohort declares no renderers")
-    if len(set(renderers)) != len(renderers) \
-            or any(r not in RENDERER_IDS for r in renderers):
+    if list(renderers) != list(RENDERER_IDS):
         raise InfrastructureError(
-            f"renderers {renderers!r} must be distinct members of "
-            f"{RENDERER_IDS}")
+            f"development cohorts cross ALL renderers in canonical "
+            f"order {RENDERER_IDS}; got {tuple(renderers)!r} (214_s)")
     if visibility not in VISIBILITY_CONDITIONS:
         raise InfrastructureError(f"unknown visibility {visibility!r}")
 
@@ -131,15 +137,25 @@ def dev_cohort_observations(namespace: str,
 
 # --- declaration ---------------------------------------------------------------
 
-def build_dev_declaration(pool: Any, *, tag: str, namespace: str,
+def cache_identity_of(profile: Mapping[str, Any]) -> str:
+    """The frozen cache-key contract: the slw-keyed worker-completion
+    table under the profile's request contract (106_s §8.5)."""
+    return f"worker_completions/slw/{profile['request_contract']}"
+
+
+def build_dev_declaration(rt: Any, *, tag: str, namespace: str,
                           cohort: Mapping[str, Any],
                           renderers: tuple[str, ...] | list[str],
                           visibility: str) -> dict[str, Any]:
     """Identities + fingerprints + the exact cohort spec, computed from
-    a pool bound to the frozen profile, BEFORE materialization. The
-    tranche freeze commits this record; materialization persists it
-    beside the surface and binds it by content hash."""
+    a RUNTIME bound to the frozen profile, BEFORE materialization —
+    including the runtime-profile fingerprint, request contract and
+    cache identity (214_s P1: the declaration binds the execution it
+    authorizes, not just the pool). The tranche freeze commits this
+    record; materialization persists it beside the surface and binds
+    it by content hash."""
     import hashlib
+    pool = rt.pool
     profile = pool.profile
     from tasks.conductor.pool_runtime import (
         pool_worker_visible_fingerprint,
@@ -173,7 +189,9 @@ def build_dev_declaration(pool: Any, *, tag: str, namespace: str,
         "worker_pool_fingerprint": STAGE0_POOL_FINGERPRINT,
         "worker_visible_fingerprint": pool_worker_visible_fingerprint(
             profile, chat_shas, system_shas),
+        "runtime_profile_fingerprint": rt.runtime_profile_fingerprint,
         "request_contract": profile["request_contract"],
+        "cache_identity": cache_identity_of(profile),
         "prompt_revision": profile["prompts"]["d16_revision"],
         "device": profile["device"],
     }
@@ -218,12 +236,16 @@ def materialize_dev_support(rt: Any, declaration: Mapping[str, Any],
     persisted beside the surface."""
     for key, expected in (
             ("worker_visible_fingerprint", rt.worker_visible_fingerprint),
-            ("worker_pool_fingerprint", rt.pool_fingerprint)):
-        if declaration[key] != expected:
+            ("worker_pool_fingerprint", rt.pool_fingerprint),
+            ("runtime_profile_fingerprint",
+             rt.runtime_profile_fingerprint),
+            ("request_contract", rt.profile["request_contract"]),
+            ("cache_identity", cache_identity_of(rt.profile))):
+        if declaration.get(key) != expected:
             raise InfrastructureError(
-                f"runtime {key} {expected} does not match the declared "
-                f"{declaration[key]}; the support binds one execution "
-                "identity")
+                f"runtime {key} {expected!r} does not match the declared "
+                f"{declaration.get(key)!r}; the support binds one "
+                "execution identity (214_s P1)")
     if rt.profile["visibility_condition"] != declaration["visibility"]:
         raise InfrastructureError(
             f"runtime visibility {rt.profile['visibility_condition']!r} "
@@ -313,16 +335,141 @@ def materialize_dev_support(rt: Any, declaration: Mapping[str, Any],
     return manifest
 
 
+# --- the surface lock (214_s P1: one closed artifact binds everything) ---------
+
+SURFACE_LOCK_KIND = "routing-dev-surface-lock-v1"
+_LOCK_KEYS = frozenset({
+    "lock", "support", "declaration_sha256", "manifest_sha256",
+    "payoffs_sha256", "trace_manifest_sha256", "trace_steps_sha256",
+    "worker_visible_fingerprint", "runtime_profile_fingerprint",
+    "worker_pool_fingerprint", "request_contract", "cache_identity",
+    "routing_source_sha256", "driver", "environment_manifest_sha256",
+})
+
+
+def build_surface_lock(out_dir: str | Path, *,
+                       routing_source_sha256: str, driver: str,
+                       environment_manifest_sha256: str
+                       ) -> dict[str, Any]:
+    """Derive the closed surface-lock artifact from the persisted files
+    plus the launch identity (routing source digest incl. the actual
+    driver, and the environment manifest of the materializing run).
+    Written as `surface_lock.json`; its self-hash is what the tranche
+    freeze commits, and every consumer requires it."""
+    out_dir = Path(out_dir)
+    declaration = json.loads(
+        (out_dir / "declaration.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (out_dir / "manifest.json").read_text(encoding="utf-8"))
+    lock_path = out_dir / "surface_lock.json"
+    if lock_path.exists():
+        raise InfrastructureError(
+            f"{lock_path} exists; a surface is locked exactly once")
+    if not (isinstance(routing_source_sha256, str)
+            and len(routing_source_sha256) == 64):
+        raise InfrastructureError(
+            f"bad routing_source_sha256 {routing_source_sha256!r}")
+    if not driver or not isinstance(driver, str):
+        raise InfrastructureError(f"bad driver {driver!r}")
+    if not (isinstance(environment_manifest_sha256, str)
+            and len(environment_manifest_sha256) == 64):
+        raise InfrastructureError(
+            f"bad environment_manifest_sha256 "
+            f"{environment_manifest_sha256!r}")
+    lock = {
+        "lock": SURFACE_LOCK_KIND,
+        "support": manifest["support"],
+        "declaration_sha256": _sha_file(out_dir / "declaration.json"),
+        "manifest_sha256": _sha_file(out_dir / "manifest.json"),
+        "payoffs_sha256": manifest["payoffs_sha256"],
+        "trace_manifest_sha256": manifest["trace_manifest_sha256"],
+        "trace_steps_sha256": manifest["trace_steps_sha256"],
+        "worker_visible_fingerprint":
+            declaration["worker_visible_fingerprint"],
+        "runtime_profile_fingerprint":
+            declaration["runtime_profile_fingerprint"],
+        "worker_pool_fingerprint":
+            declaration["worker_pool_fingerprint"],
+        "request_contract": declaration["request_contract"],
+        "cache_identity": declaration["cache_identity"],
+        "routing_source_sha256": routing_source_sha256,
+        "driver": driver,
+        "environment_manifest_sha256": environment_manifest_sha256,
+    }
+    if manifest["declaration_sha256"] != lock["declaration_sha256"]:
+        raise InfrastructureError(
+            "manifest and lock disagree on the declaration bytes")
+    lock["lock_sha256"] = content_sha256(lock)
+    lock_path.write_text(json.dumps(lock, indent=1, sort_keys=True)
+                         + "\n", encoding="utf-8")
+    return lock
+
+
+def validate_surface_lock(out_dir: str | Path,
+                          expected_lock_sha256: str) -> dict[str, Any]:
+    """The consuming boundary: the persisted lock must carry the
+    EXTERNALLY frozen hash, rehash to it, use the exact closed schema,
+    and every file binding must recompute from the bytes on disk."""
+    out_dir = Path(out_dir)
+    lock_path = out_dir / "surface_lock.json"
+    if not lock_path.exists():
+        raise InfrastructureError(f"{out_dir} holds no surface lock")
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    if set(lock) != _LOCK_KEYS | {"lock_sha256"}:
+        raise InfrastructureError(
+            f"surface lock keys {sorted(lock)} != the exact closed "
+            "schema")
+    if lock["lock"] != SURFACE_LOCK_KIND:
+        raise InfrastructureError(f"unknown lock kind {lock['lock']!r}")
+    body = {k: v for k, v in lock.items() if k != "lock_sha256"}
+    if content_sha256(body) != lock["lock_sha256"]:
+        raise InfrastructureError("surface lock does not rehash")
+    if lock["lock_sha256"] != expected_lock_sha256:
+        raise InfrastructureError(
+            "surface lock is not the externally frozen lock — refusing "
+            "to consume a surface under an unrelated lock (214_s P1)")
+    manifest = json.loads(
+        (out_dir / "manifest.json").read_text(encoding="utf-8"))
+    checks = {
+        "declaration_sha256": _sha_file(out_dir / "declaration.json"),
+        "manifest_sha256": _sha_file(out_dir / "manifest.json"),
+        "payoffs_sha256": _sha_file(out_dir / "payoffs.jsonl"),
+        "trace_manifest_sha256":
+            _sha_file(out_dir / "traces" / "traces" / "manifest.json"),
+        "trace_steps_sha256":
+            _sha_file(out_dir / "traces" / "traces" / "steps.jsonl"),
+        "support": manifest["support"],
+    }
+    for key, actual in checks.items():
+        if lock[key] != actual:
+            raise InfrastructureError(
+                f"surface lock {key} does not match the bytes on disk")
+    declaration = json.loads(
+        (out_dir / "declaration.json").read_text(encoding="utf-8"))
+    for key in ("worker_visible_fingerprint",
+                "runtime_profile_fingerprint",
+                "worker_pool_fingerprint", "request_contract",
+                "cache_identity"):
+        if lock[key] != declaration[key]:
+            raise InfrastructureError(
+                f"surface lock {key} does not match the declaration")
+    return lock
+
+
 # --- fail-closed loader ----------------------------------------------------------
 
-def load_dev_surface(out_dir: str | Path) -> dict[str, Any]:
+def load_dev_surface(out_dir: str | Path, *,
+                     expected_lock_sha256: str) -> dict[str, Any]:
     """Mirror of the frozen Stage-0 loader for a persisted development
-    declaration: complete coverage over the declared 4^S space, every
-    payoff independently re-scored from its stored terminal value
-    against the regenerated gold, artifacts bound by content hash,
-    trace complete with the same execution identity. Returns
-    {"surface", "declaration", "observations", "manifest"}."""
+    declaration, gated by the EXTERNALLY frozen surface lock (214_s
+    P1): the lock validates first, then complete coverage over the
+    declared 4^S space, every payoff independently re-scored from its
+    stored terminal value against the regenerated gold, artifacts
+    bound by content hash, trace complete with the same execution
+    identity. Returns {"surface", "declaration", "observations",
+    "manifest", "lock"}."""
     out_dir = Path(out_dir)
+    lock = validate_surface_lock(out_dir, expected_lock_sha256)
     declaration_path = out_dir / "declaration.json"
     if not declaration_path.exists():
         raise InfrastructureError(
@@ -446,7 +593,7 @@ def load_dev_surface(out_dir: str | Path) -> dict[str, Any]:
               "latent_program_id", "num_nodes")}
             for obs in observations]
     return {"surface": surface, "declaration": declaration,
-            "observations": meta, "manifest": manifest}
+            "observations": meta, "manifest": manifest, "lock": lock}
 
 
 # --- disclosure: direction yields (211_f §4 step 4) ---------------------------
@@ -486,17 +633,41 @@ def direction_yields(surface: Mapping[tuple[str, tuple[int, ...]], float],
 
 # --- c_fixed_dev (210_s issue 1) ----------------------------------------------
 
-def select_c_fixed_dev(surface: Mapping[tuple[str, tuple[int, ...]], float],
-                       observations: list[Mapping[str, Any]],
-                       surface_hashes: Mapping[str, str]
-                       ) -> dict[str, Any]:
+def validate_c_fixed_record(record: Mapping[str, Any]) -> int:
+    """Consumers (telemetry, launch freezes) accept only a rehashing
+    comparator record and extract the worker from it — never a bare
+    int (214_s P1 telemetry finding)."""
+    if not isinstance(record, Mapping) \
+            or record.get("comparator") != "c_fixed_dev-v1":
+        raise InfrastructureError("not a c_fixed_dev-v1 record")
+    body = {k: v for k, v in record.items() if k != "record_sha256"}
+    if content_sha256(body) != record.get("record_sha256"):
+        raise InfrastructureError("c_fixed_dev record does not rehash")
+    worker = record["c_fixed_dev"]
+    if worker not in (2, 3):
+        raise InfrastructureError(f"c_fixed_dev {worker!r} not in {{2,3}}")
+    if record.get("development_only") is not True:
+        raise InfrastructureError(
+            "c_fixed_dev record must be marked development_only")
+    return worker
+
+
+def select_c_fixed_dev(loaded: Mapping[str, Any]) -> dict[str, Any]:
     """The development best-fixed-Code comparator: for each candidate
     w ∈ {2, 3}, the equal-weight family-correct terminal payoff —
     renderer-within-latent, latent-within-cell, equal weights over the
     Code-bearing cells — of the assignment that is family-correct at
     every non-Code node with the (unique) Code node fixed to w.
-    Tie → worker 2. Persisted with both candidate scores, the rule,
-    and the source surface hashes; development-only forever."""
+    Tie → worker 2. Takes the `load_dev_surface` result, so the
+    comparator can only be selected on a LOCK-VALIDATED surface
+    (214_s P1); persisted with both candidate scores, the rule, and
+    the lock identity; development-only forever."""
+    surface = loaded["surface"]
+    observations = loaded["observations"]
+    lock = loaded["lock"]
+    if not isinstance(lock, Mapping) or "lock_sha256" not in lock:
+        raise InfrastructureError(
+            "select_c_fixed_dev needs the lock-validated loader result")
     code_cells: dict[str, dict[str, dict[str, dict[int, float]]]] = {}
     for obs in observations:
         cell = obs["cell_id"]
@@ -553,7 +724,8 @@ def select_c_fixed_dev(surface: Mapping[tuple[str, tuple[int, ...]], float],
         "tie": tie,
         "c_fixed_dev": selected,
         "code_bearing_cells": sorted(code_cells),
-        "surface_hashes": dict(sorted(surface_hashes.items())),
+        "surface_lock_sha256": lock["lock_sha256"],
+        "payoffs_sha256": lock["payoffs_sha256"],
         "development_only": True,
     }
     record["record_sha256"] = content_sha256(record)

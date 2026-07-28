@@ -72,6 +72,34 @@ class GroupAccountant:
     def at_v1_boundary(self) -> bool:
         return self.generated_groups == self.consumed_groups
 
+    @classmethod
+    def restore(cls, counters: Mapping[str, int]) -> "GroupAccountant":
+        """Rebuild from VALIDATED checkpoint counters (the
+        `validate_resume` output) — never from raw ints. Restored
+        state must itself sit on the v1 boundary."""
+        missing = set(_COUNTER_KEYS) - set(counters)
+        if missing:
+            raise InfrastructureError(
+                f"restored counters missing {sorted(missing)}")
+        for key in _COUNTER_KEYS:
+            value = counters[key]
+            if not isinstance(value, int) or isinstance(value, bool) \
+                    or value < 0:
+                raise InfrastructureError(f"bad counter {key}={value!r}")
+        if counters["generated_groups"] != counters["consumed_groups"]:
+            raise InfrastructureError(
+                "restored counters violate the v1 boundary")
+        if counters["sampled_completions"] < counters["generated_groups"]:
+            raise InfrastructureError(
+                "restored counters are impossible: fewer completions "
+                "than groups")
+        accountant = cls()
+        accountant.generated_groups = counters["generated_groups"]
+        accountant.consumed_groups = counters["consumed_groups"]
+        accountant.optimizer_updates = counters["optimizer_updates"]
+        accountant.sampled_completions = counters["sampled_completions"]
+        return accountant
+
     def authorize_checkpoint(self) -> dict[str, int]:
         """The ONLY way to get counters into a checkpoint record."""
         if not self.at_v1_boundary():
@@ -86,17 +114,71 @@ class GroupAccountant:
                 "sampled_completions": self.sampled_completions}
 
 
+# The state artifacts every checkpoint bundle MUST persist and hash
+# (214_s P1: the record binds the restorable state, not just
+# metadata). `scaler` is required whenever mixed precision is active;
+# pass it as None only for full-precision runs — the key is always
+# present so its absence is a decision, never an oversight.
+REQUIRED_STATE_ARTIFACTS = ("adapter", "optimizer", "scheduler", "rng")
+OPTIONAL_STATE_ARTIFACTS = ("scaler",)
+
+
+def hash_state_artifacts(checkpoint_dir: str | Path,
+                         filenames: Mapping[str, str]
+                         ) -> dict[str, str | None]:
+    """Hash every persisted state file in the bundle directory:
+    {artifact_name: filename}. Missing required files refuse."""
+    import hashlib
+    from pathlib import Path as _Path
+    checkpoint_dir = _Path(checkpoint_dir)
+    hashes: dict[str, str | None] = {}
+    for name in REQUIRED_STATE_ARTIFACTS + OPTIONAL_STATE_ARTIFACTS:
+        filename = filenames.get(name)
+        if filename is None:
+            if name in REQUIRED_STATE_ARTIFACTS:
+                raise InfrastructureError(
+                    f"checkpoint bundle missing required state "
+                    f"artifact {name!r}")
+            hashes[name] = None
+            continue
+        path = checkpoint_dir / filename
+        if not path.exists():
+            raise InfrastructureError(
+                f"declared state artifact {name!r} ({filename}) is "
+                "absent from the bundle")
+        hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashes
+
+
+def _validate_artifact_hashes(hashes: Mapping[str, Any]) -> dict:
+    expected_keys = set(REQUIRED_STATE_ARTIFACTS) \
+        | set(OPTIONAL_STATE_ARTIFACTS)
+    if set(hashes) != expected_keys:
+        raise InfrastructureError(
+            f"state artifact hashes must cover exactly "
+            f"{sorted(expected_keys)}, got {sorted(hashes)}")
+    for name in REQUIRED_STATE_ARTIFACTS:
+        value = hashes[name]
+        if not isinstance(value, str) or len(value) != 64:
+            raise InfrastructureError(
+                f"state artifact {name!r} needs a sha256, got "
+                f"{value!r}")
+    return dict(hashes)
+
+
 def build_checkpoint_record(*, identities: Mapping[str, Any],
                             counters: Mapping[str, int],
                             rng_state: Mapping[str, Any],
+                            state_artifact_hashes: Mapping[str, Any],
                             sampler_position: Mapping[str, Any],
                             run_id: str, segment_id: str,
                             parent_checkpoint: str | None
                             ) -> dict[str, Any]:
-    """The persisted contract record (the tensor state itself — adapter
-    weights, optimizer, scheduler, scaler — travels beside it in the
-    checkpoint directory; this record binds the identities and
-    counters that make it resumable)."""
+    """The persisted contract record: binds the identities, counters,
+    the COMPLETE serialized RNG snapshot, and the content hash of
+    every state artifact in the bundle (adapter, optimizer, scheduler,
+    rng, scaler-or-None), so the record cannot describe state it does
+    not actually bind (214_s P1)."""
     missing = set(IDENTITY_KEYS) - set(identities)
     if missing:
         raise InfrastructureError(
@@ -124,6 +206,8 @@ def build_checkpoint_record(*, identities: Mapping[str, Any],
         "counters": {key: int(counters[key]) for key in _COUNTER_KEYS},
         "rng_state_sha256": content_sha256(
             {key: rng_state[key] for key in _RNG_KEYS}),
+        "state_artifact_sha256":
+            _validate_artifact_hashes(state_artifact_hashes),
         "sampler_position": dict(sampler_position),
         "run_id": run_id,
         "segment_id": segment_id,
@@ -134,11 +218,16 @@ def build_checkpoint_record(*, identities: Mapping[str, Any],
 
 
 def validate_resume(checkpoint: Mapping[str, Any],
-                    current_identities: Mapping[str, Any]) -> dict[str, Any]:
+                    current_identities: Mapping[str, Any],
+                    recomputed_artifact_hashes: Mapping[str, Any]
+                    | None = None) -> dict[str, Any]:
     """Fail-closed: EVERY bound identity must match the resuming
-    process exactly; the record must rehash. Returns the counters and
-    sampler position to restore. A changed training parameter is a
-    FORK, never a resume — it shows up here as an identity mismatch."""
+    process exactly; the record must rehash; when the resume path
+    passes the artifact hashes it recomputed from the bundle on disk
+    (it always should — `hash_state_artifacts`), they must equal the
+    bound ones. Returns the counters and sampler position to restore.
+    A changed training parameter is a FORK, never a resume — it shows
+    up here as an identity mismatch."""
     if checkpoint.get("schema") != CHECKPOINT_SCHEMA:
         raise InfrastructureError(
             f"not a {CHECKPOINT_SCHEMA} record: "
@@ -156,6 +245,12 @@ def validate_resume(checkpoint: Mapping[str, Any],
             f"resume identity mismatch on {mismatches} — a changed "
             "training parameter is a checkpoint FORK, never a pure "
             "resume (211_f §11)")
+    if recomputed_artifact_hashes is not None:
+        bound = checkpoint["state_artifact_sha256"]
+        if _validate_artifact_hashes(recomputed_artifact_hashes) != bound:
+            raise InfrastructureError(
+                "checkpoint state artifacts on disk do not match the "
+                "bound hashes — the bundle was altered (214_s P1)")
     counters = checkpoint["counters"]
     if counters["generated_groups"] != counters["consumed_groups"]:
         raise InfrastructureError(
@@ -168,18 +263,41 @@ def validate_resume(checkpoint: Mapping[str, Any],
 # --- segment merging --------------------------------------------------------------
 
 def merge_segments(segments: list[Mapping[str, Any]]) -> dict[str, Any]:
-    """Merge a launch's segments into one trajectory. Each segment:
-    {"segment_id", "status": "complete"|"aborted",
-     "checkpoint_consumed_groups": int  (the consumed counter of the
-        checkpoint this segment ENDED at — for an aborted segment, the
-        last VALID checkpoint before the abort),
-     "groups": [{"global_group_index": int, ...}, ...]}.
-    Post-checkpoint rows of an aborted segment are EXCLUDED from the
-    trajectory but returned as preserved evidence; the merged
-    trajectory must cover a contiguous, duplicate-free index range.
-    """
+    """Merge a launch's segments into one trajectory, with identity,
+    parent-linkage and cutoff enforcement (214_s P1). Each segment:
+
+        {"segment_id", "run_id", "config_sha256",
+         "status": "complete" | "aborted",
+         "checkpoint_id": str | None       (the checkpoint it ENDED at
+            — for aborted, the LAST VALID checkpoint before the abort),
+         "parent_checkpoint": str | None   (the checkpoint it resumed
+            FROM; None only for the first segment),
+         "resume_from_consumed_groups": int  (0 for the first segment),
+         "checkpoint_consumed_groups": int   (consumed counter at
+            checkpoint_id),
+         "groups": [{"global_group_index": int, ...}, ...]}
+
+    Enforced: one run_id and one config across all segments (a config
+    change is a fork, merged separately); segments are ordered by
+    parent linkage — each resumes from its predecessor's end
+    checkpoint and consumed counter; a COMPLETE segment's rows are
+    exactly [resume_from, cutoff) — rows beyond its own checkpoint are
+    impossible and refuse; an ABORTED segment's rows at or beyond its
+    last valid checkpoint are EXCLUDED from the trajectory but
+    returned as preserved evidence. The merged trajectory must be
+    duplicate-free, contiguous and zero-based."""
     if not segments:
         raise InfrastructureError("no segments to merge")
+    run_ids = {segment.get("run_id") for segment in segments}
+    configs = {segment.get("config_sha256") for segment in segments}
+    if len(run_ids) != 1 or None in run_ids:
+        raise InfrastructureError(
+            f"segments span run_ids {sorted(map(str, run_ids))} — one "
+            "launch has one run identity")
+    if len(configs) != 1 or None in configs:
+        raise InfrastructureError(
+            "segments span multiple configs — a config change is a "
+            "FORK and merges separately (211_f §11)")
     trajectory: list[Mapping[str, Any]] = []
     excluded: list[Mapping[str, Any]] = []
     for position, segment in enumerate(segments):
@@ -188,18 +306,56 @@ def merge_segments(segments: list[Mapping[str, Any]]) -> dict[str, Any]:
             raise InfrastructureError(
                 f"segment {segment.get('segment_id')!r} has "
                 f"non-terminal status {status!r}")
-        if status == "aborted" and position != len(segments) - 1:
-            # an aborted middle segment is exactly what an engineering
-            # resume repairs; its tail rows never enter the trajectory
-            pass
+        resume_from = segment["resume_from_consumed_groups"]
         cutoff = segment["checkpoint_consumed_groups"]
-        if not isinstance(cutoff, int) or isinstance(cutoff, bool) \
-                or cutoff < 0:
+        for name, value in (("resume_from_consumed_groups", resume_from),
+                            ("checkpoint_consumed_groups", cutoff)):
+            if not isinstance(value, int) or isinstance(value, bool) \
+                    or value < 0:
+                raise InfrastructureError(f"bad {name} {value!r}")
+        if cutoff < resume_from:
             raise InfrastructureError(
-                f"bad checkpoint_consumed_groups {cutoff!r}")
+                f"segment {segment['segment_id']!r}: checkpoint "
+                f"cutoff {cutoff} precedes its resume point "
+                f"{resume_from} — an impossible history")
+        if position == 0:
+            if segment.get("parent_checkpoint") is not None \
+                    or resume_from != 0:
+                raise InfrastructureError(
+                    "the first segment must start from scratch "
+                    "(no parent checkpoint, resume point 0)")
+        else:
+            previous = segments[position - 1]
+            if segment.get("parent_checkpoint") is None \
+                    or segment["parent_checkpoint"] != \
+                    previous.get("checkpoint_id"):
+                raise InfrastructureError(
+                    f"segment {segment['segment_id']!r} does not "
+                    "resume from its predecessor's end checkpoint — "
+                    "segment ordering/linkage broken")
+            if resume_from != previous["checkpoint_consumed_groups"]:
+                raise InfrastructureError(
+                    f"segment {segment['segment_id']!r} resumes from "
+                    f"consumed counter {resume_from}, but its parent "
+                    f"checkpoint recorded "
+                    f"{previous['checkpoint_consumed_groups']}")
+        indices = sorted(g["global_group_index"]
+                         for g in segment["groups"])
+        if indices and (indices[0] != resume_from
+                        or indices != list(range(indices[0],
+                                                 indices[-1] + 1))):
+            raise InfrastructureError(
+                f"segment {segment['segment_id']!r} rows are not "
+                f"contiguous from its resume point {resume_from}")
         for group in segment["groups"]:
             index = group["global_group_index"]
-            if status == "aborted" and index >= cutoff:
+            if index >= cutoff:
+                if status == "complete":
+                    raise InfrastructureError(
+                        f"complete segment {segment['segment_id']!r} "
+                        f"carries row {index} beyond its own "
+                        f"checkpoint cutoff {cutoff} — an impossible "
+                        "history")
                 excluded.append(group)
             else:
                 trajectory.append(group)
@@ -249,16 +405,52 @@ def isolated_rng() -> Iterator[None]:
 
 
 def capture_rng_state() -> dict[str, Any]:
-    """The serializable RNG snapshot a checkpoint binds (hashed into
-    the record; the raw states travel in the checkpoint directory)."""
+    """The COMPLETE serializable RNG snapshot a checkpoint binds
+    (214_s P1: the earlier version dropped python's version/gauss
+    fields and numpy's position/Gaussian state, so two different
+    states could hash identically). Restorable via
+    `restore_rng_state` — capture → restore → draws are identical."""
     import numpy
     import torch
+    python_version, python_internal, python_gauss = random.getstate()
+    np_name, np_keys, np_pos, np_has_gauss, np_cached = \
+        numpy.random.get_state()
     state: dict[str, Any] = {
-        "python": list(map(str, random.getstate()[1])),
-        "numpy": numpy.random.get_state()[1].tolist(),
+        "python": {"version": python_version,
+                   "internal_state": list(python_internal),
+                   "gauss_next": python_gauss},
+        "numpy": {"name": np_name, "keys": np_keys.tolist(),
+                  "pos": int(np_pos), "has_gauss": int(np_has_gauss),
+                  "cached_gaussian": float(np_cached)},
         "torch_cpu": torch.get_rng_state().tolist(),
         "torch_cuda": ([s.tolist() for s in
                         torch.cuda.get_rng_state_all()]
                        if torch.cuda.is_available() else None),
     }
     return state
+
+
+def restore_rng_state(state: Mapping[str, Any]) -> None:
+    """Exact inverse of `capture_rng_state`."""
+    import numpy
+    import torch
+    python = state["python"]
+    random.setstate((python["version"],
+                     tuple(python["internal_state"]),
+                     python["gauss_next"]))
+    np_state = state["numpy"]
+    numpy.random.set_state((np_state["name"],
+                            numpy.array(np_state["keys"],
+                                        dtype=numpy.uint32),
+                            np_state["pos"], np_state["has_gauss"],
+                            np_state["cached_gaussian"]))
+    torch.set_rng_state(torch.tensor(state["torch_cpu"],
+                                     dtype=torch.uint8))
+    if state["torch_cuda"] is not None:
+        if not torch.cuda.is_available():
+            raise InfrastructureError(
+                "checkpoint carries CUDA RNG state but CUDA is "
+                "unavailable — wrong resume environment")
+        torch.cuda.set_rng_state_all(
+            [torch.tensor(s, dtype=torch.uint8)
+             for s in state["torch_cuda"]])

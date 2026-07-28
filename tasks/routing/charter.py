@@ -87,26 +87,47 @@ def natural_mixture_weights(observations: list[Mapping[str, Any]]
     """Per-observation weights under the frozen natural mixture:
     renderer-within-latent, latent-within-cell, equal cell weights.
     Observations carry observation_id, cell_id, latent_program_id,
-    renderer_id. Weights sum to 1 over the population; an empty
-    population refuses."""
+    renderer_id. The population must BE a natural-mixture population
+    (214_s): all six cells present and every latent crossed with the
+    complete renderer set — 'natural' is a frozen definition, not a
+    weighting of whatever partial population arrives. Weights sum to
+    1; an empty or duplicated population refuses."""
+    from tasks.conductor.types import CELL_IDS, RENDERER_IDS
     if not observations:
         raise InfrastructureError("natural mixture over an empty "
                                   "population")
-    cells: dict[str, dict[str, list[str]]] = {}
+    cells: dict[str, dict[str, dict[str, str]]] = {}
     for obs in observations:
-        cells.setdefault(obs["cell_id"], {}).setdefault(
-            obs["latent_program_id"], []).append(obs["observation_id"])
+        renderers = cells.setdefault(obs["cell_id"], {}).setdefault(
+            obs["latent_program_id"], {})
+        if obs["renderer_id"] in renderers:
+            raise InfrastructureError(
+                f"duplicate observation for "
+                f"{obs['latent_program_id']} × {obs['renderer_id']} "
+                "in the mixture population")
+        renderers[obs["renderer_id"]] = obs["observation_id"]
+    if set(cells) != set(CELL_IDS):
+        raise InfrastructureError(
+            f"natural mixture requires all six cells {sorted(CELL_IDS)}"
+            f"; got {sorted(cells)}")
+    for cell, latents in cells.items():
+        for latent, renderers in latents.items():
+            if set(renderers) != set(RENDERER_IDS):
+                raise InfrastructureError(
+                    f"{latent}: natural mixture requires the complete "
+                    f"renderer crossing {sorted(RENDERER_IDS)}; got "
+                    f"{sorted(renderers)}")
     weights: dict[str, float] = {}
     cell_weight = 1.0 / len(cells)
     for latents in cells.values():
         latent_weight = cell_weight / len(latents)
-        for members in latents.values():
-            renderer_weight = latent_weight / len(members)
-            for observation_id in members:
+        for renderers in latents.values():
+            renderer_weight = latent_weight / len(renderers)
+            for observation_id in renderers.values():
                 if observation_id in weights:
                     raise InfrastructureError(
-                        f"duplicate observation {observation_id} in the "
-                        "mixture population")
+                        f"duplicate observation {observation_id} in "
+                        "the mixture population")
                 weights[observation_id] = renderer_weight
     return weights
 
