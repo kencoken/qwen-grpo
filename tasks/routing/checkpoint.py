@@ -122,6 +122,17 @@ class GroupAccountant:
 REQUIRED_STATE_ARTIFACTS = ("adapter", "optimizer", "scheduler", "rng")
 OPTIONAL_STATE_ARTIFACTS = ("scaler",)
 
+# 216_s F5: ONE fixed filename manifest — the resume boundary hashes
+# these exact files, so "which files are the state" is never a caller
+# choice.
+CHECKPOINT_BUNDLE_FILENAMES = {
+    "adapter": "adapter.safetensors",
+    "optimizer": "optimizer.pt",
+    "scheduler": "scheduler.pt",
+    "rng": "rng_state.json",
+    "scaler": "scaler.pt",
+}
+
 
 def hash_state_artifacts(checkpoint_dir: str | Path,
                          filenames: Mapping[str, str]
@@ -217,17 +228,34 @@ def build_checkpoint_record(*, identities: Mapping[str, Any],
     return record
 
 
+def persist_rng_state(bundle_dir: str | Path,
+                      rng_state: Mapping[str, Any]) -> str:
+    """Write the captured RNG snapshot into the bundle under its fixed
+    filename; returns the content hash the checkpoint record binds as
+    `rng_state_sha256` (216_s F5 cross-binding)."""
+    import json
+    from pathlib import Path as _Path
+    state = {key: rng_state[key] for key in _RNG_KEYS}
+    path = _Path(bundle_dir) / CHECKPOINT_BUNDLE_FILENAMES["rng"]
+    path.write_text(json.dumps(state, indent=1, sort_keys=True) + "\n",
+                    encoding="utf-8")
+    return content_sha256(state)
+
+
 def validate_resume(checkpoint: Mapping[str, Any],
-                    current_identities: Mapping[str, Any],
-                    recomputed_artifact_hashes: Mapping[str, Any]
-                    | None = None) -> dict[str, Any]:
+                    current_identities: Mapping[str, Any], *,
+                    bundle_dir: str | Path) -> dict[str, Any]:
     """Fail-closed: EVERY bound identity must match the resuming
-    process exactly; the record must rehash; when the resume path
-    passes the artifact hashes it recomputed from the bundle on disk
-    (it always should — `hash_state_artifacts`), they must equal the
-    bound ones. Returns the counters and sampler position to restore.
-    A changed training parameter is a FORK, never a resume — it shows
-    up here as an identity mismatch."""
+    process exactly; the record must rehash; the bundle's state
+    artifacts are ALWAYS rehashed from disk under the fixed filename
+    manifest and must equal the bound hashes; the persisted RNG
+    artifact must content-hash to the bound `rng_state_sha256`
+    (216_s F5 — none of this is optional). Returns the counters,
+    sampler position, and parsed RNG state to restore. A changed
+    training parameter is a FORK, never a resume — it shows up here
+    as an identity mismatch."""
+    import json
+    from pathlib import Path as _Path
     if checkpoint.get("schema") != CHECKPOINT_SCHEMA:
         raise InfrastructureError(
             f"not a {CHECKPOINT_SCHEMA} record: "
@@ -245,19 +273,35 @@ def validate_resume(checkpoint: Mapping[str, Any],
             f"resume identity mismatch on {mismatches} — a changed "
             "training parameter is a checkpoint FORK, never a pure "
             "resume (211_f §11)")
-    if recomputed_artifact_hashes is not None:
-        bound = checkpoint["state_artifact_sha256"]
-        if _validate_artifact_hashes(recomputed_artifact_hashes) != bound:
-            raise InfrastructureError(
-                "checkpoint state artifacts on disk do not match the "
-                "bound hashes — the bundle was altered (214_s P1)")
+    bound = checkpoint["state_artifact_sha256"]
+    bundle_dir = _Path(bundle_dir)
+    filenames = {
+        name: (CHECKPOINT_BUNDLE_FILENAMES[name]
+               if bound.get(name) is not None else None)
+        for name in REQUIRED_STATE_ARTIFACTS + OPTIONAL_STATE_ARTIFACTS}
+    recomputed = hash_state_artifacts(bundle_dir, filenames)
+    if recomputed != bound:
+        raise InfrastructureError(
+            "checkpoint state artifacts on disk do not match the "
+            "bound hashes — the bundle was altered (214_s P1)")
+    rng_path = bundle_dir / CHECKPOINT_BUNDLE_FILENAMES["rng"]
+    rng_state = json.loads(rng_path.read_text(encoding="utf-8"))
+    if set(rng_state) != set(_RNG_KEYS):
+        raise InfrastructureError(
+            "persisted RNG artifact does not carry the exact RNG "
+            "streams")
+    if content_sha256(rng_state) != checkpoint["rng_state_sha256"]:
+        raise InfrastructureError(
+            "persisted RNG artifact does not hash to the bound "
+            "rng_state_sha256 (216_s F5)")
     counters = checkpoint["counters"]
     if counters["generated_groups"] != counters["consumed_groups"]:
         raise InfrastructureError(
             "checkpoint violates the v1 boundary — refusing to resume "
             "from it")
     return {"counters": dict(counters),
-            "sampler_position": dict(checkpoint["sampler_position"])}
+            "sampler_position": dict(checkpoint["sampler_position"]),
+            "rng_state": rng_state}
 
 
 # --- segment merging --------------------------------------------------------------
@@ -339,23 +383,28 @@ def merge_segments(segments: list[Mapping[str, Any]]) -> dict[str, Any]:
                     f"consumed counter {resume_from}, but its parent "
                     f"checkpoint recorded "
                     f"{previous['checkpoint_consumed_groups']}")
-        indices = sorted(g["global_group_index"]
-                         for g in segment["groups"])
-        if indices and (indices[0] != resume_from
-                        or indices != list(range(indices[0],
-                                                 indices[-1] + 1))):
+        # 216_s F6: the ORIGINAL row sequence must be the exact
+        # ascending range from the resume point — reordered rows are
+        # refused, and a complete segment must cover [resume_from,
+        # cutoff) exactly (no rows missing before its own checkpoint,
+        # none beyond it).
+        sequence = [g["global_group_index"] for g in segment["groups"]]
+        if sequence != list(range(resume_from,
+                                  resume_from + len(sequence))):
             raise InfrastructureError(
-                f"segment {segment['segment_id']!r} rows are not "
-                f"contiguous from its resume point {resume_from}")
+                f"segment {segment['segment_id']!r} rows are not the "
+                f"exact in-order range from its resume point "
+                f"{resume_from}: {sequence[:6]}…")
+        if status == "complete" \
+                and sequence != list(range(resume_from, cutoff)):
+            raise InfrastructureError(
+                f"complete segment {segment['segment_id']!r} rows "
+                f"{sequence[:6]}… do not equal the exact range "
+                f"[{resume_from}, {cutoff}) of its own checkpoint — "
+                "an impossible history")
         for group in segment["groups"]:
             index = group["global_group_index"]
             if index >= cutoff:
-                if status == "complete":
-                    raise InfrastructureError(
-                        f"complete segment {segment['segment_id']!r} "
-                        f"carries row {index} beyond its own "
-                        f"checkpoint cutoff {cutoff} — an impossible "
-                        "history")
                 excluded.append(group)
             else:
                 trajectory.append(group)

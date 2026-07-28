@@ -46,8 +46,6 @@ from tasks.conductor.stage1_replay import family_correct_variants
 from tasks.conductor.types import InfrastructureError, \
     parse_render_instance_id
 
-from .dev_support import validate_c_fixed_record
-
 REWARD_LEVELS = ("0", "0.5", "1")
 
 
@@ -123,15 +121,26 @@ def _collapse_code(cell_id: str, assignment: tuple[int, ...],
 
 
 def group_stats(group: Mapping[str, Any], *,
-                surface: Mapping[tuple[str, tuple[int, ...]], float],
+                loaded: Mapping[str, Any],
                 c_fixed_record: Mapping[str, Any]) -> dict[str, Any]:
-    """All per-group quantities for one completed group, authenticated
-    against the lock-validated surface."""
-    c_fixed_dev = validate_c_fixed_record(c_fixed_record)
+    """All per-group quantities for one completed group. Consumes the
+    VERIFIED loaded-surface context (`load_dev_surface` result): the
+    observation must be a member of the locked support, the comparator
+    must rederive against that exact lock, and every reward is
+    authenticated against the locked surface (216_s F3)."""
+    from .dev_support import verify_c_fixed_for
+    surface = loaded["surface"]
+    membership = {obs["observation_id"]
+                  for obs in loaded["observations"]}
+    c_fixed_dev = verify_c_fixed_for(loaded, c_fixed_record)
     completions = group["completions"]
     if not completions:
         raise InfrastructureError("empty group")
     observation_id = group["observation_id"]
+    if observation_id not in membership:
+        raise InfrastructureError(
+            f"{observation_id} is not an observation of the locked "
+            "support — refusing to score a foreign group (216_s F3)")
     render_id = parse_render_instance_id(observation_id)
     cell = render_id.latent.cell_id
     renderer = render_id.renderer_id
@@ -347,10 +356,13 @@ def _aggregate(groups: list[Mapping[str, Any]]) -> dict[str, Any]:
             "denominator": completions},
         "routing_entropy_bits_mean": (
             sum(g["routing_entropy_bits"] for g in groups) / n_groups),
-        # 214_s reporting repairs: raw frequencies + concentration
-        "worker_frequencies": dict(sorted(worker_counts.items())),
-        "assignment_frequencies": dict(sorted(
-            assignment_counts.items())),
+        # 214_s/216_s reporting repairs: frequencies WITH denominators
+        "worker_frequencies": {
+            "counts": dict(sorted(worker_counts.items())),
+            "denominator": sum(worker_counts.values())},
+        "assignment_frequencies": {
+            "counts": dict(sorted(assignment_counts.items())),
+            "denominator": sum(assignment_counts.values())},
         "repeated_output_concentration_mean": (
             sum(concentrations) / len(concentrations)
             if concentrations else None),
@@ -374,16 +386,66 @@ _EQUAL_CELL_METRICS = {
 }
 
 
+def _hierarchical_ratio(cells: Mapping[str, Mapping[str, Mapping[str,
+                                                                 list]]],
+                        numerator, denominator) -> dict[str, Any]:
+    """Eligible-only hierarchical ratio (216_s F4): ratios per
+    (latent, renderer) bucket with a nonzero denominator, renderer
+    means within latent, latent means within cell, equal over the
+    cells that HAVE eligible data — reported with the raw totals and
+    the contributing cells."""
+    total_num = 0.0
+    total_den = 0
+    cell_means = {}
+    for cell, latents in cells.items():
+        latent_means = []
+        for renderers in latents.values():
+            renderer_ratios = []
+            for members in renderers.values():
+                num = sum(numerator(g) for g in members)
+                den = sum(denominator(g) for g in members)
+                total_num += num
+                total_den += den
+                if den > 0:
+                    renderer_ratios.append(num / den)
+            if renderer_ratios:
+                latent_means.append(sum(renderer_ratios)
+                                    / len(renderer_ratios))
+        if latent_means:
+            cell_means[cell] = sum(latent_means) / len(latent_means)
+    return {"value": (sum(cell_means.values()) / len(cell_means)
+                      if cell_means else None),
+            "numerator": total_num, "denominator": total_den,
+            "cells": sorted(cell_means)}
+
+
 def equal_cell_view(groups: list[Mapping[str, Any]]) -> dict[str, Any]:
     """The registered hierarchical weighting (130_s §6 / 214_s):
     average groups within (latent, renderer), renderers within latent,
-    latents within cell, cells equally."""
+    latents within cell, cells equally. 216_s F4: the population must
+    BE the complete frozen crossing — all six cells and every latent's
+    complete renderer set — and the eligible-only hierarchical
+    ModelAcc and conditional-C2 views are reported with raw
+    numerators/denominators."""
+    from tasks.conductor.types import CELL_IDS, RENDERER_IDS
     cells: dict[str, dict[str, dict[str, list]]] = {}
     for g in groups:
         cells.setdefault(g["cell_id"], {}).setdefault(
             g["latent_program_id"], {}).setdefault(
             g["renderer_id"], []).append(g)
-    out = {}
+    if set(cells) != set(CELL_IDS):
+        raise InfrastructureError(
+            f"equal-cell view requires all six cells "
+            f"{sorted(CELL_IDS)}; got {sorted(cells)} — a partial "
+            "population is not the registered estimand (216_s F4)")
+    for cell, latents in cells.items():
+        for latent, renderers in latents.items():
+            if set(renderers) != set(RENDERER_IDS):
+                raise InfrastructureError(
+                    f"{latent}: equal-cell view requires the complete "
+                    f"renderer crossing {sorted(RENDERER_IDS)}; got "
+                    f"{sorted(renderers)} (216_s F4)")
+    out: dict[str, Any] = {}
     for name, metric in _EQUAL_CELL_METRICS.items():
         cell_means = []
         for latents in cells.values():
@@ -396,6 +458,15 @@ def equal_cell_view(groups: list[Mapping[str, Any]]) -> dict[str, Any]:
                     sum(renderer_means) / len(renderer_means))
             cell_means.append(sum(latent_means) / len(latent_means))
         out[name] = sum(cell_means) / len(cell_means)
+    out["model_acc"] = _hierarchical_ratio(
+        cells,
+        lambda g: g["model_acc"][0] if g["model_acc"] else 0.0,
+        lambda g: g["model_acc"][1] if g["model_acc"] else 0)
+    out["c2_optimal_specialist"] = _hierarchical_ratio(
+        cells,
+        lambda g: g["c2_optimal"] if g["c2_optimal"] is not None else 0,
+        lambda g: g["c2_eligible"] if g["c2_optimal"] is not None
+        else 0)
     out["cells"] = sorted(cells)
     return out
 

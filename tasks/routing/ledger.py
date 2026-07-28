@@ -92,6 +92,11 @@ def validate_entry(entry: Mapping[str, Any]) -> None:
     if selection is not None and selection not in _COHORT_SELECTIONS:
         raise InfrastructureError(
             f"cohort_selection must be one of {_COHORT_SELECTIONS}")
+    if entry["kind"] in ("support_materialization", "grouped_probe") \
+            and selection != "outcome_blind":
+        raise InfrastructureError(
+            f"a {entry['kind']} launch must declare "
+            "cohort_selection='outcome_blind' (216_s F2; 211_f §4)")
     if entry["kind"] == "reserve_update":
         validate_reserve(entry.get("reserve"))
     if entry["kind"] == "closeout":
@@ -115,8 +120,10 @@ def validate_entry(entry: Mapping[str, Any]) -> None:
 
 
 def validate_reserve(reserve: Any) -> None:
-    """212_f reminder 1: a reserve carries its full numerical basis,
-    not just the number."""
+    """212_f reminder 1 + 216_s: a reserve carries its full numerical
+    basis, every basis field validates numerically, and the reserve
+    must RECOMPUTE — it cannot be smaller than the hours its own
+    basis implies (rounding is always up)."""
     if not isinstance(reserve, Mapping):
         raise InfrastructureError("reserve_update entry carries no "
                                   "reserve record")
@@ -132,11 +139,30 @@ def validate_reserve(reserve: Any) -> None:
         raise InfrastructureError(
             f"reserve status {reserve['status']!r} must be provisional "
             "or final")
-    value = reserve["r_cycle_gpu_hours"]
-    if not isinstance(value, (int, float)) or isinstance(value, bool) \
-            or value <= 0:
+    cohort = reserve["assumed_cohort_size"]
+    if not isinstance(cohort, int) or isinstance(cohort, bool) \
+            or cohort <= 0:
         raise InfrastructureError(
-            f"r_cycle_gpu_hours must be > 0, got {value!r}")
+            f"assumed_cohort_size must be a positive int, got "
+            f"{cohort!r}")
+    for name in ("r_cycle_gpu_hours", "evaluation_multiplier",
+                 "measured_seconds_per_observation"):
+        value = reserve[name]
+        if not isinstance(value, (int, float)) \
+                or isinstance(value, bool) or value <= 0:
+            raise InfrastructureError(
+                f"{name} must be > 0, got {value!r}")
+    if not isinstance(reserve["rounding"], str) \
+            or not reserve["rounding"].strip():
+        raise InfrastructureError("reserve rounding must be described")
+    implied_hours = (cohort * reserve["evaluation_multiplier"]
+                     * reserve["measured_seconds_per_observation"]
+                     / 3600.0)
+    if reserve["r_cycle_gpu_hours"] < implied_hours:
+        raise InfrastructureError(
+            f"r_cycle_gpu_hours {reserve['r_cycle_gpu_hours']} is "
+            f"below its own basis ({implied_hours:.3f} h) — the "
+            "reserve must recompute (216_s)")
 
 
 def read_ledger(path: str | Path = LEDGER_PATH) -> list[dict[str, Any]]:
@@ -192,20 +218,18 @@ def verify_ledger_head(expected_head_sha256: str | None,
 
 
 def append_ledger_entry(entry: Mapping[str, Any],
-                        path: str | Path = LEDGER_PATH,
-                        expected_head_sha256: str | None = ...,
+                        expected_head_sha256: str | None,
+                        path: str | Path = LEDGER_PATH
                         ) -> dict[str, Any]:
-    """Verify the existing chain, then append — never rewrite. The
-    entry is validated, chained to the last recorded hash, self-hashed
-    and written as a new fenced block. Pass `expected_head_sha256`
-    (the externally committed head, None for an empty ledger) to also
-    detect suffix deletion before appending; a closeout must name a
-    recorded, not-yet-closed launch entry."""
+    """Verify the existing chain AGAINST the externally committed head
+    (REQUIRED, None only for an empty ledger — 216_s F2: without it a
+    deleted suffix could be followed by a valid-looking replacement
+    chain), then append — never rewrite. The entry is validated,
+    chained to the last recorded hash, self-hashed and written as a
+    new fenced block; a closeout must name a recorded, not-yet-closed
+    launch entry."""
     path = Path(path)
-    if expected_head_sha256 is ...:
-        existing = read_ledger(path)
-    else:
-        existing = verify_ledger_head(expected_head_sha256, path)
+    existing = verify_ledger_head(expected_head_sha256, path)
     validate_entry(entry)
     if entry["kind"] == "closeout":
         target = entry["closes_entry_sha256"]
@@ -273,50 +297,60 @@ def envelope_state(entries: list[Mapping[str, Any]],
             "reserve": reserve}
 
 
-def check_launch_admissible(*, remaining_gpu_hours: float,
+def check_launch_admissible(*, entries: list[Mapping[str, Any]],
+                            launch_kind: str,
                             launch_max_gpu_hours: float,
-                            reserve: Mapping[str, Any] | None,
-                            closure: bool = False,
-                            initial_support: bool = False) -> None:
-    """211_f §10 as corrected by 210_s issue 4 and 214_s P1. Ordinary
-    pre-closure launches keep the reserve intact; closure consumes it;
-    the INITIAL support materialization — the run whose measured
-    timing CREATES the provisional reserve — is admissible against the
-    bare envelope, exactly once, before any reserve exists."""
+                            envelope_gpu_hours: float =
+                            CYCLE_ENVELOPE_GPU_HOURS) -> dict[str, Any]:
+    """211_f §10 as corrected by 210_s issue 4 and 216_s F2: admission
+    is DERIVED from the verified ledger state and the launch kind —
+    there is no caller-asserted path. `entries` is the
+    `verify_ledger_head` output. Ordinary pre-closure launches keep
+    the reserve intact; `cycle_closure` consumes it; the FIRST
+    `support_materialization` — and only while no reserve exists and
+    no prior support launch is recorded — is admissible against the
+    bare envelope. Returns the envelope state it decided on."""
+    if launch_kind not in _LAUNCH_KINDS:
+        raise InfrastructureError(
+            f"{launch_kind!r} is not a launch kind")
     if not isinstance(launch_max_gpu_hours, (int, float)) \
             or isinstance(launch_max_gpu_hours, bool) \
             or launch_max_gpu_hours <= 0:
         raise InfrastructureError(
             f"launch maximum must be > 0, got {launch_max_gpu_hours!r}")
-    if initial_support:
-        if reserve is not None:
-            raise InfrastructureError(
-                "the initial-support admission path applies only "
-                "BEFORE a reserve exists; use the ordinary rule")
-        if remaining_gpu_hours < launch_max_gpu_hours:
-            raise InfrastructureError(
-                f"remaining {remaining_gpu_hours} GPU-h cannot cover "
-                f"the initial support maximum {launch_max_gpu_hours}")
-        return
+    state = envelope_state(entries, envelope_gpu_hours)
+    remaining = state["remaining_gpu_hours"]
+    reserve = state["reserve"]
     if reserve is None:
+        prior_support = [e for e in entries
+                         if e["kind"] == "support_materialization"]
+        if launch_kind == "support_materialization" \
+                and not prior_support:
+            if remaining < launch_max_gpu_hours:
+                raise InfrastructureError(
+                    f"remaining {remaining} GPU-h cannot cover the "
+                    f"initial support maximum {launch_max_gpu_hours}")
+            return state
         raise InfrastructureError(
-            "no reserve on record — only the initial support "
-            "materialization may launch without one "
-            "(initial_support=True; 214_s P1)")
+            "no reserve on record — only the FIRST support "
+            "materialization may launch without one, and the ledger "
+            f"shows {len(prior_support)} prior support launch(es) "
+            "(216_s F2)")
     validate_reserve(reserve)
     r_cycle = reserve["r_cycle_gpu_hours"]
-    if closure:
+    if launch_kind == "cycle_closure":
         if launch_max_gpu_hours > r_cycle:
             raise InfrastructureError(
                 f"closure maximum {launch_max_gpu_hours} exceeds the "
                 f"reserved R_cycle {r_cycle}")
-        if remaining_gpu_hours < launch_max_gpu_hours:
+        if remaining < launch_max_gpu_hours:
             raise InfrastructureError(
-                f"remaining {remaining_gpu_hours} GPU-h cannot cover "
-                f"the closure maximum {launch_max_gpu_hours}")
-        return
-    if remaining_gpu_hours < launch_max_gpu_hours + r_cycle:
+                f"remaining {remaining} GPU-h cannot cover the "
+                f"closure maximum {launch_max_gpu_hours}")
+        return state
+    if remaining < launch_max_gpu_hours + r_cycle:
         raise InfrastructureError(
-            f"inadmissible launch: remaining {remaining_gpu_hours} "
-            f"GPU-h < launch maximum {launch_max_gpu_hours} + R_cycle "
+            f"inadmissible launch: remaining {remaining} GPU-h < "
+            f"launch maximum {launch_max_gpu_hours} + R_cycle "
             f"{r_cycle} (211_f §10)")
+    return state
