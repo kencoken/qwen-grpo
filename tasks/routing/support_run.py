@@ -204,6 +204,24 @@ def verify_terminal_outputs(run_dir: str | Path,
                 raise InfrastructureError(
                     f"{name} does not match the closeout binding — "
                     "the terminal artifact was altered (224_s F1)")
+        # 228_s F1: the EXACT complete-run inventory, like the aborted
+        # path — a replaced disclosure, a tampered surface file, or an
+        # additional unbound result file all refuse here.
+        bound = freeze.get("terminal_artifact_hashes")
+        if not bound:
+            raise InfrastructureError(
+                "complete closeout carries no terminal-artifact "
+                "inventory (228_s F1)")
+        on_disk = _hash_directory(run_dir)
+        if on_disk != dict(bound):
+            missing = sorted(set(bound) - set(on_disk))
+            extra = sorted(set(on_disk) - set(bound))
+            altered = sorted(k for k in set(bound) & set(on_disk)
+                             if bound[k] != on_disk[k])
+            raise InfrastructureError(
+                f"terminal evidence is not exactly the bound "
+                f"inventory: missing {missing[:3]}, extra "
+                f"{extra[:3]}, altered {altered[:3]} (228_s F1)")
         execute_env = json.loads(
             (run_dir / "execute_env_manifest.json").read_text("utf-8"))
         dev_support.validate_env_self_hash(execute_env)
@@ -217,17 +235,21 @@ def verify_terminal_outputs(run_dir: str | Path,
                 freeze.get("surface_lock_sha256"):
             raise InfrastructureError(
                 "run record and closeout disagree on the surface lock")
-        surface_lock = json.loads(
-            (run_dir / "surface" / "surface_lock.json")
-            .read_text("utf-8"))
-        if surface_lock.get("lock_sha256") != \
-                freeze.get("surface_lock_sha256"):
+        # 228_s F1: the surface itself re-verifies through the full
+        # fail-closed loader under the closeout's lock — modified
+        # payoffs behind a nominal lock field refuse.
+        loaded = dev_support.load_dev_surface(
+            run_dir / "surface",
+            expected_lock_sha256=freeze.get("surface_lock_sha256"))
+        rendered = freeze.get("rendered_observations")
+        if rendered != len(loaded["observations"]):
             raise InfrastructureError(
-                "surface lock on disk is not the closeout's lock "
-                "(226_s F2)")
+                f"closeout rendered_observations {rendered!r} != the "
+                f"authenticated population "
+                f"{len(loaded['observations'])} (228_s F1)")
         c_fixed = json.loads(
             (run_dir / "c_fixed_dev.json").read_text("utf-8"))
-        dev_support.validate_c_fixed_record(c_fixed)
+        dev_support.verify_c_fixed_for(loaded, c_fixed)
         if c_fixed["record_sha256"] != record.get("c_fixed_dev_sha256"):
             raise InfrastructureError(
                 "comparator record does not match the run record")
@@ -242,11 +264,6 @@ def verify_terminal_outputs(run_dir: str | Path,
                 "probe cohort record does not rehash or does not "
                 "match the run record")
         json.loads((run_dir / "disclosure.json").read_text("utf-8"))
-        rendered = freeze.get("rendered_observations")
-        if not isinstance(rendered, int) or rendered < 1:
-            raise InfrastructureError(
-                "complete closeout lacks its rendered-observation "
-                "denominator (226_s F1)")
     elif status == "aborted":
         bound = freeze.get("partial_artifact_hashes")
         if not bound:
@@ -418,9 +435,10 @@ def execute_support_run(*, run_dir: str | Path,
         raise
 
     # --- 4. SUCCESS closeout (only after verified outputs) -------------
-    # 224_s F1: the closeout binds the terminal artifact bytes — the
-    # run record AND the execute-time environment — so replacing them
-    # after completion is detectable from the hash-chained ledger.
+    # 224_s F1 / 228_s F1: the closeout binds the terminal artifact
+    # bytes AND the exact complete-run file inventory — replacing,
+    # adding, or removing ANY file after completion is detectable
+    # from the hash-chained ledger.
     measured = round((time.monotonic() - started) / 3600.0, 4)
     closeout = append_ledger_entry(
         {"kind": "closeout", "question": question,
@@ -431,6 +449,7 @@ def execute_support_run(*, run_dir: str | Path,
                  _sha_file(run_dir / "run_record.json"),
              "execute_env_file_sha256":
                  _sha_file(run_dir / "execute_env_manifest.json"),
+             "terminal_artifact_hashes": _hash_directory(run_dir),
              # 226_s F1: the timing denominator the reserve's
              # per-observation basis must rederive from
              "rendered_observations": len(loaded["observations"]),
@@ -447,6 +466,51 @@ def execute_support_run(*, run_dir: str | Path,
             "c_fixed_dev": c_fixed, "probe_cohort": bound,
             "closeout_entry_sha256": closeout["entry_sha256"],
             "ledger_head": closeout["entry_sha256"]}
+
+
+def record_provisional_reserve(reserve: Mapping[str, Any], *,
+                               run_dir: str | Path,
+                               question: str,
+                               motivating_evidence: str,
+                               expected_head_sha256: str | None,
+                               ledger_path: str | Path = LEDGER_PATH
+                               ) -> dict[str, Any]:
+    """THE reserve-append boundary (228_s F1): the reserve consumes a
+    VERIFIED terminal run, not a shape-correct closeout. Locates the
+    completed support closeout in the verified chain, runs the full
+    `verify_terminal_outputs` against the run directory (exact
+    inventory, authenticated surface reload, comparator rederivation,
+    population cross-check), and only then appends — with the freeze
+    built HERE from the verified closeout, never caller-supplied."""
+    from .ledger import _append, verify_ledger_head
+    run_dir = Path(run_dir)
+    entries = verify_ledger_head(expected_head_sha256, ledger_path)
+    supports = {e["entry_sha256"] for e in entries
+                if e["kind"] == "support_materialization"}
+    complete = [e for e in entries if e["kind"] == "closeout"
+                and e.get("terminal_status") == "complete"
+                and e["closes_entry_sha256"] in supports]
+    if not complete:
+        raise InfrastructureError(
+            "no completed support closeout on record — a reserve "
+            "requires a successful support run (224_s F3)")
+    closeout = complete[-1]
+    verify_terminal_outputs(run_dir, closeout)
+    entry = {
+        "kind": "reserve_update",
+        "question": question,
+        "motivating_evidence": motivating_evidence,
+        "freeze": {
+            "support_closeout_sha256": closeout["entry_sha256"],
+            "surface_lock_sha256":
+                closeout["freeze"]["surface_lock_sha256"],
+        },
+        "parent": closeout["entry_sha256"],
+        "budget_allocated_gpu_hours": 0.0,
+        "outcome_informed": False,
+        "reserve": dict(reserve),
+    }
+    return _append(entry, expected_head_sha256, ledger_path)
 
 
 def main(argv: list[str] | None = None) -> int:

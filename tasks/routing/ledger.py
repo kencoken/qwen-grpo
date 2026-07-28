@@ -248,15 +248,21 @@ def append_ledger_entry(entry: Mapping[str, Any],
                         expected_head_sha256: str | None,
                         path: str | Path = LEDGER_PATH
                         ) -> dict[str, Any]:
-    """Bookkeeping appends only (reserve updates, closeouts,
-    synthesis). LAUNCH entries must come through
-    `admit_and_append_launch` so the checked kind/budget IS the
-    recorded kind/budget (218_s F2)."""
+    """Bookkeeping appends only (closeouts, synthesis). LAUNCH
+    entries must come through `admit_and_append_launch` (218_s F2);
+    RESERVE updates must come through
+    `support_run.record_provisional_reserve`, which verifies the
+    terminal run the reserve is based on (228_s F1)."""
     validate_entry(entry)
     if entry["kind"] in _LAUNCH_KINDS:
         raise InfrastructureError(
             f"{entry['kind']!r} is a launch — it must be admitted and "
             "appended through admit_and_append_launch (218_s F2)")
+    if entry["kind"] == "reserve_update":
+        raise InfrastructureError(
+            "reserve updates must come through "
+            "support_run.record_provisional_reserve, which verifies "
+            "the terminal run they are based on (228_s F1)")
     return _append(entry, expected_head_sha256, path)
 
 
@@ -356,15 +362,15 @@ def _append(entry: Mapping[str, Any],
                 f"exactly from the closeout: "
                 f"{target['budget_consumed_gpu_hours']} h × 3600 / "
                 f"{rendered} = {derived!r} (226_s F1)")
-        # 226_s F1: a FINAL reserve waits for the frozen cycle cohort
-        # and evaluation-rule identities.
-        if entry["reserve"]["status"] == "final" and not (
-                freeze.get("cycle_cohort_sha256")
-                and freeze.get("evaluation_rule_sha256")):
+        # 226_s F1 / 228_s F2: FINAL reserves are refused
+        # UNCONDITIONALLY — enabling them requires the real
+        # cycle-cohort and evaluation-rule validators, not truthy
+        # strings; until those exist every reserve is provisional.
+        if entry["reserve"]["status"] == "final":
             raise InfrastructureError(
-                "a final reserve requires the frozen cycle-cohort and "
-                "evaluation-rule identities in its freeze; until then "
-                "the reserve is provisional (226_s F1)")
+                "final reserve authorization is not yet enabled — it "
+                "awaits the real cycle-cohort and evaluation-rule "
+                "validators; record a provisional reserve (228_s F2)")
     record = dict(entry)
     record["previous_entry_sha256"] = (
         existing[-1]["entry_sha256"] if existing else None)
