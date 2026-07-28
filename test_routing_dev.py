@@ -212,7 +212,11 @@ def support_run_fixture(tmp_path_factory):
         expected_manifest_sha256=manifest["manifest_sha256"],
         expected_head_sha256=None, question="cold-start support",
         motivating_evidence="211_f §4", ledger_path=ledger_path,
-        _runtime_factory=lambda: dev_fake_rt(tmp, sabotage_w3=True))
+        _runtime_factory=lambda: dev_fake_rt(tmp, sabotage_w3=True),
+        # 222_s F2 policy: git_commit alone may differ between
+        # preparation and launch (the freeze commit)
+        _environment_builder=lambda: _env_manifest(
+            git_commit="feedbeef"))
     loaded = dev_support.load_dev_surface(
         run_dir / "surface",
         expected_lock_sha256=record["surface_lock_sha256"])
@@ -235,14 +239,22 @@ def test_support_runner_owns_the_full_sequence(support_run_fixture):
     assert entries[0]["budget_allocated_gpu_hours"] == 1.0
     assert entries[1]["closes_entry_sha256"] == \
         entries[0]["entry_sha256"]
+    assert entries[1]["terminal_status"] == "complete"
     state = ledger.envelope_state(entries)
     assert state["consumed_gpu_hours"] == \
         entries[1]["budget_consumed_gpu_hours"]
     assert state["open_launches"] == []
-    # outputs persisted once
+    # outputs persisted once, incl. the execute-time environment
     for name in ("disclosure.json", "c_fixed_dev.json",
-                 "probe_cohort.json", "run_record.json"):
+                 "probe_cohort.json", "run_record.json",
+                 "execute_env_manifest.json"):
         assert (fx["run_dir"] / name).exists()
+    # the persisted run record precedes the closeout (no closeout sha)
+    persisted = json.loads(
+        (fx["run_dir"] / "run_record.json").read_text())
+    assert "closeout_entry_sha256" not in persisted
+    assert persisted["surface_lock_sha256"] == \
+        record["surface_lock_sha256"]
     # the driver the manifest names is the runner itself, digested
     assert fx["manifest"]["driver"] == "tasks/routing/support_run.py"
     # prepare refuses a second run; execute refuses replay (head moved)
@@ -255,14 +267,108 @@ def test_support_runner_owns_the_full_sequence(support_run_fixture):
             budget_gpu_hours=1.0,
             _runtime_factory=lambda: None,
             _environment_builder=_env_manifest)
-    with pytest.raises(InfrastructureError, match="externally "
-                       "committed head"):
+    with pytest.raises(InfrastructureError,
+                       match="externally committed head|preflighted"):
         support_run.execute_support_run(
             run_dir=fx["run_dir"],
             expected_manifest_sha256=fx["manifest"]["manifest_sha256"],
             expected_head_sha256=None, question="q",
             motivating_evidence="m", ledger_path=fx["ledger_path"],
-            _runtime_factory=lambda: None)
+            _runtime_factory=lambda: None,
+            _environment_builder=lambda: _env_manifest(
+                git_commit="feedbeef"))
+
+
+def test_execute_validates_before_the_irreversible_admission(
+        support_run_fixture, tmp_path):
+    """222_s F1/F2: a bad prelaunch or a drifted live environment
+    refuses BEFORE admission — the ledger stays empty."""
+    fx = support_run_fixture
+    fresh_ledger = tmp_path / "ledger.md"
+    # live environment drift on a load-bearing field (torch)
+    with pytest.raises(InfrastructureError, match="frozen snapshot"):
+        support_run.execute_support_run(
+            run_dir=fx["run_dir"],
+            expected_manifest_sha256=fx["manifest"]["manifest_sha256"],
+            expected_head_sha256=None, question="q",
+            motivating_evidence="m", ledger_path=fresh_ledger,
+            _runtime_factory=lambda: None,
+            _environment_builder=lambda: _env_manifest(torch="9.9"))
+    assert ledger.read_ledger(fresh_ledger) == []
+    # outputs already exist -> preflight refusal, still no admission
+    with pytest.raises(InfrastructureError, match="preflighted"):
+        support_run.execute_support_run(
+            run_dir=fx["run_dir"],
+            expected_manifest_sha256=fx["manifest"]["manifest_sha256"],
+            expected_head_sha256=None, question="q",
+            motivating_evidence="m", ledger_path=fresh_ledger,
+            _runtime_factory=lambda: None,
+            _environment_builder=lambda: _env_manifest(
+                git_commit="feedbeef"))
+    assert ledger.read_ledger(fresh_ledger) == []
+
+
+def test_post_admission_failure_aborts_closed(tmp_path):
+    """222_s F1: a runtime failure AFTER admission appends an ABORTED
+    closeout with the measured cost and preserves partial evidence —
+    and the aborted launch is replaceable under the recovery rule."""
+    tmp = tmp_path
+    run_dir = tmp / "run"
+    ledger_path = tmp / "ledger.md"
+    rule = _first_probe_rule()
+    manifest = support_run.prepare_support_launch(
+        run_dir=run_dir, tag="abort-test", cohort=DEV_COHORT,
+        renderers=DEV_RENDERERS, visibility="private",
+        frozen_probe_rule=rule, search_cap=SEARCH_CAP,
+        budget_gpu_hours=1.0,
+        _runtime_factory=lambda: dev_fake_rt(tmp, sabotage_w3=True),
+        _environment_builder=_env_manifest)
+
+    def exploding_runtime():
+        raise RuntimeError("CUDA fell over")
+
+    with pytest.raises(RuntimeError, match="CUDA fell over"):
+        support_run.execute_support_run(
+            run_dir=run_dir,
+            expected_manifest_sha256=manifest["manifest_sha256"],
+            expected_head_sha256=None, question="q",
+            motivating_evidence="m", ledger_path=ledger_path,
+            _runtime_factory=exploding_runtime,
+            _environment_builder=_env_manifest)
+    entries = ledger.read_ledger(ledger_path)
+    assert [e["kind"] for e in entries] == \
+        ["support_materialization", "closeout"]
+    assert entries[1]["terminal_status"] == "aborted"
+    assert "CUDA fell over" in entries[1]["interpretation"]
+    state = ledger.envelope_state(entries)
+    assert state["open_launches"] == []
+    # partial evidence preserved
+    assert (run_dir / "execute_env_manifest.json").exists()
+    # recovery rule: the aborted support launch does not block a NEW
+    # no-reserve support admission (fresh reviewed freeze)
+    ledger.admit_and_append_launch(
+        {"kind": "support_materialization", "question": "retry",
+         "motivating_evidence": "aborted engineering failure",
+         "freeze": {"support_launch_sha256":
+                    manifest["manifest_sha256"]},
+         "parent": None, "budget_allocated_gpu_hours": 1.0,
+         "outcome_informed": False,
+         "cohort_selection": "outcome_blind"},
+        entries[-1]["entry_sha256"], ledger_path,
+        launch_manifest=manifest)
+    # …but an OPEN (unclosed) support launch still blocks
+    entries = ledger.read_ledger(ledger_path)
+    with pytest.raises(InfrastructureError, match="open or completed"):
+        ledger.admit_and_append_launch(
+            {"kind": "support_materialization", "question": "again",
+             "motivating_evidence": "m",
+             "freeze": {"support_launch_sha256":
+                        manifest["manifest_sha256"]},
+             "parent": None, "budget_allocated_gpu_hours": 1.0,
+             "outcome_informed": False,
+             "cohort_selection": "outcome_blind"},
+            entries[-1]["entry_sha256"], ledger_path,
+            launch_manifest=manifest)
 
 
 def test_materialization_cannot_run_unadmitted(support_run_fixture,
@@ -875,6 +981,13 @@ def test_ledger_entry_schema_fails_closed(tmp_path):
     with pytest.raises(InfrastructureError, match="linked closeout"):
         ledger.append_ledger_entry(
             _note(budget_consumed_gpu_hours=0.1), None, path)
+    with pytest.raises(InfrastructureError, match="terminal_status"):
+        ledger.append_ledger_entry(
+            _note(terminal_status="complete"), None, path)
+    with pytest.raises(InfrastructureError, match="terminal_status"):
+        ledger.append_ledger_entry(
+            _note(kind="closeout", closes_entry_sha256="0" * 64,
+                  budget_consumed_gpu_hours=0.1), None, path)
     with pytest.raises(InfrastructureError, match="outcome_blind"):
         ledger.admit_and_append_launch(
             _entry(kind="grouped_probe"), None, path)
@@ -922,7 +1035,8 @@ def test_launch_closeout_linkage_and_envelope(tmp_path):
     closeout = ledger.append_ledger_entry(
         _note(kind="closeout",
               closes_entry_sha256=launch["entry_sha256"],
-              budget_consumed_gpu_hours=1.25),
+              budget_consumed_gpu_hours=1.25,
+              terminal_status="complete"),
         launch["entry_sha256"], path)
     state = ledger.envelope_state(ledger.read_ledger(path))
     assert state["consumed_gpu_hours"] == pytest.approx(1.25)
@@ -931,13 +1045,15 @@ def test_launch_closeout_linkage_and_envelope(tmp_path):
         ledger.append_ledger_entry(
             _note(kind="closeout",
                   closes_entry_sha256=launch["entry_sha256"],
-                  budget_consumed_gpu_hours=1.0),
+                  budget_consumed_gpu_hours=1.0,
+                  terminal_status="complete"),
             closeout["entry_sha256"], path)
     with pytest.raises(InfrastructureError, match="not a recorded "
                        "launch"):
         ledger.append_ledger_entry(
             _note(kind="closeout", closes_entry_sha256="0" * 64,
-                  budget_consumed_gpu_hours=1.0),
+                  budget_consumed_gpu_hours=1.0,
+                  terminal_status="complete"),
             closeout["entry_sha256"], path)
 
 

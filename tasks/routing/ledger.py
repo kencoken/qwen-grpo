@@ -43,7 +43,7 @@ _REQUIRED_ENTRY_KEYS = frozenset({
 _OPTIONAL_ENTRY_KEYS = frozenset({
     "budget_consumed_gpu_hours", "outcome_pointer", "interpretation",
     "next_decision", "cohort_selection", "reserve",
-    "closes_entry_sha256",
+    "closes_entry_sha256", "terminal_status",
 })
 _ENTRY_KINDS = (
     "support_materialization", "resume_validation", "grouped_probe",
@@ -117,6 +117,13 @@ def validate_entry(entry: Mapping[str, Any]) -> None:
             raise InfrastructureError(
                 "a closeout must record the measured, finite "
                 "budget_consumed_gpu_hours")
+        # 222_s F1: every closeout states its terminal outcome — an
+        # aborted launch is closed out too (measured cost, partial
+        # evidence preserved), never left open.
+        if entry.get("terminal_status") not in ("complete", "aborted"):
+            raise InfrastructureError(
+                "a closeout must declare terminal_status "
+                "'complete' or 'aborted' (222_s F1)")
     else:
         if entry.get("closes_entry_sha256") is not None:
             raise InfrastructureError(
@@ -125,6 +132,9 @@ def validate_entry(entry: Mapping[str, Any]) -> None:
             raise InfrastructureError(
                 "measured consumption is recorded by a linked closeout "
                 "entry, never on the launch itself (214_s P1)")
+        if entry.get("terminal_status") is not None:
+            raise InfrastructureError(
+                "terminal_status belongs to closeout entries")
 
 
 def validate_reserve(reserve: Any) -> None:
@@ -376,10 +386,18 @@ def admit_and_append_launch(entry: Mapping[str, Any],
     remaining = state["remaining_gpu_hours"]
     reserve = state["reserve"]
     if reserve is None:
-        prior_support = [e for e in entries
-                         if e["kind"] == "support_materialization"]
-        if launch_kind == "support_materialization" \
-                and not prior_support:
+        # 222_s F1 recovery rule: a prior support launch blocks a new
+        # no-reserve support launch UNLESS it was closed out ABORTED —
+        # an engineering failure may be retried under a NEW reviewed
+        # freeze; open or completed support launches still block.
+        closeout_status = {e["closes_entry_sha256"]:
+                           e.get("terminal_status")
+                           for e in entries if e["kind"] == "closeout"}
+        blocking = [e for e in entries
+                    if e["kind"] == "support_materialization"
+                    and closeout_status.get(e["entry_sha256"])
+                    != "aborted"]
+        if launch_kind == "support_materialization" and not blocking:
             if remaining < launch_max:
                 raise InfrastructureError(
                     f"remaining {remaining} GPU-h cannot cover the "
@@ -388,8 +406,9 @@ def admit_and_append_launch(entry: Mapping[str, Any],
             raise InfrastructureError(
                 "no reserve on record — only the FIRST support "
                 "materialization may launch without one, and the "
-                f"ledger shows {len(prior_support)} prior support "
-                "launch(es) (216_s F2)")
+                f"ledger shows {len(blocking)} prior support "
+                "launch(es) that are open or completed (216_s F2, "
+                "222_s F1)")
     else:
         validate_reserve(reserve)
         r_cycle = reserve["r_cycle_gpu_hours"]

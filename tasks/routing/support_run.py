@@ -1,25 +1,40 @@
-"""The tracked Step-4 support-materialization runner (220_s F5).
+"""The tracked Step-4 support-materialization runner (220_s F5,
+lifecycle-hardened per 222_s).
 
-This module IS the driver the support-launch manifest names: it owns
-the whole sequence
+This module IS the driver the support-launch manifest names. The
+lifecycle is failure-safe (222_s F1):
 
-    prepare  → the declaration, the LIVE environment manifest, and
-               the support-launch manifest, persisted under the run
-               root (the freeze document commits the manifest hash
-               and the ledger head);
-    execute  → admit-and-append the support launch (the recorded
-               entry names the manifest and carries its budget),
-               materialize under that admission, build the surface
-               lock, load it back fail-closed, disclose the
-               direction yields, select c_fixed_dev, bind the probe
-               cohort, and close the launch out with the measured
-               cost.
+    prepare   → declaration, LIVE environment manifest, support-launch
+                manifest, frozen probe rule — persisted once under
+                `run_dir/prelaunch/`; the freeze document commits the
+                manifest hash and the ledger head.
+    execute   → 1. FULL pre-admission validation: manifest rehash +
+                   live source recompute against the externally frozen
+                   hash; probe rule revalidated and matched to the
+                   manifest; frozen environment fully revalidated; the
+                   LIVE environment rebuilt and ATTESTED against the
+                   frozen snapshot (222_s F2 — `git_commit` alone may
+                   differ, the documentation-only freeze-commit
+                   policy; every other load-bearing field must match);
+                   every output path preflighted.
+                2. ADMIT (irreversible only after everything above).
+                3. Post-admission work under an abort handler: any
+                   failure preserves partial evidence and appends an
+                   ABORTED closeout with the measured cost — the
+                   launch is never left open.
+                4. Outputs persisted AND verified by re-reading before
+                   the successful closeout is recorded.
 
-The runtime and environment builders default to the real GPU stack
-(`build_pool_runtime` on the frozen four-worker profile,
-`build_stage1_env_manifest`); `_runtime_factory` /
-`_environment_builder` are test-only injection points, the
-established stage1 pattern.
+Recovery rule (222_s F1, reviewed): an initial support launch closed
+out ABORTED may be replaced by a NEW support launch under a NEW
+reviewed freeze (fresh `prepare`, fresh run_dir, fresh freeze
+document); the ledger admits it because only open-or-completed
+support launches block the no-reserve path. The aborted launch's
+measured cost stays charged to the envelope.
+
+The runtime and environment builders default to the real GPU stack;
+`_runtime_factory` / `_environment_builder` are test-only injection
+points, the established stage1 pattern.
 
 CLI:
   uv run python -m tasks.routing.support_run prepare --run-dir DIR ...
@@ -37,7 +52,6 @@ from typing import Any, Callable, Mapping
 from tasks.conductor.types import InfrastructureError
 
 from . import dev_support
-from .charter import PROBE_CEILING_HOURS
 from .cohorts import bind_probe_cohort, validate_probe_rule
 from .ledger import LEDGER_PATH, admit_and_append_launch, \
     append_ledger_entry
@@ -47,6 +61,18 @@ SUPPORT_CACHE_PATH = "runs/routing-dev/support-cache/cache.sqlite"
 
 _PRELAUNCH_FILES = ("declaration.json", "env_manifest.json",
                     "support_launch.json", "probe_rule.json")
+_OUTPUT_FILES = ("disclosure.json", "c_fixed_dev.json",
+                 "probe_cohort.json", "run_record.json")
+
+# 222_s F2: the load-bearing environment fields that must be IDENTICAL
+# between the frozen prepare-time snapshot and the live execute-time
+# environment. `git_commit` is deliberately absent: the freeze
+# document itself is a documentation-only commit between preparation
+# and launch. A source change shows up in stage1_source_sha256 and
+# refuses.
+ATTESTED_ENV_FIELDS = ("gpu", "torch", "numpy", "scipy",
+                       "uv_lock_sha256", "stage1_source_sha256",
+                       "stage1_source_files", "git_dirty")
 
 
 def _default_runtime():
@@ -62,6 +88,20 @@ def _default_environment() -> dict[str, Any]:
     return build_stage1_env_manifest()
 
 
+def attest_environment(frozen: Mapping[str, Any],
+                       live: Mapping[str, Any]) -> None:
+    """222_s F2: the archived environment must describe the actual
+    run. Every load-bearing field must match the live host; only
+    git_commit may differ (the freeze commit)."""
+    mismatches = [field for field in ATTESTED_ENV_FIELDS
+                  if frozen.get(field) != live.get(field)]
+    if mismatches:
+        raise InfrastructureError(
+            f"live environment differs from the frozen snapshot on "
+            f"{mismatches} — the archived environment would not "
+            "describe the actual run (222_s F2)")
+
+
 def prepare_support_launch(*, run_dir: str | Path, tag: str,
                            cohort: Mapping[str, Any],
                            renderers, visibility: str,
@@ -73,10 +113,7 @@ def prepare_support_launch(*, run_dir: str | Path, tag: str,
                            Callable[[], dict[str, Any]] | None = None
                            ) -> dict[str, Any]:
     """Phase 1: build and persist every prelaunch input under
-    `run_dir/prelaunch/`. The LIVE environment manifest is built here
-    (220_s F2 — never caller-asserted); the returned manifest hash is
-    what the freeze document commits, together with the ledger head.
-    """
+    `run_dir/prelaunch/`, exactly once."""
     run_dir = Path(run_dir)
     prelaunch = run_dir / "prelaunch"
     if prelaunch.exists():
@@ -120,39 +157,68 @@ def _load_prelaunch(run_dir: Path) -> dict[str, Any]:
     return out
 
 
+def _persist_verified(path: Path, payload: Mapping[str, Any]) -> None:
+    """222_s F1: outputs are written once and VERIFIED by re-reading
+    before completion is recorded."""
+    if path.exists():
+        raise InfrastructureError(f"{path} exists; refusing to "
+                                  "overwrite a recorded output")
+    path.write_text(json.dumps(payload, indent=1, sort_keys=True)
+                    + "\n", encoding="utf-8")
+    if json.loads(path.read_text(encoding="utf-8")) != json.loads(
+            json.dumps(payload)):
+        raise InfrastructureError(
+            f"{path} did not verify after writing")
+
+
 def execute_support_run(*, run_dir: str | Path,
                         expected_manifest_sha256: str,
                         expected_head_sha256: str | None,
                         question: str, motivating_evidence: str,
                         ledger_path: str | Path = LEDGER_PATH,
                         _runtime_factory: Callable[[], Any]
-                        | None = None) -> dict[str, Any]:
-    """Phase 2: the admitted, recorded, measured run. The sequence is
-    fixed; every boundary consumes the frozen identities persisted by
-    `prepare` and the externally committed manifest hash + ledger
-    head from the freeze document."""
+                        | None = None,
+                        _environment_builder:
+                        Callable[[], dict[str, Any]] | None = None
+                        ) -> dict[str, Any]:
+    """Phase 2: fully validate BEFORE the irreversible admission; run
+    under an abort handler AFTER it; verify outputs before recording
+    success."""
     run_dir = Path(run_dir)
     prelaunch = _load_prelaunch(run_dir)
     declaration = prelaunch["declaration"]
-    environment = prelaunch["env_manifest"]
+    frozen_env = prelaunch["env_manifest"]
     manifest = prelaunch["support_launch"]
     frozen_rule = prelaunch["probe_rule"]
+
+    # --- 1. FULL pre-admission validation (222_s F1) -------------------
     manifest = dev_support.validate_support_launch_manifest(
         manifest, declaration)
     if manifest["manifest_sha256"] != expected_manifest_sha256:
         raise InfrastructureError(
             "prepared support-launch manifest is not the externally "
             "frozen one")
+    validate_probe_rule(frozen_rule)
     if frozen_rule["rule_sha256"] != manifest["probe_rule_sha256"]:
         raise InfrastructureError(
             "persisted probe rule does not match the manifest")
-    if manifest["budget_gpu_hours"] > PROBE_CEILING_HOURS:
+    if dev_support.validate_environment_manifest_binding(frozen_env) \
+            != manifest["environment_manifest_sha256"]:
         raise InfrastructureError(
-            f"support budget {manifest['budget_gpu_hours']} exceeds "
-            f"the {PROBE_CEILING_HOURS} GPU-h tranche posture — "
-            "revisit the freeze")
+            "persisted environment manifest is not the one the "
+            "manifest binds")
+    live_env = (_environment_builder or _default_environment)()
+    attest_environment(frozen_env, live_env)
+    surface_dir = run_dir / "surface"
+    output_paths = [run_dir / name for name in _OUTPUT_FILES]
+    output_paths.append(run_dir / "execute_env_manifest.json")
+    for path in [surface_dir, *output_paths]:
+        if path.exists():
+            raise InfrastructureError(
+                f"{path} exists — outputs are preflighted before "
+                "admission (222_s F1)")
 
-    # 1. ADMIT: the recorded entry names the manifest and its budget.
+    # --- 2. ADMIT (irreversible from here) -----------------------------
     entry = {
         "kind": "support_materialization",
         "question": question,
@@ -170,68 +236,82 @@ def execute_support_run(*, run_dir: str | Path,
                                        ledger_path,
                                        launch_manifest=manifest)
     head = admitted["entry_sha256"]
-
-    # 2. MATERIALIZE under the admission.
     started = time.monotonic()
-    surface_dir = run_dir / "surface"
-    rt = (_runtime_factory or _default_runtime)()
+
+    # --- 3. Post-admission work under the abort handler (222_s F1) -----
     try:
-        dev_support.materialize_dev_support(
-            rt, declaration, surface_dir, launch_manifest=manifest,
-            environment_manifest=environment,
-            expected_manifest_sha256=expected_manifest_sha256,
-            ledger_path=ledger_path, expected_head_sha256=head)
-    finally:
-        rt.close()
+        _persist_verified(run_dir / "execute_env_manifest.json",
+                          live_env)
+        rt = (_runtime_factory or _default_runtime)()
+        try:
+            dev_support.materialize_dev_support(
+                rt, declaration, surface_dir, launch_manifest=manifest,
+                environment_manifest=frozen_env,
+                expected_manifest_sha256=expected_manifest_sha256,
+                ledger_path=ledger_path, expected_head_sha256=head)
+        finally:
+            rt.close()
+        lock = dev_support.build_surface_lock(surface_dir)
+        loaded = dev_support.load_dev_surface(
+            surface_dir, expected_lock_sha256=lock["lock_sha256"])
+        yields = dev_support.direction_yields(loaded["surface"],
+                                              loaded["observations"])
+        c_fixed = dev_support.select_c_fixed_dev(loaded)
+        bound = bind_probe_cohort(frozen_rule, surface_dir,
+                                  lock["lock_sha256"])
+        record = {
+            "run": "routing-dev-support-materialization-v1",
+            "surface_dir": str(surface_dir),
+            "support_launch_sha256": manifest["manifest_sha256"],
+            "surface_lock_sha256": lock["lock_sha256"],
+            "launch_entry_sha256": head,
+            "direction_yields": yields["per_cell"],
+            "c_fixed_dev_sha256": c_fixed["record_sha256"],
+            "probe_cohort_sha256": bound["cohort_sha256"],
+        }
+        # 222_s F1: persist AND verify every output BEFORE recording
+        # successful completion.
+        for name, payload in (("disclosure.json", yields),
+                              ("c_fixed_dev.json", c_fixed),
+                              ("probe_cohort.json", bound),
+                              ("run_record.json", record)):
+            _persist_verified(run_dir / name, payload)
+    except BaseException as error:
+        measured = round((time.monotonic() - started) / 3600.0, 4)
+        append_ledger_entry(
+            {"kind": "closeout", "question": question,
+             "motivating_evidence": "support run ABORTED",
+             "freeze": {"support_launch_sha256":
+                        manifest["manifest_sha256"]},
+             "parent": head,
+             "budget_allocated_gpu_hours": 0.0,
+             "budget_consumed_gpu_hours": measured,
+             "closes_entry_sha256": head,
+             "terminal_status": "aborted",
+             "interpretation": f"{type(error).__name__}: {error}",
+             "outcome_informed": False,
+             "outcome_pointer": str(run_dir)},
+            head, ledger_path)
+        raise
 
-    # 3. LOCK, reload fail-closed, disclose, select, bind.
-    lock = dev_support.build_surface_lock(surface_dir)
-    loaded = dev_support.load_dev_surface(
-        surface_dir, expected_lock_sha256=lock["lock_sha256"])
-    yields = dev_support.direction_yields(loaded["surface"],
-                                          loaded["observations"])
-    c_fixed = dev_support.select_c_fixed_dev(loaded)
-    bound = bind_probe_cohort(frozen_rule, surface_dir,
-                              lock["lock_sha256"])
-    measured_hours = (time.monotonic() - started) / 3600.0
-
-    # 4. CLOSE OUT with the measured cost.
+    # --- 4. SUCCESS closeout (only after verified outputs) -------------
+    measured = round((time.monotonic() - started) / 3600.0, 4)
     closeout = append_ledger_entry(
         {"kind": "closeout", "question": question,
          "motivating_evidence": "measured support run cost",
          "freeze": {"surface_lock_sha256": lock["lock_sha256"]},
          "parent": head,
          "budget_allocated_gpu_hours": 0.0,
-         "budget_consumed_gpu_hours": round(measured_hours, 4),
+         "budget_consumed_gpu_hours": measured,
          "closes_entry_sha256": head,
+         "terminal_status": "complete",
          "outcome_informed": False,
-         "outcome_pointer": str(surface_dir)},
+         "outcome_pointer": str(run_dir / "run_record.json")},
         head, ledger_path)
-
-    record = {
-        "run": "routing-dev-support-materialization-v1",
-        "surface_dir": str(surface_dir),
-        "support_launch_sha256": manifest["manifest_sha256"],
-        "surface_lock_sha256": lock["lock_sha256"],
-        "launch_entry_sha256": head,
-        "closeout_entry_sha256": closeout["entry_sha256"],
-        "ledger_head": closeout["entry_sha256"],
-        "measured_gpu_hours": round(measured_hours, 4),
-        "direction_yields": yields["per_cell"],
-        "c_fixed_dev": c_fixed,
-        "probe_cohort": bound,
-    }
-    for name, payload in (("disclosure.json", yields),
-                          ("c_fixed_dev.json", c_fixed),
-                          ("probe_cohort.json", bound),
-                          ("run_record.json", record)):
-        path = run_dir / name
-        if path.exists():
-            raise InfrastructureError(f"{path} exists; refusing to "
-                                      "overwrite a recorded output")
-        path.write_text(json.dumps(payload, indent=1, sort_keys=True)
-                        + "\n", encoding="utf-8")
-    return record
+    return {**record, "measured_gpu_hours": measured,
+            "c_fixed_dev": c_fixed, "probe_cohort": bound,
+            "closeout_entry_sha256": closeout["entry_sha256"],
+            "ledger_head": closeout["entry_sha256"]}
 
 
 def main(argv: list[str] | None = None) -> int:
