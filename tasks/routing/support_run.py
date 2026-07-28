@@ -175,13 +175,28 @@ def _hash_directory(run_dir: Path) -> dict[str, str]:
 
 def verify_terminal_outputs(run_dir: str | Path,
                             closeout: Mapping[str, Any]) -> None:
-    """224_s F1: re-verify the terminal artifacts a closeout binds.
-    For a complete closeout: the run record and execute-time
-    environment bytes; for an aborted closeout: every partial
-    artifact in the bound hash map."""
+    """224_s F1 / 226_s F2: re-verify that a closeout binds VALID
+    terminal evidence, not merely file bytes.
+
+    Complete: the exact required output set must exist; the bound
+    run-record and execute-env bytes must match; the execute-time
+    environment must parse and self-hash canonically; the run record's
+    identities must cross-check against the closeout, the surface
+    lock on disk, the comparator record, and the probe cohort record
+    (each of which must itself rehash).
+
+    Aborted: the bound partial-artifact inventory must be NON-EMPTY
+    and must be exactly the files on disk — nothing missing, nothing
+    extra, nothing altered."""
     run_dir = Path(run_dir)
     freeze = closeout.get("freeze", {})
-    if closeout.get("terminal_status") == "complete":
+    status = closeout.get("terminal_status")
+    if status == "complete":
+        for name in (*_OUTPUT_FILES, "execute_env_manifest.json"):
+            if not (run_dir / name).exists():
+                raise InfrastructureError(
+                    f"required terminal output {name} is missing "
+                    "(226_s F2)")
         for name, key in (("run_record.json", "run_record_file_sha256"),
                           ("execute_env_manifest.json",
                            "execute_env_file_sha256")):
@@ -189,14 +204,65 @@ def verify_terminal_outputs(run_dir: str | Path,
                 raise InfrastructureError(
                     f"{name} does not match the closeout binding — "
                     "the terminal artifact was altered (224_s F1)")
-    elif closeout.get("terminal_status") == "aborted":
-        bound = freeze.get("partial_artifact_hashes", {})
-        for name, expected in bound.items():
-            path = run_dir / name
-            if not path.exists() or _sha_file(path) != expected:
-                raise InfrastructureError(
-                    f"partial artifact {name} is missing or altered "
-                    "(224_s F2)")
+        execute_env = json.loads(
+            (run_dir / "execute_env_manifest.json").read_text("utf-8"))
+        dev_support.validate_env_self_hash(execute_env)
+        record = json.loads(
+            (run_dir / "run_record.json").read_text("utf-8"))
+        if record.get("run") != \
+                "routing-dev-support-materialization-v1":
+            raise InfrastructureError(
+                "run record is not a support-run record (226_s F2)")
+        if record.get("surface_lock_sha256") != \
+                freeze.get("surface_lock_sha256"):
+            raise InfrastructureError(
+                "run record and closeout disagree on the surface lock")
+        surface_lock = json.loads(
+            (run_dir / "surface" / "surface_lock.json")
+            .read_text("utf-8"))
+        if surface_lock.get("lock_sha256") != \
+                freeze.get("surface_lock_sha256"):
+            raise InfrastructureError(
+                "surface lock on disk is not the closeout's lock "
+                "(226_s F2)")
+        c_fixed = json.loads(
+            (run_dir / "c_fixed_dev.json").read_text("utf-8"))
+        dev_support.validate_c_fixed_record(c_fixed)
+        if c_fixed["record_sha256"] != record.get("c_fixed_dev_sha256"):
+            raise InfrastructureError(
+                "comparator record does not match the run record")
+        cohort = json.loads(
+            (run_dir / "probe_cohort.json").read_text("utf-8"))
+        from .charter import content_sha256
+        body = {k: v for k, v in cohort.items() if k != "cohort_sha256"}
+        if content_sha256(body) != cohort.get("cohort_sha256") \
+                or cohort["cohort_sha256"] != \
+                record.get("probe_cohort_sha256"):
+            raise InfrastructureError(
+                "probe cohort record does not rehash or does not "
+                "match the run record")
+        json.loads((run_dir / "disclosure.json").read_text("utf-8"))
+        rendered = freeze.get("rendered_observations")
+        if not isinstance(rendered, int) or rendered < 1:
+            raise InfrastructureError(
+                "complete closeout lacks its rendered-observation "
+                "denominator (226_s F1)")
+    elif status == "aborted":
+        bound = freeze.get("partial_artifact_hashes")
+        if not bound:
+            raise InfrastructureError(
+                "aborted closeout carries an empty partial-artifact "
+                "inventory (226_s F2)")
+        on_disk = _hash_directory(run_dir)
+        if on_disk != dict(bound):
+            missing = sorted(set(bound) - set(on_disk))
+            extra = sorted(set(on_disk) - set(bound))
+            altered = sorted(k for k in set(bound) & set(on_disk)
+                             if bound[k] != on_disk[k])
+            raise InfrastructureError(
+                f"partial evidence is not exactly the bound "
+                f"inventory: missing {missing[:3]}, extra "
+                f"{extra[:3]}, altered {altered[:3]} (226_s F2)")
     else:
         raise InfrastructureError("not a terminal closeout")
 
@@ -252,6 +318,9 @@ def execute_support_run(*, run_dir: str | Path,
             "persisted environment manifest is not the one the "
             "manifest binds")
     live_env = (_environment_builder or _default_environment)()
+    # 226_s F2: the LIVE manifest must itself be canonical and
+    # self-hash valid before it is attested or archived.
+    dev_support.validate_environment_manifest_binding(live_env)
     attest_environment(frozen_env, live_env)
     surface_dir = run_dir / "surface"
     output_paths = [run_dir / name for name in _OUTPUT_FILES]
@@ -362,6 +431,9 @@ def execute_support_run(*, run_dir: str | Path,
                  _sha_file(run_dir / "run_record.json"),
              "execute_env_file_sha256":
                  _sha_file(run_dir / "execute_env_manifest.json"),
+             # 226_s F1: the timing denominator the reserve's
+             # per-observation basis must rederive from
+             "rendered_observations": len(loaded["observations"]),
          },
          "parent": head,
          "budget_allocated_gpu_hours": 0.0,

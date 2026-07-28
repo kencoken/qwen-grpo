@@ -335,9 +335,7 @@ def test_success_closeout_binds_terminal_artifacts(
     assert closeout["freeze"]["execute_env_file_sha256"]
     assert closeout["freeze"]["run_record_file_sha256"]
     replica = tmp_path / "run"
-    replica.mkdir()
-    for name in ("run_record.json", "execute_env_manifest.json"):
-        shutil.copy2(fx["run_dir"] / name, replica / name)
+    shutil.copytree(fx["run_dir"], replica)
     support_run.verify_terminal_outputs(replica, closeout)
     (replica / "execute_env_manifest.json").write_text(
         json.dumps(_env_manifest(gpu="other"), indent=1,
@@ -345,6 +343,21 @@ def test_success_closeout_binds_terminal_artifacts(
     with pytest.raises(InfrastructureError, match="terminal artifact "
                        "was altered"):
         support_run.verify_terminal_outputs(replica, closeout)
+    # 226_s F2 reproduction: {} files whose raw hashes match a forged
+    # closeout no longer verify — content must be VALID evidence
+    forged_dir = tmp_path / "forged"
+    forged_dir.mkdir()
+    for name in ("run_record.json", "execute_env_manifest.json"):
+        (forged_dir / name).write_text("{}")
+    forged_hash = hashlib.sha256(b"{}").hexdigest()
+    forged = dict(closeout)
+    forged["freeze"] = {"surface_lock_sha256": "5f" * 32,
+                       "run_record_file_sha256": forged_hash,
+                       "execute_env_file_sha256": forged_hash,
+                       "rendered_observations": 108}
+    with pytest.raises(InfrastructureError, match="missing|not a "
+                       "stage1|not a support-run"):
+        support_run.verify_terminal_outputs(forged_dir, forged)
 
 
 def test_post_admission_failure_aborts_closed(tmp_path):
@@ -388,8 +401,8 @@ def test_post_admission_failure_aborts_closed(tmp_path):
     assert "prelaunch/declaration.json" in partial
     support_run.verify_terminal_outputs(run_dir, entries[1])
     (run_dir / "execute_env_manifest.json").write_text("{}\n")
-    with pytest.raises(InfrastructureError, match="missing or "
-                       "altered"):
+    with pytest.raises(InfrastructureError, match="not exactly the "
+                       "bound inventory"):
         support_run.verify_terminal_outputs(run_dir, entries[1])
     design = dev_support.scientific_design_sha256(manifest)
     retry = {"kind": "support_materialization", "question": "retry",
@@ -1009,9 +1022,12 @@ def _support_entry(manifest, **overrides):
     return entry
 
 
-def _complete_support_chain(path, budget=4.0, consumed=1.5):
-    """support launch + complete closeout — the prerequisite every
-    reserve now has (224_s F3)."""
+def _complete_support_chain(path, budget=4.0, consumed=1.5,
+                            rendered=1080):
+    """support launch + complete closeout with the canonical terminal
+    binding — the prerequisite every reserve now has (224_s F3,
+    226_s F1/F2). consumed=1.5 h over 1080 observations gives exactly
+    5.0 s/observation."""
     manifest = _fake_manifest(budget)
     support = ledger.admit_and_append_launch(
         _support_entry(manifest), None, path, launch_manifest=manifest)
@@ -1020,15 +1036,26 @@ def _complete_support_chain(path, budget=4.0, consumed=1.5):
               closes_entry_sha256=support["entry_sha256"],
               budget_consumed_gpu_hours=consumed,
               terminal_status="complete",
-              freeze={"surface_lock_sha256": "5f" * 32}),
+              freeze={"surface_lock_sha256": "5f" * 32,
+                      "run_record_file_sha256": "aa" * 32,
+                      "execute_env_file_sha256": "bb" * 32,
+                      "rendered_observations": rendered}),
         support["entry_sha256"], path)
     return manifest, support, closeout
 
 
 def _bound_reserve_entry(closeout, **reserve_overrides):
-    reserve = _reserve(**reserve_overrides)
-    reserve["measured_support_gpu_hours"] = \
-        closeout["budget_consumed_gpu_hours"]
+    """A reserve whose timing basis REDERIVES from the closeout:
+    seconds/obs = consumed × 3600 / rendered; r_cycle = ceil(basis)."""
+    consumed = closeout["budget_consumed_gpu_hours"]
+    rendered = closeout["freeze"]["rendered_observations"]
+    seconds = consumed * 3600.0 / rendered
+    import math
+    reserve = _reserve(seconds=seconds, **reserve_overrides)
+    reserve["r_cycle_gpu_hours"] = float(math.ceil(
+        reserve["assumed_cohort_size"]
+        * reserve["evaluation_multiplier"] * seconds / 3600.0))
+    reserve["measured_support_gpu_hours"] = consumed
     return _note(kind="reserve_update", reserve=reserve,
                  freeze={"support_closeout_sha256":
                          closeout["entry_sha256"],
@@ -1150,6 +1177,17 @@ def test_reserve_requires_completed_support_and_binding(tmp_path):
     bad["reserve"]["measured_support_gpu_hours"] = 2.0
     with pytest.raises(InfrastructureError, match="measured cost"):
         ledger.append_ledger_entry(bad, head, path)
+    # 226_s F1: an asserted per-observation basis that does not
+    # rederive from the closeout refuses (the 0.1 s reproduction)
+    undersized = _bound_reserve_entry(closeout)
+    undersized["reserve"]["measured_seconds_per_observation"] = 0.1
+    undersized["reserve"]["r_cycle_gpu_hours"] = 1.0
+    with pytest.raises(InfrastructureError, match="rederive exactly"):
+        ledger.append_ledger_entry(undersized, head, path)
+    # 226_s F1: a FINAL reserve needs the cycle identities
+    final = _bound_reserve_entry(closeout, status="final")
+    with pytest.raises(InfrastructureError, match="final reserve"):
+        ledger.append_ledger_entry(final, head, path)
     reserve_entry = ledger.append_ledger_entry(
         _bound_reserve_entry(closeout), head, path)
     # a second reserve while a launch is OPEN refuses
@@ -1226,7 +1264,10 @@ def test_admission_verifies_the_persisted_ledger_itself(tmp_path):
               closes_entry_sha256=support["entry_sha256"],
               budget_consumed_gpu_hours=1.5,
               terminal_status="complete",
-              freeze={"surface_lock_sha256": "5f" * 32}),
+              freeze={"surface_lock_sha256": "5f" * 32,
+                      "run_record_file_sha256": "aa" * 32,
+                      "execute_env_file_sha256": "bb" * 32,
+                      "rendered_observations": 1080}),
         support["entry_sha256"], path)
     # COMPLETED support also blocks a new no-reserve support
     with pytest.raises(InfrastructureError, match="open or completed"):
@@ -1251,7 +1292,7 @@ def test_admission_verifies_the_persisted_ledger_itself(tmp_path):
                        "reserved"):
         ledger.admit_and_append_launch(
             _entry(kind="cycle_closure",
-                   budget_allocated_gpu_hours=7.5), head, path)
+                   budget_allocated_gpu_hours=9.5), head, path)
     closure = ledger.admit_and_append_launch(
         _entry(kind="cycle_closure", budget_allocated_gpu_hours=6.5),
         head, path)

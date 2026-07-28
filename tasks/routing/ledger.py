@@ -321,12 +321,50 @@ def _append(entry: Mapping[str, Any],
             raise InfrastructureError(
                 "the reserve must bind the completed support's "
                 "authenticated surface lock (224_s F3)")
+        # 226_s F2: the referenced closeout must carry the canonical
+        # complete-support terminal binding, not a minimal freeze.
+        required_binding = {"surface_lock_sha256",
+                            "run_record_file_sha256",
+                            "execute_env_file_sha256",
+                            "rendered_observations"}
+        missing_binding = required_binding - set(target["freeze"])
+        if missing_binding:
+            raise InfrastructureError(
+                f"the referenced support closeout lacks the canonical "
+                f"terminal binding {sorted(missing_binding)} "
+                "(226_s F2)")
         if entry["reserve"]["measured_support_gpu_hours"] != \
                 target["budget_consumed_gpu_hours"]:
             raise InfrastructureError(
                 "the reserve's measured_support_gpu_hours must equal "
                 "the completed support closeout's measured cost "
                 "(224_s F3)")
+        # 226_s F1: the per-observation timing basis DERIVES from the
+        # authenticated cost and denominator — never caller-asserted.
+        rendered = target["freeze"]["rendered_observations"]
+        if not isinstance(rendered, int) or isinstance(rendered, bool) \
+                or rendered < 1:
+            raise InfrastructureError(
+                f"bad rendered_observations {rendered!r} in the "
+                "support closeout")
+        derived = (target["budget_consumed_gpu_hours"] * 3600.0
+                   / rendered)
+        if entry["reserve"]["measured_seconds_per_observation"] != \
+                derived:
+            raise InfrastructureError(
+                f"measured_seconds_per_observation must rederive "
+                f"exactly from the closeout: "
+                f"{target['budget_consumed_gpu_hours']} h × 3600 / "
+                f"{rendered} = {derived!r} (226_s F1)")
+        # 226_s F1: a FINAL reserve waits for the frozen cycle cohort
+        # and evaluation-rule identities.
+        if entry["reserve"]["status"] == "final" and not (
+                freeze.get("cycle_cohort_sha256")
+                and freeze.get("evaluation_rule_sha256")):
+            raise InfrastructureError(
+                "a final reserve requires the frozen cycle-cohort and "
+                "evaluation-rule identities in its freeze; until then "
+                "the reserve is provisional (226_s F1)")
     record = dict(entry)
     record["previous_entry_sha256"] = (
         existing[-1]["entry_sha256"] if existing else None)
