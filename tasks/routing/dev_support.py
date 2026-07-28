@@ -232,15 +232,20 @@ def materialize_dev_support(rt: Any, declaration: Mapping[str, Any],
                             out_dir: str | Path, *,
                             launch_manifest: Mapping[str, Any],
                             environment_manifest: Mapping[str, Any],
-                            expected_manifest_sha256: str
+                            expected_manifest_sha256: str,
+                            ledger_path: str | Path,
+                            expected_head_sha256: str
                             ) -> dict[str, Any]:
     """Execute the complete declared 4^S surface through a runtime
     whose identity matches the declaration, CONSUMING the externally
-    frozen support-launch manifest (218_s F1: rehash == the frozen
-    hash, declaration binding, live source-digest recompute, and the
-    canonical environment revalidated), then persisting the manifest
-    AND the environment bytes beside the surface for the post-run
-    lock to extend. Mirrors the frozen Stage-0 materializer."""
+    frozen support-launch manifest (218_s F1) AND the recorded ledger
+    admission (220_s F1: the current ledger head must be the ADMITTED
+    support-launch entry naming exactly this manifest and budget —
+    materialization cannot run unadmitted, and the recorded launch is
+    the executed launch), then persisting the manifest and the
+    environment bytes beside the surface for the post-run lock to
+    extend. Mirrors the frozen Stage-0 materializer."""
+    from .ledger import verify_ledger_head
     launch_manifest = validate_support_launch_manifest(
         launch_manifest, declaration)
     if launch_manifest["manifest_sha256"] != expected_manifest_sha256:
@@ -252,6 +257,22 @@ def materialize_dev_support(rt: Any, declaration: Mapping[str, Any],
         raise InfrastructureError(
             "environment manifest is not the one the launch manifest "
             "binds")
+    entries = verify_ledger_head(expected_head_sha256, ledger_path)
+    if not entries or entries[-1]["kind"] != "support_materialization":
+        raise InfrastructureError(
+            "the ledger head is not an admitted support launch — "
+            "materialization cannot run unadmitted (220_s F1)")
+    admitted = entries[-1]
+    if admitted["freeze"].get("support_launch_sha256") != \
+            launch_manifest["manifest_sha256"]:
+        raise InfrastructureError(
+            "the admitted launch entry names a different "
+            "support-launch manifest (220_s F1)")
+    if admitted["budget_allocated_gpu_hours"] != \
+            launch_manifest["budget_gpu_hours"]:
+        raise InfrastructureError(
+            "the admitted budget differs from the manifest budget "
+            "(220_s F1)")
     for key, expected in (
             ("worker_visible_fingerprint", rt.worker_visible_fingerprint),
             ("worker_pool_fingerprint", rt.pool_fingerprint),
@@ -387,17 +408,21 @@ _SUPPORT_LAUNCH_KEYS = frozenset({
 _LOCK_KEYS = frozenset({
     "lock", "support", "support_launch_sha256", "declaration_sha256",
     "manifest_sha256", "payoffs_sha256", "trace_manifest_sha256",
-    "trace_steps_sha256", "worker_visible_fingerprint",
-    "runtime_profile_fingerprint", "worker_pool_fingerprint",
-    "request_contract", "cache_identity", "probe_rule_sha256",
-    "routing_source_sha256", "driver", "environment_manifest_sha256",
+    "trace_steps_sha256", "env_manifest_file_sha256",
+    "worker_visible_fingerprint", "runtime_profile_fingerprint",
+    "worker_pool_fingerprint", "request_contract", "cache_identity",
+    "probe_rule_sha256", "routing_source_sha256", "driver",
+    "environment_manifest_sha256",
 })
 
 
 def validate_environment_manifest_binding(env: Mapping[str, Any]) -> str:
     """218_s F1: the CANONICAL Stage-1 validator — manifest kind,
     required fields, self-hash, AND the source identity bound to the
-    current tree. A self-consistent but fictional mapping refuses."""
+    current tree. A self-consistent but fictional mapping refuses.
+    Used at BUILD/materialization time; historical loads use
+    `validate_env_self_hash` (220_s F2), because the tree legitimately
+    moves after a run while the persisted bytes must still verify."""
     from tasks.conductor.stage1_manifest import (
         ManifestError, validate_env_manifest,
     )
@@ -405,6 +430,33 @@ def validate_environment_manifest_binding(env: Mapping[str, Any]) -> str:
         return validate_env_manifest(env)
     except ManifestError as error:
         raise InfrastructureError(str(error)) from error
+
+
+def validate_env_self_hash(env: Mapping[str, Any]) -> str:
+    """220_s F2: the historical check — manifest kind, required
+    fields, and the body→hash binding, WITHOUT current-source
+    equality. A replaced or truncated env_manifest.json refuses."""
+    import hashlib
+    from tasks.conductor.profiles import canonical_json
+    if env.get("manifest") != "stage1-environment-v2":
+        raise InfrastructureError(
+            f"not a stage1-environment-v2 manifest: "
+            f"{env.get('manifest')!r}")
+    for field in ("git_commit", "uv_lock_sha256",
+                  "stage1_source_sha256", "stage1_source_files",
+                  "gpu", "torch"):
+        if field not in env:
+            raise InfrastructureError(
+                f"environment manifest missing {field!r}")
+    declared = env.get("execution_manifest_sha256")
+    body = {k: v for k, v in env.items()
+            if k != "execution_manifest_sha256"}
+    if not declared or hashlib.sha256(
+            canonical_json(body).encode("utf-8")).hexdigest() != declared:
+        raise InfrastructureError(
+            "environment manifest hash mismatch — the execution "
+            "identity is not the hash of this manifest")
+    return declared
 
 
 def build_support_launch_manifest(*, declaration: Mapping[str, Any],
@@ -419,20 +471,37 @@ def build_support_launch_manifest(*, declaration: Mapping[str, Any],
     materialization consumes it."""
     import math
     from .charter import routing_execution_digest
-    from .cohorts import validate_probe_rule
+    from .cohorts import (
+        FIRST_PROBE_RULE_KIND, apply_probe_rule, validate_probe_rule,
+    )
     validate_dev_cohort(declaration["namespace"], declaration["cohort"],
                         declaration["renderers"],
                         declaration["visibility"])
-    validate_probe_rule(frozen_probe_rule)
+    # 220_s F3: the support launch carries THE SIGNED FIRST PROBE, and
+    # its selection must apply to this declaration BEFORE execution —
+    # a rule the declaration cannot serve refuses here, not later.
+    rule = validate_probe_rule(frozen_probe_rule)
+    if rule["kind"] != FIRST_PROBE_RULE_KIND:
+        raise InfrastructureError(
+            f"the support launch binds the signed first probe, not a "
+            f"{rule['kind']!r} rule (220_s F3)")
+    apply_probe_rule(frozen_probe_rule, declaration)
+    # 220_s F4: outcome-blind prefixes — each cell's declared indices
+    # must BE the frozen prefix 0..k-1, never a curated subset.
+    for cell, indices in declaration["cohort"].items():
+        if sorted(indices) != list(range(len(indices))):
+            raise InfrastructureError(
+                f"{cell}: declared indices {sorted(indices)[:6]} are "
+                "not the outcome-blind prefix 0..k-1 (211_f §4)")
     if not isinstance(search_cap, int) or isinstance(search_cap, bool) \
             or search_cap < 1:
         raise InfrastructureError(f"bad search_cap {search_cap!r}")
-    total = sum(len(indices)
-                for indices in declaration["cohort"].values())
+    # 220_s F4: the signed §4 cap counts RENDERED OBSERVATIONS.
+    total = len(declaration["observations"])
     if total > search_cap:
         raise InfrastructureError(
-            f"declaration screens {total} latents, above the frozen "
-            f"search cap {search_cap}")
+            f"declaration screens {total} rendered observations, "
+            f"above the frozen search cap {search_cap}")
     if not isinstance(budget_gpu_hours, (int, float)) \
             or isinstance(budget_gpu_hours, bool) \
             or not math.isfinite(budget_gpu_hours) \
@@ -512,7 +581,10 @@ def validate_support_launch_manifest(manifest: Mapping[str, Any],
 def _load_persisted_launch(out_dir: Path, *, recompute: bool
                            ) -> dict[str, Any]:
     """Read + revalidate the persisted launch manifest and environment
-    bytes from a surface directory."""
+    bytes from a surface directory. 220_s F2: the environment bytes
+    ALWAYS verify — full canonical validation in-session
+    (recompute=True), body→hash self-binding on historical loads —
+    so a replaced env_manifest.json refuses either way."""
     launch_path = out_dir / "support_launch.json"
     env_path = out_dir / "env_manifest.json"
     if not launch_path.exists() or not env_path.exists():
@@ -526,12 +598,12 @@ def _load_persisted_launch(out_dir: Path, *, recompute: bool
         json.loads(launch_path.read_text(encoding="utf-8")),
         declaration, recompute=recompute)
     env = json.loads(env_path.read_text(encoding="utf-8"))
-    if recompute:
-        if validate_environment_manifest_binding(env) != \
-                launch["environment_manifest_sha256"]:
-            raise InfrastructureError(
-                "persisted environment manifest does not match the "
-                "launch manifest binding")
+    verified = (validate_environment_manifest_binding(env) if recompute
+                else validate_env_self_hash(env))
+    if verified != launch["environment_manifest_sha256"]:
+        raise InfrastructureError(
+            "persisted environment manifest does not match the "
+            "launch manifest binding (220_s F2)")
     return launch
 
 
@@ -560,6 +632,9 @@ def build_surface_lock(out_dir: str | Path) -> dict[str, Any]:
         "payoffs_sha256": manifest["payoffs_sha256"],
         "trace_manifest_sha256": manifest["trace_manifest_sha256"],
         "trace_steps_sha256": manifest["trace_steps_sha256"],
+        # 220_s F2: the lock binds the archived environment BYTES
+        "env_manifest_file_sha256":
+            _sha_file(out_dir / "env_manifest.json"),
         "worker_visible_fingerprint":
             declaration["worker_visible_fingerprint"],
         "runtime_profile_fingerprint":
@@ -618,6 +693,8 @@ def validate_surface_lock(out_dir: str | Path,
             _sha_file(out_dir / "traces" / "traces" / "manifest.json"),
         "trace_steps_sha256":
             _sha_file(out_dir / "traces" / "traces" / "steps.jsonl"),
+        "env_manifest_file_sha256":
+            _sha_file(out_dir / "env_manifest.json"),
         "support": manifest["support"],
         "probe_rule_sha256": launch["probe_rule_sha256"],
         "routing_source_sha256": launch["routing_source_sha256"],

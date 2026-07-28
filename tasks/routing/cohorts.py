@@ -227,6 +227,12 @@ def bind_probe_cohort(frozen: Mapping[str, Any],
     selection is regenerated from the rule, never edited."""
     surface_dir = Path(surface_dir)
     lock = validate_surface_lock(surface_dir, expected_lock_sha256)
+    # 220_s F3: the ONLY bindable rule is the one the surface was
+    # LAUNCHED under — the lock carries its hash.
+    if frozen["rule_sha256"] != lock["probe_rule_sha256"]:
+        raise InfrastructureError(
+            "this surface was launched under a different probe rule — "
+            "a post-materialization rule swap refuses (220_s F3)")
     declaration = json.loads(
         (surface_dir / "declaration.json").read_text(encoding="utf-8"))
     observation_ids = apply_probe_rule(frozen, declaration)

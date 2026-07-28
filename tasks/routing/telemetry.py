@@ -484,7 +484,7 @@ def probe_report(groups: list[Mapping[str, Any]], *,
     from collections import Counter as _Counter
 
     from .charter import content_sha256
-    from .cohorts import validate_probe_rule
+    from .cohorts import apply_probe_rule, validate_probe_rule
     rule = validate_probe_rule(frozen_rule)
     if not isinstance(bound_cohort, Mapping) \
             or bound_cohort.get("kind") != "routing-dev-probe-cohort-v1":
@@ -503,6 +503,19 @@ def probe_report(groups: list[Mapping[str, Any]], *,
             lock.get("lock_sha256"):
         raise InfrastructureError(
             "bound cohort is not bound to this loaded surface's lock")
+    # 220_s F3: the rule must be the one the surface was LAUNCHED
+    # under, and the ordered observation ids are REDERIVED from the
+    # rule + loaded declaration — a self-rehashed cohort record is
+    # never trusted for the selection itself.
+    if frozen_rule["rule_sha256"] != lock.get("probe_rule_sha256"):
+        raise InfrastructureError(
+            "this surface was launched under a different probe rule "
+            "(220_s F3)")
+    rederived = apply_probe_rule(frozen_rule, loaded["declaration"])
+    if list(bound_cohort["observation_ids"]) != rederived:
+        raise InfrastructureError(
+            "bound cohort observation ids do not rederive from the "
+            "launched rule and declaration (220_s F3)")
     expected = list(bound_cohort["observation_ids"])
     per_observation = rule["groups_per_observation"]
     counts = _Counter(g["observation_id"] for g in groups)

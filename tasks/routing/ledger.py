@@ -325,8 +325,9 @@ def envelope_state(entries: list[Mapping[str, Any]],
 
 def admit_and_append_launch(entry: Mapping[str, Any],
                             expected_head_sha256: str | None,
-                            path: str | Path = LEDGER_PATH
-                            ) -> dict[str, Any]:
+                            path: str | Path = LEDGER_PATH, *,
+                            launch_manifest: Mapping[str, Any]
+                            | None = None) -> dict[str, Any]:
     """THE launch boundary (218_s F2): verifies the PERSISTED ledger
     against the externally committed head, derives admission from that
     verified state and the PROSPECTIVE ENTRY ITSELF (its kind and its
@@ -353,6 +354,24 @@ def admit_and_append_launch(entry: Mapping[str, Any],
         raise InfrastructureError(
             f"a launch allocation must be finite and > 0, got "
             f"{launch_max!r}")
+    if launch_kind == "support_materialization":
+        # 220_s F1: the recorded launch IS the executed launch — the
+        # entry must name the exact support-launch manifest and carry
+        # its budget, verified against the manifest itself.
+        if launch_manifest is None:
+            raise InfrastructureError(
+                "a support launch is admitted WITH its support-launch "
+                "manifest (220_s F1)")
+        named = entry["freeze"].get("support_launch_sha256")
+        if named != launch_manifest.get("manifest_sha256") or not named:
+            raise InfrastructureError(
+                "the support entry's freeze must name the exact "
+                "support-launch manifest hash (220_s F1)")
+        if launch_max != launch_manifest.get("budget_gpu_hours"):
+            raise InfrastructureError(
+                f"the admitted budget {launch_max} differs from the "
+                f"manifest budget "
+                f"{launch_manifest.get('budget_gpu_hours')} (220_s F1)")
     state = envelope_state(entries, CYCLE_ENVELOPE_GPU_HOURS)
     remaining = state["remaining_gpu_hours"]
     reserve = state["reserve"]
