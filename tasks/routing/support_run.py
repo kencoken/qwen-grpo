@@ -554,3 +554,29 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+def restore_surface_evidence(evidence_surface_dir: str | Path,
+                             target_surface_dir: str | Path) -> None:
+    """235_s portability note: the PRODUCTION restore path for a
+    committed surface-evidence tree (the 233_f reconstruction) — the
+    six surface files plus the trace manifest and the deterministic
+    gunzip of the trace steps. The restored directory then loads
+    through `load_dev_surface` under its committed lock."""
+    import gzip
+    import shutil
+    source = Path(evidence_surface_dir)
+    target = Path(target_surface_dir)
+    if target.exists():
+        raise InfrastructureError(
+            f"{target} exists; refusing to overwrite")
+    (target / "traces" / "traces").mkdir(parents=True)
+    for name in ("declaration.json", "env_manifest.json",
+                 "support_launch.json", "manifest.json",
+                 "payoffs.jsonl", "surface_lock.json"):
+        shutil.copy2(source / name, target / name)
+    shutil.copy2(source / "traces" / "traces" / "manifest.json",
+                 target / "traces" / "traces" / "manifest.json")
+    with gzip.open(source / "traces" / "traces" / "steps.jsonl.gz",
+                   "rb") as handle:
+        (target / "traces" / "traces" / "steps.jsonl").write_bytes(
+            handle.read())

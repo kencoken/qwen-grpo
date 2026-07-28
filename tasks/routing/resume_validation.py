@@ -1,44 +1,51 @@
-"""Step-5 GPU resume-validation tranche (211_f §11, 232_s sequence).
+"""Step-5 GPU resume-validation tranche (211_f §11; rev2 per 235_s).
 
 The infrastructure-acceptance run for the v1 checkpoint contract on
 the REAL training stack: GRPOTrainer (NF4 + LoRA, the stage-0C
 hyperparameter shape) training on the locked routing_dev support,
-with checkpoints ONLY at the v1 boundary and a full
-interrupted-vs-uninterrupted comparison.
+with checkpoints ONLY at the v1 boundary, a deliberate
+post-checkpoint FAULT, and a full interrupted-vs-uninterrupted
+comparison persisted for independent re-verification.
 
-Design (all literals frozen in RESUME_VALIDATION_CONFIG; the
-tranche's lightweight freeze commits this config's hash and the
-EXACT ceiling, 212_f reminder 2):
+The 235_s repairs, all frozen here:
 
-- 8 completions per optimizer step (per-device 2 × grad-accum 4) =
-  exactly ONE group of G=8, generated at the start of each
-  accumulation cycle (`steps_per_generation` = grad-accum default),
-  so EVERY optimizer step is a v1 boundary and the HF `save_steps`
-  checkpoint at update 3 satisfies `generated == consumed` by
-  construction — the accountant still verifies it.
-- 6 optimizer updates total over a deterministic 6-observation
-  schedule (canonical order from the locked surface), few-shot
-  system prompt + rendered user message — the same construction P0
-  will use.
-- Three runs: UNINTERRUPTED (0→6), INTERRUPTED (0→3, stop at the
-  bundle), RESUME (fail-closed `validate_resume` + RNG restore +
-  HF `resume_from_checkpoint`, 3→6). The §11 acceptance comparison:
-  final adapter/optimizer/scheduler state under the FROZEN tolerance
-  (0.0 — exact; deterministic algorithms requested; a nonzero
-  difference is a reported finding, never a silent widening), next
-  sampler identity, counters, and merged trace cardinality.
-- Rewards authenticate against the locked surface (malformed → 0.0;
-  a missing row is an infrastructure abort, never a reward), and
-  every group appends a trace row (segment-local `actions.jsonl`)
-  carrying its global group index for `merge_segments`.
+- BOTH arms are the same launch configuration (`max_steps` =
+  total_updates); the interrupted arm is stopped by FAULT INJECTION
+  at `fault_at_update`, not by a shorter horizon. Every model
+  construction is preceded by a full reseed, and the three arms must
+  prove IDENTICAL checkpoint-zero adapter hashes (gate 1).
+- The resumed run consumes the VALIDATED state: the v1 bundle binds
+  every HF checkpoint file by content hash, and the resume path
+  re-hashes them AND semantically verifies that the HF adapter /
+  optimizer / scheduler / RNG equal the bundle's before
+  `resume_from_checkpoint` is allowed to consume them.
+- The fault leaves ≥1 post-checkpoint group: the aborted segment's
+  tail must be preserved, appear in `excluded_aborted_evidence`, and
+  stay out of the merged trajectory (§11.3, now actually exercised).
+- The schedule is LONGER than the update budget, so the
+  next-sampler comparison is a real cursor, never `END`; traces
+  carry completions, parsed actions and semantic assignments; the
+  optimizer comparison includes parameter-group membership; final
+  states are PERSISTED and `verify_resume_validation` re-derives the
+  comparison from the archive alone.
+- Launch requires the externally reviewed freeze hash; the deadline
+  is checked before every optimizer step; `full_determinism` is ON;
+  phase teardown moves snapshots to CPU, drops every trainer
+  reference, and VERIFIES allocated VRAM returns below the frozen
+  floor before the next phase.
 
-Every run here is development data; the tranche is authorized by the
-signed charter (212_f §1 item: GPU resume validation) and admitted
-through the ledger at execution.
+Acceptance gates (all mechanical, all persisted):
+  1. identical checkpoint-zero adapter hashes across arms;
+  2. identical interrupted/uninterrupted bundles and trace prefixes
+     at the checkpoint;
+  3. ≥1 reward-varying generated group;
+  4. a nonzero checkpoint-zero → checkpoint adapter update;
+  5. the §11.5 comparison at the FROZEN tolerance (0.0 — exact).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -53,7 +60,7 @@ from .dev_support import load_dev_surface
 # --- frozen tranche configuration (hashed into the lightweight freeze) --------
 
 RESUME_VALIDATION_CONFIG: dict[str, Any] = {
-    "tranche": "routing-dev-resume-validation-v1",
+    "tranche": "routing-dev-resume-validation-v2",
     # the Step-4 surface this trains on (231_f)
     "surface_lock_sha256": ("61c4e85a53683c9e2dbcbf15f60794935a76a"
                             "86d979a69412a97f44ea9f2562b"),
@@ -72,13 +79,24 @@ RESUME_VALIDATION_CONFIG: dict[str, Any] = {
              "scheduler": "constant", "loss": "dapo",
              "optim": "adamw_torch", "bf16": True, "seed": 20260728},
     "policy_max_new_tokens": 128,
+    # 235_s F4: the schedule EXCEEDS the update budget so the
+    # next-sampler cursor is real, never END
+    "schedule_length": 8,
     "total_updates": 6,
     "checkpoint_at_update": 3,
+    # 235_s F1/F3: the interrupted arm runs the SAME horizon and is
+    # stopped by an injected fault AFTER a post-checkpoint group
+    "fault_at_update": 4,
+    # 235_s F7: determinism is part of the frozen claim
+    "full_determinism": True,
+    # 235_s F6: allocated VRAM must return below this before the
+    # next phase constructs a trainer
+    "release_max_allocated_mib": 1024,
     # §11 acceptance: the comparison tolerance, frozen BEFORE the test
     "comparison_tolerance": 0.0,
     # 212_f reminder 2: the tranche's EXACT operational ceiling
     "ceiling_gpu_hours": 0.5,
-    "run_root": "runs/routing-dev/resume-validation-v1",
+    "run_root": "runs/routing-dev/resume-validation-v2",
 }
 
 CONFIG_SHA256 = content_sha256(RESUME_VALIDATION_CONFIG)
@@ -91,14 +109,20 @@ def tranche_freeze() -> dict[str, Any]:
         "kind": "resume_validation",
         "question": ("Does the v1 checkpoint contract hold on the real "
                      "GRPOTrainer stack — boundary-only checkpoints, "
-                     "exact counter/RNG/sampler restoration, and an "
-                     "interrupted run indistinguishable from an "
-                     "uninterrupted one?"),
-        "motivation": "211_f §11 / §15 step 5; 232_s sequence item 2",
+                     "exact counter/RNG/sampler restoration, aborted "
+                     "tails preserved-but-excluded, and an interrupted "
+                     "run indistinguishable from an uninterrupted "
+                     "one?"),
+        "motivation": ("211_f §11 / §15 step 5; 232_s sequence item 2; "
+                       "235_s repairs"),
         "config": RESUME_VALIDATION_CONFIG,
         "budget_gpu_hours":
             RESUME_VALIDATION_CONFIG["ceiling_gpu_hours"],
     })
+
+
+class InjectedFault(RuntimeError):
+    """The deliberate 235_s F3 post-checkpoint interruption."""
 
 
 # --- dataset and reward (CPU-testable) ----------------------------------------
@@ -112,25 +136,24 @@ def load_locked_support(surface_dir: str | Path | None = None
 
 
 def training_schedule(loaded: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """One row per optimizer update: the first `total_updates`
-    observations in canonical (sorted observation-id) order. The
-    schedule is part of the frozen identity."""
+    """One row per potential optimizer update: the first
+    `schedule_length` observations in canonical (sorted
+    observation-id) order — deliberately more rows than updates
+    (235_s F4). The schedule is part of the frozen identity."""
     from tasks.conductor import program
-    from tasks.conductor.stage1 import prompt_fewshot
     from tasks.conductor.policy import policy_messages
-    total = RESUME_VALIDATION_CONFIG["total_updates"]
+    from tasks.conductor.profiles import DEFAULT_PROFILE
+    from tasks.conductor.stage1 import prompt_fewshot
+    length = RESUME_VALIDATION_CONFIG["schedule_length"]
     observations = sorted(loaded["observations"],
                           key=lambda obs: obs["observation_id"])
-    if len(observations) < total:
+    if len(observations) < length:
         raise InfrastructureError(
             f"support has {len(observations)} observations; the "
-            f"schedule needs {total}")
+            f"schedule needs {length}")
     system = prompt_fewshot()
     rows = []
-    for obs in observations[:total]:
-        # regenerate the instance for the rendered user message — the
-        # loader's meta is identity-only
-        from tasks.conductor.profiles import DEFAULT_PROFILE
+    for obs in observations[:length]:
         latent = program.generate_latent(
             obs["cell_id"], "routing_dev",
             int(obs["observation_id"].split(":")[2]),
@@ -161,7 +184,6 @@ def training_schedule(loaded: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def schedule_identities(rows: list[Mapping[str, Any]]) -> dict[str, str]:
     from tasks.conductor.stage1 import prompt_fewshot
-    import hashlib
     return {
         "training_cohort_sha256": content_sha256(
             [row["observation_id"] for row in rows]),
@@ -179,8 +201,9 @@ def make_validation_reward(surface: Mapping[tuple[str, tuple[int, ...]],
                            group_size: int,
                            start_group_index: int = 0
                            ) -> Callable[..., list[float]]:
-    """Authenticated reward + group accounting + trace rows. One call
-    per generation batch (= one group at this configuration)."""
+    """Authenticated reward + group accounting + FULL trace rows
+    (completions, parsed actions, semantic assignments, rewards —
+    235_s F4). One call per generation batch (= one group here)."""
     from tasks.conductor.grpo_task import positional_to_semantic
     from tasks.conductor.parser import ActionSchemaError, \
         parse_routing_action
@@ -190,7 +213,7 @@ def make_validation_reward(surface: Mapping[tuple[str, tuple[int, ...]],
     def reward(completions: list[Any], *, observation_id: list[str],
                positions: list[str], num_steps: list[int],
                **_: Any) -> list[float]:
-        if len(completions) % group_size != 0:
+        if len(completions) % group_size != 0 or not completions:
             raise InfrastructureError(
                 f"batch of {len(completions)} is not whole groups of "
                 f"{group_size}")
@@ -198,14 +221,17 @@ def make_validation_reward(surface: Mapping[tuple[str, tuple[int, ...]],
             raise InfrastructureError(
                 "group/observation alignment broken — a group must be "
                 "one observation")
-        rewards = []
+        rewards, texts, actions, assignments = [], [], [], []
         for completion, oid, positions_json, steps in zip(
                 completions, observation_id, positions, num_steps):
             text = completion if isinstance(completion, str) else \
                 completion[0].get("content", "")
+            texts.append(text)
             try:
                 action = parse_routing_action(text, steps)
             except ActionSchemaError:
+                actions.append(None)
+                assignments.append(None)
                 rewards.append(0.0)
                 continue
             semantic = tuple(positional_to_semantic(
@@ -215,17 +241,22 @@ def make_validation_reward(surface: Mapping[tuple[str, tuple[int, ...]],
                 raise InfrastructureError(
                     f"({oid}, {semantic}): no surface row — an "
                     "infrastructure abort, never a reward")
+            actions.append(list(action))
+            assignments.append(list(semantic))
             rewards.append(float(payoff))
         groups = len(completions) // group_size
         accountant.record_generation(groups=groups,
                                      completions=len(completions))
         with trace_path.open("a", encoding="utf-8") as handle:
             for g in range(groups):
+                lo, hi = g * group_size, (g + 1) * group_size
                 handle.write(json.dumps({
                     "global_group_index": state["group_index"] + g,
-                    "observation_id": observation_id[g * group_size],
-                    "rewards": rewards[g * group_size:
-                                       (g + 1) * group_size],
+                    "observation_id": observation_id[lo],
+                    "completions": texts[lo:hi],
+                    "actions": actions[lo:hi],
+                    "assignments": assignments[lo:hi],
+                    "rewards": rewards[lo:hi],
                 }, sort_keys=True) + "\n")
         state["group_index"] += groups
         return rewards
@@ -234,7 +265,31 @@ def make_validation_reward(surface: Mapping[tuple[str, tuple[int, ...]],
     return reward
 
 
-# --- comparison (CPU-testable) ------------------------------------------------
+def read_trace(path: str | Path) -> list[dict[str, Any]]:
+    return [json.loads(line)
+            for line in Path(path).read_text("utf-8").splitlines()]
+
+
+# --- hashing + comparison (CPU-testable) --------------------------------------
+
+def tensor_state_hashes(state: Mapping[str, Any]) -> dict[str, str]:
+    """Order-stable content hashes of a tensor state dict (the
+    checkpoint-zero identity gate)."""
+    import torch
+    hashes = {}
+    for key in sorted(state):
+        value = state[key]
+        if isinstance(value, torch.Tensor):
+            # .float() first: bf16 has no numpy dtype, and the fp32
+            # embedding is exact, so equality of hashes is equality
+            # of tensors
+            hashes[key] = hashlib.sha256(
+                value.detach().float().cpu().contiguous()
+                .numpy().tobytes()).hexdigest()
+        else:
+            hashes[key] = content_sha256(value)
+    return hashes
+
 
 def compare_tensor_states(state_a: Mapping[str, Any],
                           state_b: Mapping[str, Any],
@@ -273,22 +328,24 @@ def compare_tensor_states(state_a: Mapping[str, Any],
 
 
 def _flatten_optimizer_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    """235_s F4: INCLUDES parameter-group membership."""
     flat: dict[str, Any] = {}
     for pid, buffers in state.get("state", {}).items():
         for name, value in buffers.items():
             flat[f"state.{pid}.{name}"] = value
     for i, group in enumerate(state.get("param_groups", [])):
         for name, value in group.items():
-            if name != "params":
-                flat[f"group.{i}.{name}"] = value
+            flat[f"group.{i}.{name}"] = value      # incl. "params"
     return flat
 
 
 def compare_runs(final_a: Mapping[str, Any], final_b: Mapping[str, Any]
                  ) -> dict[str, Any]:
     """The full §11.5 comparison between the uninterrupted final state
-    and the interrupted+resumed final state. Both are the dicts
-    produced by `_final_state`."""
+    and the interrupted+resumed final state: adapter, optimizer
+    (with group membership), scheduler, the REAL next-sampler cursor,
+    counters, and the full merged trace sequence (observation ids +
+    rewards per group)."""
     tolerance = RESUME_VALIDATION_CONFIG["comparison_tolerance"]
     compare_tensor_states(final_a["adapter"], final_b["adapter"],
                           tolerance, "adapter")
@@ -302,20 +359,48 @@ def compare_runs(final_a: Mapping[str, Any], final_b: Mapping[str, Any]
             final_b["next_sampler_identity"]:
         raise InfrastructureError(
             "next sampler/renderer identity differs (211_f §11.5)")
+    if final_a["next_sampler_identity"] == "END":
+        raise InfrastructureError(
+            "next-sampler comparison degenerated to END — the "
+            "schedule must exceed the update budget (235_s F4)")
     if final_a["counters"] != final_b["counters"]:
         raise InfrastructureError(
             f"counters differ: {final_a['counters']} != "
             f"{final_b['counters']}")
+    if final_a["trace_sequence"] != final_b["trace_sequence"]:
+        raise InfrastructureError(
+            "merged trace sequences differ (observation ids/rewards)")
     if final_a["trace_cardinality"] != final_b["trace_cardinality"]:
         raise InfrastructureError(
             f"merged trace cardinality differs: "
             f"{final_a['trace_cardinality']} != "
             f"{final_b['trace_cardinality']}")
-    return {"tolerance": tolerance, "adapter_keys":
-            len(final_a["adapter"]), "verdict": "PASS"}
+    return {"tolerance": tolerance,
+            "adapter_keys": len(final_a["adapter"]),
+            "trace_groups": final_a["trace_cardinality"],
+            "verdict": "PASS"}
 
+
+def trace_sequence(groups: list[Mapping[str, Any]]) -> list[list[Any]]:
+    return [[g["global_group_index"], g["observation_id"],
+             g["rewards"]] for g in groups]
 
 # --- the GPU phases (exercised by the tranche run, not by CPU tests) ----------
+
+def _seed_everything() -> None:
+    """235_s F1: a full reseed precedes EVERY model construction so
+    all arms draw identical LoRA initializations."""
+    import random
+
+    import numpy
+    import torch
+    seed = RESUME_VALIDATION_CONFIG["grpo"]["seed"]
+    random.seed(seed)
+    numpy.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
 
 def _identities(loaded: Mapping[str, Any],
                 rows: list[Mapping[str, Any]],
@@ -336,8 +421,11 @@ def _identities(loaded: Mapping[str, Any],
     }
 
 
-def _build_trainer(rows, reward, run_dir: Path, max_steps: int,
-                   save_at: int | None):
+def _build_trainer(rows, reward, run_dir: Path, save_at: int | None,
+                   extra_callbacks=()):
+    """One launch configuration for EVERY arm (235_s F1):
+    max_steps = total_updates always; interruption is a fault, not a
+    shorter horizon."""
     import torch
     from datasets import Dataset
     from peft import LoraConfig
@@ -345,6 +433,7 @@ def _build_trainer(rows, reward, run_dir: Path, max_steps: int,
     from trl import GRPOConfig, GRPOTrainer
     config = RESUME_VALIDATION_CONFIG
     grpo = config["grpo"]
+    _seed_everything()
     processing_class = AutoTokenizer.from_pretrained(
         config["model_id"], revision=config["revision"])
     args = GRPOConfig(
@@ -357,11 +446,12 @@ def _build_trainer(rows, reward, run_dir: Path, max_steps: int,
         learning_rate=float(grpo["learning_rate"]),
         lr_scheduler_type=grpo["scheduler"],
         warmup_steps=grpo["warmup_steps"], beta=float(grpo["beta"]),
-        max_steps=max_steps, loss_type=grpo["loss"],
+        max_steps=config["total_updates"], loss_type=grpo["loss"],
         shuffle_dataset=False, eval_strategy="no",
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         bf16=grpo["bf16"],
+        full_determinism=config["full_determinism"],
         model_init_kwargs={
             "torch_dtype": torch.bfloat16,
             "attn_implementation": "sdpa",
@@ -379,11 +469,14 @@ def _build_trainer(rows, reward, run_dir: Path, max_steps: int,
         lora_dropout=config["lora"]["dropout"],
         target_modules=list(config["lora"]["targets"]),
         task_type="CAUSAL_LM")
-    return GRPOTrainer(
+    trainer = GRPOTrainer(
         model=config["model_id"], args=args,
         train_dataset=Dataset.from_list(list(rows)),
         processing_class=processing_class, reward_funcs=[reward],
         peft_config=peft_config)
+    for callback in extra_callbacks:
+        trainer.add_callback(callback)
+    return trainer
 
 
 def _adapter_state(trainer) -> dict[str, Any]:
@@ -392,74 +485,119 @@ def _adapter_state(trainer) -> dict[str, Any]:
             if "lora" in name}
 
 
-def _final_state(trainer, accountant, trace_paths: list[Path],
-                 rows) -> dict[str, Any]:
-    consumed = accountant.consumed_groups
-    next_row = (rows[consumed]["observation_id"]
-                if consumed < len(rows) else "END")
-    segments_rows = 0
-    for path in trace_paths:
-        segments_rows += sum(1 for _ in path.open())
-    return {
-        "adapter": _adapter_state(trainer),
-        "optimizer": trainer.optimizer.state_dict(),
-        "scheduler": trainer.lr_scheduler.state_dict(),
-        "next_sampler_identity": next_row,
-        "counters": {"generated_groups": accountant.generated_groups,
-                     "consumed_groups": accountant.consumed_groups,
-                     "optimizer_updates": accountant.optimizer_updates,
-                     "sampled_completions":
-                         accountant.sampled_completions},
-        "trace_cardinality": segments_rows,
-    }
+def _cpu_state(value):
+    import torch
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().clone()
+    if isinstance(value, Mapping):
+        return {k: _cpu_state(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_cpu_state(v) for v in value]
+    return value
+
+
+def _release_trainer(holder: dict) -> None:
+    """235_s F6: drop the CALLER-HELD references, collect, and VERIFY
+    allocated VRAM returned below the frozen floor."""
+    import gc
+
+    import torch
+    holder.clear()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        allocated_mib = torch.cuda.memory_allocated() / 2 ** 20
+        floor = RESUME_VALIDATION_CONFIG["release_max_allocated_mib"]
+        if allocated_mib > floor:
+            raise InfrastructureError(
+                f"VRAM did not release: {allocated_mib:.0f} MiB "
+                f"allocated > the frozen floor {floor} MiB — refusing "
+                "to construct the next phase (235_s F6)")
+
+
+class _DeadlineCallback:
+    """235_s F7: the frozen ceiling is enforced before EVERY
+    optimizer step (= every generation cycle here)."""
+
+    def __init__(self, deadline_monotonic: float) -> None:
+        from transformers import TrainerCallback
+
+        class _Callback(TrainerCallback):
+            def on_step_begin(self, args, state, control, **kw):
+                if time.monotonic() > deadline_monotonic:
+                    raise InfrastructureError(
+                        "tranche ceiling reached before the next "
+                        "update — aborting inside the frozen budget")
+        self.callback = _Callback()
+
+
+class _FaultInjector:
+    """235_s F1/F3: the interrupted arm is stopped by a deliberate
+    fault AFTER at least one post-checkpoint group exists."""
+
+    def __init__(self, fault_at_update: int) -> None:
+        from transformers import TrainerCallback
+
+        class _Callback(TrainerCallback):
+            def on_step_end(self, args, state, control, **kw):
+                if state.global_step >= fault_at_update:
+                    raise InjectedFault(
+                        f"injected fault after update "
+                        f"{state.global_step}")
+        self.callback = _Callback()
+
+
+def _hf_checkpoint_hashes(hf_dir: Path) -> dict[str, str]:
+    return {str(path.relative_to(hf_dir)):
+            hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(hf_dir.rglob("*")) if path.is_file()}
 
 
 class _BoundaryCallback:
     """Counts consumed groups at optimizer steps and writes the v1
-    contract bundle at the checkpoint step."""
+    contract bundle at the checkpoint step — binding the HF
+    checkpoint files it shadows (235_s F2)."""
 
     def __init__(self, accountant, bundle_dir: Path | None,
                  identities: Mapping[str, str] | None,
                  run_id: str, segment_id: str,
-                 groups_per_update: int) -> None:
+                 hf_output_dir: Path | None,
+                 checkpoint_at: int | None) -> None:
         from transformers import TrainerCallback
 
-        accountant_ref = accountant
-        bundle_ref = bundle_dir
-        callback_self = self
+        outer = self
 
         class _Callback(TrainerCallback):
             def on_optimizer_step(self, args, state, control, **kw):
-                accountant_ref.record_update(
-                    consumed_groups=groups_per_update)
+                outer.accountant.record_update(consumed_groups=1)
 
             def on_save(self, args, state, control, **kw):
-                if bundle_ref is None:
+                if outer.bundle_dir is None:
                     return
-                callback_self.write_bundle(kw["model"],
-                                           kw.get("optimizer"),
-                                           kw.get("lr_scheduler"),
-                                           state)
+                outer.write_bundle(kw["model"], kw.get("optimizer"),
+                                   kw.get("lr_scheduler"), state)
 
         self.accountant = accountant
         self.bundle_dir = bundle_dir
         self.identities = dict(identities or {})
         self.run_id = run_id
         self.segment_id = segment_id
+        self.hf_output_dir = hf_output_dir
+        self.checkpoint_at = checkpoint_at
         self.callback = _Callback()
         self.record = None
 
     def write_bundle(self, model, optimizer, scheduler, state) -> None:
         import torch
+        from safetensors.torch import save_file
         bundle = self.bundle_dir
         bundle.mkdir(parents=True, exist_ok=True)
         counters = self.accountant.authorize_checkpoint()
-        adapter_path = bundle / \
-            ckpt.CHECKPOINT_BUNDLE_FILENAMES["adapter"]
-        from safetensors.torch import save_file
         save_file({k: v.detach().to("cpu").contiguous()
                    for k, v in model.state_dict().items()
-                   if "lora" in k}, str(adapter_path))
+                   if "lora" in k},
+                  str(bundle /
+                      ckpt.CHECKPOINT_BUNDLE_FILENAMES["adapter"]))
         torch.save(optimizer.state_dict(),
                    bundle / ckpt.CHECKPOINT_BUNDLE_FILENAMES[
                        "optimizer"])
@@ -472,12 +610,21 @@ class _BoundaryCallback:
                      for name in ("adapter", "optimizer", "scheduler",
                                   "rng")}
         hashes = ckpt.hash_state_artifacts(bundle, filenames)
+        hf_dir = self.hf_output_dir / \
+            f"checkpoint-{self.checkpoint_at}"
+        if not hf_dir.exists():
+            raise InfrastructureError(
+                f"{hf_dir} absent at on_save — the bundle cannot bind "
+                "the HF checkpoint (235_s F2)")
         self.record = ckpt.build_checkpoint_record(
             identities=self.identities, counters=counters,
             rng_state=rng_state, state_artifact_hashes=hashes,
-            sampler_position={"next_global_group_index":
-                              counters["consumed_groups"],
-                              "hf_global_step": state.global_step},
+            sampler_position={
+                "next_global_group_index": counters["consumed_groups"],
+                "hf_global_step": state.global_step,
+                "hf_checkpoint_dir": str(hf_dir),
+                "hf_checkpoint_sha256": _hf_checkpoint_hashes(hf_dir),
+            },
             run_id=self.run_id, segment_id=self.segment_id,
             parent_checkpoint=None)
         (bundle / "checkpoint_record.json").write_text(
@@ -485,24 +632,289 @@ class _BoundaryCallback:
             encoding="utf-8")
 
 
-def execute_resume_validation(*, expected_head_sha256: str,
+def verify_hf_checkpoint_against_bundle(bundle_dir: str | Path,
+                                        hf_dir: str | Path,
+                                        record: Mapping[str, Any]
+                                        ) -> None:
+    """235_s F2: the resume may only consume an HF checkpoint whose
+    every file re-hashes to the bundle's binding AND whose adapter /
+    optimizer / scheduler / RNG semantically equal the validated
+    bundle state."""
+    import torch
+    from safetensors.torch import load_file
+    bundle_dir, hf_dir = Path(bundle_dir), Path(hf_dir)
+    bound = record["sampler_position"]["hf_checkpoint_sha256"]
+    actual = _hf_checkpoint_hashes(hf_dir)
+    if actual != dict(bound):
+        missing = sorted(set(bound) - set(actual))
+        extra = sorted(set(actual) - set(bound))
+        altered = sorted(k for k in set(bound) & set(actual)
+                         if bound[k] != actual[k])
+        raise InfrastructureError(
+            f"HF checkpoint does not match the bundle binding: "
+            f"missing {missing[:3]}, extra {extra[:3]}, altered "
+            f"{altered[:3]} (235_s F2)")
+    tolerance = RESUME_VALIDATION_CONFIG["comparison_tolerance"]
+    bundle_adapter = load_file(
+        str(bundle_dir / ckpt.CHECKPOINT_BUNDLE_FILENAMES["adapter"]))
+    hf_adapter_path = hf_dir / "adapter_model.safetensors"
+    if hf_adapter_path.exists():
+        # name grammars differ between PEFT save formats; compare the
+        # sorted tensor CONTENT hashes, which are format-independent
+        hf_adapter = load_file(str(hf_adapter_path))
+        bundle_hashes = sorted(tensor_state_hashes(
+            bundle_adapter).values())
+        hf_hashes = sorted(tensor_state_hashes(hf_adapter).values())
+        if bundle_hashes != hf_hashes:
+            raise InfrastructureError(
+                "HF adapter tensors do not equal the validated bundle "
+                "adapter (235_s F2)")
+    bundle_optimizer = torch.load(
+        bundle_dir / ckpt.CHECKPOINT_BUNDLE_FILENAMES["optimizer"],
+        weights_only=False)
+    hf_optimizer = torch.load(hf_dir / "optimizer.pt",
+                              weights_only=False)
+    compare_tensor_states(_flatten_optimizer_state(bundle_optimizer),
+                          _flatten_optimizer_state(hf_optimizer),
+                          tolerance, "hf-vs-bundle optimizer")
+    bundle_scheduler = torch.load(
+        bundle_dir / ckpt.CHECKPOINT_BUNDLE_FILENAMES["scheduler"],
+        weights_only=False)
+    hf_scheduler = torch.load(hf_dir / "scheduler.pt",
+                              weights_only=False)
+    if bundle_scheduler != hf_scheduler:
+        raise InfrastructureError(
+            "HF scheduler state does not equal the validated bundle "
+            "scheduler (235_s F2)")
+    rng_json = json.loads(
+        (bundle_dir / ckpt.CHECKPOINT_BUNDLE_FILENAMES["rng"])
+        .read_text("utf-8"))
+    hf_rng = torch.load(hf_dir / "rng_state.pth", weights_only=False)
+    if hf_rng["cpu"].tolist() != rng_json["torch_cpu"]:
+        raise InfrastructureError(
+            "HF torch-CPU RNG state does not equal the validated "
+            "bundle RNG (235_s F2)")
+    if rng_json["torch_cuda"] is not None:
+        hf_cuda = hf_rng.get("cuda")
+        if hf_cuda is None or \
+                [s.tolist() for s in hf_cuda] != rng_json["torch_cuda"]:
+            raise InfrastructureError(
+                "HF CUDA RNG state does not equal the validated "
+                "bundle RNG (235_s F2)")
+
+def run_training_segment(*, rows, surface, run_dir: Path,
+                         save_at: int | None, identities,
+                         run_id: str, segment_id: str,
+                         deadline_monotonic: float,
+                         fault_at: int | None = None,
+                         resume_from: Path | None = None,
+                         start_group_index: int = 0,
+                         accountant=None) -> dict[str, Any]:
+    """One training segment on the real stack, returning CPU-side
+    results only (235_s F6): the trainer is torn down and VRAM
+    verified released before returning."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    accountant = accountant or ckpt.GroupAccountant()
+    trace_path = run_dir / "actions.jsonl"
+    group_size = RESUME_VALIDATION_CONFIG["grpo"]["group_size"]
+    reward = make_validation_reward(surface, accountant, trace_path,
+                                    group_size,
+                                    start_group_index=start_group_index)
+    boundary = _BoundaryCallback(
+        accountant, (run_dir / "bundle") if save_at else None,
+        identities, run_id, segment_id, hf_output_dir=run_dir,
+        checkpoint_at=save_at)
+    callbacks = [boundary.callback,
+                 _DeadlineCallback(deadline_monotonic).callback]
+    if fault_at is not None:
+        callbacks.append(_FaultInjector(fault_at).callback)
+    holder = {"trainer": _build_trainer(rows, reward, run_dir,
+                                        save_at, callbacks)}
+    trainer = holder["trainer"]
+    checkpoint_zero = tensor_state_hashes(_adapter_state(trainer))
+    faulted = False
+    try:
+        if resume_from is not None:
+            trainer.train(resume_from_checkpoint=str(resume_from))
+        else:
+            trainer.train()
+    except InjectedFault:
+        faulted = True
+        if fault_at is None:
+            raise
+    if fault_at is not None and not faulted:
+        raise InfrastructureError(
+            "the injected fault never fired — the interrupted arm "
+            "completed (235_s F3)")
+    final = {
+        "adapter": _cpu_state(_adapter_state(trainer)),
+        "optimizer": _cpu_state(trainer.optimizer.state_dict()),
+        "scheduler": _cpu_state(trainer.lr_scheduler.state_dict()),
+    }
+    del trainer
+    _release_trainer(holder)
+    return {"final": final, "accountant": accountant,
+            "trace_path": trace_path, "boundary": boundary,
+            "checkpoint_zero": checkpoint_zero, "faulted": faulted}
+
+
+def _final_state(final: Mapping[str, Any], accountant, rows,
+                 merged_groups: list[Mapping[str, Any]]
+                 ) -> dict[str, Any]:
+    consumed = accountant.consumed_groups
+    next_row = (rows[consumed]["observation_id"]
+                if consumed < len(rows) else "END")
+    return {
+        **final,
+        "next_sampler_identity": next_row,
+        "counters": {"generated_groups": accountant.generated_groups,
+                     "consumed_groups": accountant.consumed_groups,
+                     "optimizer_updates": accountant.optimizer_updates,
+                     "sampled_completions":
+                         accountant.sampled_completions},
+        "trace_sequence": trace_sequence(merged_groups),
+        "trace_cardinality": len(merged_groups),
+    }
+
+
+def _persist_final(run_root: Path, name: str,
+                   final: Mapping[str, Any]) -> dict[str, str]:
+    """235_s F4: final states are persisted for the independent
+    verifier."""
+    import torch
+    from safetensors.torch import save_file
+    out = run_root / name
+    out.mkdir(parents=True, exist_ok=True)
+    save_file({k: v.contiguous() for k, v in final["adapter"].items()},
+              str(out / "adapter.safetensors"))
+    torch.save(final["optimizer"], out / "optimizer.pt")
+    torch.save(final["scheduler"], out / "scheduler.pt")
+    (out / "cursor.json").write_text(json.dumps({
+        "next_sampler_identity": final["next_sampler_identity"],
+        "counters": final["counters"],
+        "trace_cardinality": final["trace_cardinality"],
+        "trace_sequence": final["trace_sequence"],
+    }, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    return {str(p.relative_to(out)):
+            hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(out.iterdir())}
+
+
+def _load_final(run_root: Path, name: str) -> dict[str, Any]:
+    import torch
+    from safetensors.torch import load_file
+    out = run_root / name
+    cursor = json.loads((out / "cursor.json").read_text("utf-8"))
+    return {
+        "adapter": load_file(str(out / "adapter.safetensors")),
+        "optimizer": torch.load(out / "optimizer.pt",
+                                weights_only=False),
+        "scheduler": torch.load(out / "scheduler.pt",
+                                weights_only=False),
+        **cursor,
+    }
+
+
+def verify_resume_validation(run_root: str | Path) -> dict[str, Any]:
+    """The independent verifier (235_s F4): reloads the archive alone
+    — persisted final states, traces, the bundle record — rederives
+    the merge, the gates and the §11.5 comparison, and requires the
+    persisted validation record to match the rederivation exactly."""
+    run_root = Path(run_root)
+    record = json.loads(
+        (run_root / "validation_record.json").read_text("utf-8"))
+    bundle_record = json.loads(
+        (run_root / "interrupted" / "bundle" /
+         "checkpoint_record.json").read_text("utf-8"))
+    body = {k: v for k, v in bundle_record.items()
+            if k != "checkpoint_sha256"}
+    if content_sha256(body) != bundle_record["checkpoint_sha256"]:
+        raise InfrastructureError("bundle record does not rehash")
+    checkpoint_at = RESUME_VALIDATION_CONFIG["checkpoint_at_update"]
+    total = RESUME_VALIDATION_CONFIG["total_updates"]
+    trace_a = read_trace(run_root / "uninterrupted" / "actions.jsonl")
+    trace_b = read_trace(run_root / "interrupted" / "actions.jsonl")
+    trace_c = read_trace(run_root / "resume" / "actions.jsonl")
+    merged = ckpt.merge_segments([
+        {"segment_id": "interrupted", "run_id": "resume-validation",
+         "config_sha256": CONFIG_SHA256, "status": "aborted",
+         "checkpoint_id": bundle_record["checkpoint_sha256"],
+         "parent_checkpoint": None,
+         "resume_from_consumed_groups": 0,
+         "checkpoint_consumed_groups": checkpoint_at,
+         "groups": trace_b},
+        {"segment_id": "resume", "run_id": "resume-validation",
+         "config_sha256": CONFIG_SHA256, "status": "complete",
+         "checkpoint_id": "final",
+         "parent_checkpoint": bundle_record["checkpoint_sha256"],
+         "resume_from_consumed_groups": checkpoint_at,
+         "checkpoint_consumed_groups": total,
+         "groups": trace_c},
+    ])
+    if len(merged["excluded_aborted_evidence"]) < 1:
+        raise InfrastructureError(
+            "no aborted tail was preserved — §11.3 untested")
+    if merged["merged_groups"] != total:
+        raise InfrastructureError(
+            f"merged trajectory has {merged['merged_groups']} groups; "
+            f"expected {total}")
+    final_a = _load_final(run_root, "final_uninterrupted")
+    final_c = _load_final(run_root, "final_resumed")
+    comparison = compare_runs(final_a, final_c)
+    if final_a["trace_sequence"] != trace_sequence(trace_a):
+        raise InfrastructureError(
+            "persisted uninterrupted cursor does not match its trace")
+    if final_c["trace_sequence"] != trace_sequence(
+            merged["trajectory"]):
+        raise InfrastructureError(
+            "persisted resumed cursor does not match the merged "
+            "trajectory")
+    # gates 3 + 4 rederive from the archive
+    varying = [g for g in trace_a if len(set(g["rewards"])) > 1]
+    if not varying:
+        raise InfrastructureError(
+            "no reward-varying group — gate 3 fails (235_s)")
+    if record["checkpoint_zero_adapter_sha256"] == \
+            record["checkpoint_adapter_sha256"]:
+        raise InfrastructureError(
+            "checkpoint-zero equals checkpoint-3 adapter — gate 4 "
+            "fails (zero-gradient trajectory; 235_s)")
+    rederived = {
+        "comparison": comparison,
+        "merged_groups": merged["merged_groups"],
+        "excluded_tail_groups":
+            [g["global_group_index"]
+             for g in merged["excluded_aborted_evidence"]],
+        "reward_varying_groups":
+            [g["global_group_index"] for g in varying],
+    }
+    for key, value in rederived.items():
+        if record.get(key) != value:
+            raise InfrastructureError(
+                f"validation record field {key} does not rederive: "
+                f"{record.get(key)!r} != {value!r}")
+    return {"verdict": "PASS", **rederived}
+
+
+def execute_resume_validation(*, expected_freeze_sha256: str,
+                              expected_head_sha256: str,
                               ledger_path: str | Path | None = None,
                               _environment_builder=None
                               ) -> dict[str, Any]:
-    """The full Step-5 tranche: admit → uninterrupted run →
-    interrupted run (bundle at update 3) → fail-closed resume →
-    §11 comparison → closeout (aborted on any post-admission
-    failure, with measured cost). Run only after the tranche freeze
-    is committed and reviewed."""
-    import gc
-
-    import torch
-
+    """The full Step-5 tranche. Requires the EXTERNALLY REVIEWED
+    freeze hash (235_s F5); admits, runs the three arms, applies the
+    gates, persists everything, verifies its own archive, and closes
+    out (aborted with measured cost on any post-admission failure)."""
     from .ledger import LEDGER_PATH, admit_and_append_launch, \
         append_ledger_entry
+    from .support_run import _hash_directory, _sha_file
     ledger_path = ledger_path or LEDGER_PATH
     config = RESUME_VALIDATION_CONFIG
     frozen = tranche_freeze()
+    if frozen["freeze_sha256"] != expected_freeze_sha256:
+        raise InfrastructureError(
+            "the reconstructed freeze is not the externally reviewed "
+            "one — the code or config moved after review (235_s F5)")
     if _environment_builder is None:
         from tasks.conductor.stage1_manifest import \
             build_stage1_env_manifest
@@ -522,7 +934,7 @@ def execute_resume_validation(*, expected_head_sha256: str,
     entry = {
         "kind": "resume_validation",
         "question": frozen["question"],
-        "motivating_evidence": "234_f freeze; 232_s sequence item 2",
+        "motivating_evidence": "236_f rev2 freeze; 232_s item 2",
         "freeze": {"freeze_sha256": frozen["freeze_sha256"],
                    "config_sha256": CONFIG_SHA256},
         "parent": None,
@@ -535,18 +947,6 @@ def execute_resume_validation(*, expected_head_sha256: str,
     started = time.monotonic()
     deadline = started + config["ceiling_gpu_hours"] * 3600.0
 
-    def _guard(phase: str) -> None:
-        if time.monotonic() > deadline:
-            raise InfrastructureError(
-                f"ceiling reached before {phase} — aborting inside "
-                "the frozen budget")
-
-    def _release(trainer) -> None:
-        del trainer
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
     try:
         run_root.mkdir(parents=True)
         (run_root / "environment_manifest.json").write_text(
@@ -554,91 +954,149 @@ def execute_resume_validation(*, expected_head_sha256: str,
             encoding="utf-8")
         checkpoint_at = config["checkpoint_at_update"]
         total = config["total_updates"]
+        surface = loaded["surface"]
 
-        # Phase A — uninterrupted 0 -> total (same save behavior so
-        # the trajectories are structurally identical)
-        _guard("uninterrupted run")
-        trainer_a, accountant_a, trace_a, _ = run_training_segment(
-            rows=rows, surface=loaded["surface"],
-            run_dir=run_root / "uninterrupted", max_steps=total,
+        # Phase A — uninterrupted (saves at 3 for structural identity)
+        segment_a = run_training_segment(
+            rows=rows, surface=surface,
+            run_dir=run_root / "uninterrupted",
             save_at=checkpoint_at, identities=identities,
-            run_id="resume-validation", segment_id="uninterrupted")
-        final_a = _final_state(trainer_a, accountant_a, [trace_a],
-                               rows)
-        _release(trainer_a)
+            run_id="resume-validation", segment_id="uninterrupted",
+            deadline_monotonic=deadline)
 
-        # Phase B — interrupted 0 -> checkpoint_at, bundle written
-        _guard("interrupted run")
-        trainer_b, accountant_b, trace_b, boundary_b = \
-            run_training_segment(
-                rows=rows, surface=loaded["surface"],
-                run_dir=run_root / "interrupted",
-                max_steps=checkpoint_at, save_at=checkpoint_at,
-                identities=identities, run_id="resume-validation",
-                segment_id="interrupted")
-        if boundary_b.record is None:
+        # Phase B — interrupted by the injected fault AFTER a
+        # post-checkpoint group
+        segment_b = run_training_segment(
+            rows=rows, surface=surface,
+            run_dir=run_root / "interrupted",
+            save_at=checkpoint_at, identities=identities,
+            run_id="resume-validation", segment_id="interrupted",
+            deadline_monotonic=deadline,
+            fault_at=config["fault_at_update"])
+        if segment_b["boundary"].record is None:
             raise InfrastructureError(
                 "the interrupted run wrote no v1 bundle")
-        _release(trainer_b)
+        record = segment_b["boundary"].record
 
-        # Phase C — fail-closed resume from the bundle, then 3 -> 6
-        _guard("resume run")
-        bundle_dir = run_root / "interrupted" / "bundle"
-        record = json.loads(
-            (bundle_dir / "checkpoint_record.json").read_text("utf-8"))
+        # Gate 1 — identical checkpoint-zero adapters
+        if segment_a["checkpoint_zero"] != segment_b["checkpoint_zero"]:
+            raise InfrastructureError(
+                "checkpoint-zero adapters differ between arms "
+                "(gate 1; 235_s F1)")
+        # Gate 2 — identical states + trace prefixes at checkpoint 3
+        bundle_a = run_root / "uninterrupted" / "bundle"
+        bundle_b = run_root / "interrupted" / "bundle"
+        for name in ("adapter", "optimizer", "scheduler", "rng"):
+            filename = ckpt.CHECKPOINT_BUNDLE_FILENAMES[name]
+            if _sha_file(bundle_a / filename) != \
+                    _sha_file(bundle_b / filename):
+                raise InfrastructureError(
+                    f"checkpoint-3 {name} differs between arms "
+                    "(gate 2; 235_s)")
+        trace_a_rows = read_trace(segment_a["trace_path"])
+        trace_b_rows = read_trace(segment_b["trace_path"])
+        if trace_sequence(trace_a_rows[:checkpoint_at]) != \
+                trace_sequence(trace_b_rows[:checkpoint_at]):
+            raise InfrastructureError(
+                "pre-checkpoint traces differ between arms (gate 2)")
+        # Gates 3 + 4
+        varying = [g for g in trace_a_rows
+                   if len(set(g["rewards"])) > 1]
+        if not varying:
+            raise InfrastructureError(
+                "no reward-varying group — the optimizer was never "
+                "meaningfully exercised (gate 3; 235_s)")
+        checkpoint_adapter_hashes = tensor_state_hashes(
+            __import__("safetensors.torch", fromlist=["load_file"])
+            .load_file(str(bundle_b / ckpt.CHECKPOINT_BUNDLE_FILENAMES[
+                "adapter"])))
+        zero_sha = content_sha256(segment_b["checkpoint_zero"])
+        checkpoint_sha = content_sha256(checkpoint_adapter_hashes)
+        if zero_sha == checkpoint_sha:
+            raise InfrastructureError(
+                "checkpoint-3 adapter equals checkpoint-zero — a "
+                "zero-gradient trajectory proves nothing (gate 4)")
+
+        # Phase C — fail-closed resume from the VALIDATED state
         restored = ckpt.validate_resume(record, identities,
-                                        bundle_dir=bundle_dir)
+                                        bundle_dir=bundle_b)
+        hf_checkpoint = Path(
+            record["sampler_position"]["hf_checkpoint_dir"])
+        verify_hf_checkpoint_against_bundle(bundle_b, hf_checkpoint,
+                                            record)
         accountant_c = ckpt.GroupAccountant.restore(
             restored["counters"])
         ckpt.restore_rng_state(restored["rng_state"])
-        hf_checkpoint = run_root / "interrupted" / \
-            f"checkpoint-{checkpoint_at}"
-        trainer_c, accountant_c, trace_c, _ = run_training_segment(
-            rows=rows, surface=loaded["surface"],
-            run_dir=run_root / "resume", max_steps=total,
+        segment_c = run_training_segment(
+            rows=rows, surface=surface, run_dir=run_root / "resume",
             save_at=None, identities=identities,
             run_id="resume-validation", segment_id="resume",
-            resume_from=hf_checkpoint,
+            deadline_monotonic=deadline, resume_from=hf_checkpoint,
             start_group_index=restored["counters"]["consumed_groups"],
             accountant=accountant_c)
-        final_c = _final_state(trainer_c, accountant_c,
-                               [trace_b, trace_c], rows)
-        _release(trainer_c)
+        if segment_c["checkpoint_zero"] != segment_a["checkpoint_zero"]:
+            raise InfrastructureError(
+                "checkpoint-zero adapters differ for the resumed arm "
+                "(gate 1)")
+        trace_c_rows = read_trace(segment_c["trace_path"])
 
-        # §11 acceptance 3/4: merge the interrupted + resumed segments
-        def _groups(path: Path) -> list[dict[str, Any]]:
-            return [json.loads(line) for line in path.open()]
+        # §11.3/4 — merge with the aborted tail excluded-but-preserved
         merged = ckpt.merge_segments([
-            {"segment_id": "interrupted", "run_id": "resume-validation",
-             "config_sha256": CONFIG_SHA256, "status": "complete",
+            {"segment_id": "interrupted",
+             "run_id": "resume-validation",
+             "config_sha256": CONFIG_SHA256, "status": "aborted",
              "checkpoint_id": record["checkpoint_sha256"],
              "parent_checkpoint": None,
              "resume_from_consumed_groups": 0,
              "checkpoint_consumed_groups": checkpoint_at,
-             "groups": _groups(trace_b)},
+             "groups": trace_b_rows},
             {"segment_id": "resume", "run_id": "resume-validation",
              "config_sha256": CONFIG_SHA256, "status": "complete",
              "checkpoint_id": "final",
              "parent_checkpoint": record["checkpoint_sha256"],
              "resume_from_consumed_groups": checkpoint_at,
              "checkpoint_consumed_groups": total,
-             "groups": _groups(trace_c)},
+             "groups": trace_c_rows},
         ])
+        if len(merged["excluded_aborted_evidence"]) < 1:
+            raise InfrastructureError(
+                "the fault produced no post-checkpoint tail — §11.3 "
+                "is untested (235_s F3)")
+
+        final_a = _final_state(segment_a["final"],
+                               segment_a["accountant"], rows,
+                               trace_a_rows)
+        final_c = _final_state(segment_c["final"],
+                               segment_c["accountant"], rows,
+                               merged["trajectory"])
         comparison = compare_runs(final_a, final_c)
+        hashes_a = _persist_final(run_root, "final_uninterrupted",
+                                  final_a)
+        hashes_c = _persist_final(run_root, "final_resumed", final_c)
         validation = {
             "tranche": config["tranche"],
             "freeze_sha256": frozen["freeze_sha256"],
             "config_sha256": CONFIG_SHA256,
             "checkpoint_record_sha256": record["checkpoint_sha256"],
+            "checkpoint_zero_adapter_sha256": zero_sha,
+            "checkpoint_adapter_sha256": checkpoint_sha,
             "merged_groups": merged["merged_groups"],
+            "excluded_tail_groups":
+                [g["global_group_index"]
+                 for g in merged["excluded_aborted_evidence"]],
+            "reward_varying_groups":
+                [g["global_group_index"] for g in varying],
             "comparison": comparison,
             "counters": final_c["counters"],
+            "final_state_sha256": {"uninterrupted": hashes_a,
+                                   "resumed": hashes_c},
         }
         (run_root / "validation_record.json").write_text(
             json.dumps(validation, indent=1, sort_keys=True) + "\n",
             encoding="utf-8")
+        # the archive must verify by itself before the closeout
+        verify_resume_validation(run_root)
     except BaseException as error:
-        from .support_run import _hash_directory
         measured = round((time.monotonic() - started) / 3600.0, 4)
         append_ledger_entry(
             {"kind": "closeout", "question": frozen["question"],
@@ -658,7 +1116,6 @@ def execute_resume_validation(*, expected_head_sha256: str,
             head, ledger_path)
         raise
 
-    from .support_run import _hash_directory, _sha_file
     measured = round((time.monotonic() - started) / 3600.0, 4)
     closeout = append_ledger_entry(
         {"kind": "closeout", "question": frozen["question"],
@@ -680,30 +1137,3 @@ def execute_resume_validation(*, expected_head_sha256: str,
             "launch_entry_sha256": head,
             "closeout_entry_sha256": closeout["entry_sha256"],
             "ledger_head": closeout["entry_sha256"]}
-
-
-def run_training_segment(*, rows, surface, run_dir: Path,
-                         max_steps: int, save_at: int | None,
-                         identities, run_id: str, segment_id: str,
-                         resume_from: Path | None = None,
-                         start_group_index: int = 0,
-                         accountant=None):
-    """One training segment on the real stack. Returns (trainer,
-    accountant, trace_path, boundary)."""
-    run_dir.mkdir(parents=True, exist_ok=True)
-    accountant = accountant or ckpt.GroupAccountant()
-    trace_path = run_dir / "actions.jsonl"
-    group_size = RESUME_VALIDATION_CONFIG["grpo"]["group_size"]
-    reward = make_validation_reward(surface, accountant, trace_path,
-                                    group_size,
-                                    start_group_index=start_group_index)
-    boundary = _BoundaryCallback(
-        accountant, (run_dir / "bundle") if save_at else None,
-        identities, run_id, segment_id, groups_per_update=1)
-    trainer = _build_trainer(rows, reward, run_dir, max_steps, save_at)
-    trainer.add_callback(boundary.callback)
-    if resume_from is not None:
-        trainer.train(resume_from_checkpoint=str(resume_from))
-    else:
-        trainer.train()
-    return trainer, accountant, trace_path, boundary

@@ -1517,22 +1517,14 @@ from tasks.routing import resume_validation
 
 
 def _reconstructed_support(tmp_path):
-    """The REAL Step-4 surface, reconstructed from committed evidence
-    bytes only (the 233_f pattern) and loaded under its committed
-    lock — so these tests also re-verify the frozen config against
-    the actual artifacts on any clean clone."""
-    import gzip
-    ev = Path("plans/conductor/evidence/routing_dev_support_v1/surface")
+    """The REAL Step-4 surface, restored from committed evidence via
+    the PRODUCTION path (235_s portability note) and loaded under its
+    committed lock — so these tests also re-verify the frozen config
+    against the actual artifacts on any clean clone."""
     replica = tmp_path / "surface"
-    (replica / "traces" / "traces").mkdir(parents=True)
-    for name in ("declaration.json", "env_manifest.json",
-                 "support_launch.json", "manifest.json",
-                 "payoffs.jsonl", "surface_lock.json"):
-        shutil.copy2(ev / name, replica / name)
-    shutil.copy2(ev / "traces/traces/manifest.json",
-                 replica / "traces/traces/manifest.json")
-    with gzip.open(ev / "traces/traces/steps.jsonl.gz", "rb") as src:
-        (replica / "traces/traces/steps.jsonl").write_bytes(src.read())
+    support_run.restore_surface_evidence(
+        "plans/conductor/evidence/routing_dev_support_v1/surface",
+        replica)
     return resume_validation.load_locked_support(replica)
 
 
@@ -1544,11 +1536,18 @@ def step4_support(tmp_path_factory):
 def test_resume_validation_freeze_is_exact():
     frozen = resume_validation.tranche_freeze()
     assert frozen["budget_gpu_hours"] == 0.5          # the EXACT ceiling
-    assert frozen["config"]["comparison_tolerance"] == 0.0
-    assert frozen["config"]["checkpoint_at_update"] == 3
-    assert frozen["config"]["total_updates"] == 6
+    config = frozen["config"]
+    assert config["comparison_tolerance"] == 0.0
+    assert config["checkpoint_at_update"] == 3
+    assert config["total_updates"] == 6
+    # 235_s F4: the schedule exceeds the update budget
+    assert config["schedule_length"] > config["total_updates"]
+    # 235_s F1/F3: same horizon, fault-stopped, post-checkpoint tail
+    assert config["fault_at_update"] > config["checkpoint_at_update"]
+    assert config["fault_at_update"] < config["total_updates"]
+    # 235_s F7: determinism is part of the frozen claim
+    assert config["full_determinism"] is True
     assert frozen["freeze_sha256"]
-    # the frozen config hashes deterministically
     assert resume_validation.CONFIG_SHA256 == charter.content_sha256(
         resume_validation.RESUME_VALIDATION_CONFIG)
 
@@ -1556,7 +1555,7 @@ def test_resume_validation_freeze_is_exact():
 def test_training_schedule_is_deterministic_and_bound(step4_support):
     loaded = step4_support
     rows = resume_validation.training_schedule(loaded)
-    assert len(rows) == 6
+    assert len(rows) == 8
     ids = [row["observation_id"] for row in rows]
     assert ids == sorted(ids)      # canonical order
     for row in rows:
@@ -1599,10 +1598,14 @@ def test_validation_reward_authenticates_and_traces(step4_support,
     assert rewards[7] == 0.0                     # malformed -> 0
     assert accountant.generated_groups == 1
     assert accountant.sampled_completions == 8
-    lines = [json.loads(line) for line in trace.open()]
+    lines = resume_validation.read_trace(trace)
     assert len(lines) == 1
     assert lines[0]["global_group_index"] == 0
     assert lines[0]["rewards"] == rewards
+    # 235_s F4: traces carry completions, actions and assignments
+    assert lines[0]["completions"][0] == valid_text
+    assert lines[0]["actions"][7] is None          # malformed
+    assert lines[0]["assignments"][0] == list(reference)
     # a partial group refuses
     with pytest.raises(InfrastructureError, match="whole groups"):
         reward(completions[:4],
@@ -1612,20 +1615,22 @@ def test_validation_reward_authenticates_and_traces(step4_support,
 
 
 def test_comparison_enforces_the_frozen_tolerance():
+    import copy
+
     import torch
-    adapter_a = {"lora.w": torch.ones(2, 2)}
-    optimizer = {"state": {0: {"exp_avg": torch.zeros(2)}},
-                 "param_groups": [{"lr": 1e-5, "params": [0]}]}
     base = {
-        "adapter": adapter_a, "optimizer": optimizer,
+        "adapter": {"lora.w": torch.ones(2, 2)},
+        "optimizer": {"state": {0: {"exp_avg": torch.zeros(2)}},
+                      "param_groups": [{"lr": 1e-5, "params": [0]}]},
         "scheduler": {"last_epoch": 6},
-        "next_sampler_identity": "END",
+        "next_sampler_identity": "obs-7",
         "counters": {"generated_groups": 6, "consumed_groups": 6,
                      "optimizer_updates": 6,
                      "sampled_completions": 48},
+        "trace_sequence": [[i, f"obs-{i}", [0.5] * 8]
+                           for i in range(6)],
         "trace_cardinality": 6,
     }
-    import copy
     same = copy.deepcopy(base)
     verdict = resume_validation.compare_runs(base, same)
     assert verdict["verdict"] == "PASS"
@@ -1633,6 +1638,11 @@ def test_comparison_enforces_the_frozen_tolerance():
     perturbed["adapter"]["lora.w"] = torch.ones(2, 2) * 1.001
     with pytest.raises(InfrastructureError, match="lora.w"):
         resume_validation.compare_runs(base, perturbed)
+    # 235_s F4: parameter-group membership is compared
+    regrouped = copy.deepcopy(base)
+    regrouped["optimizer"]["param_groups"][0]["params"] = [1]
+    with pytest.raises(InfrastructureError, match="group.0.params"):
+        resume_validation.compare_runs(base, regrouped)
     drifted = copy.deepcopy(base)
     drifted["counters"]["consumed_groups"] = 5
     with pytest.raises(InfrastructureError, match="counters differ"):
@@ -1641,7 +1651,29 @@ def test_comparison_enforces_the_frozen_tolerance():
     moved["next_sampler_identity"] = "other"
     with pytest.raises(InfrastructureError, match="sampler"):
         resume_validation.compare_runs(base, moved)
+    # 235_s F4: an END cursor is itself a design failure
+    ended = copy.deepcopy(base)
+    ended["next_sampler_identity"] = "END"
+    same_end = copy.deepcopy(ended)
+    with pytest.raises(InfrastructureError, match="END"):
+        resume_validation.compare_runs(ended, same_end)
+    reordered = copy.deepcopy(base)
+    reordered["trace_sequence"] = list(
+        reversed(reordered["trace_sequence"]))
+    with pytest.raises(InfrastructureError, match="trace sequences"):
+        resume_validation.compare_runs(base, reordered)
     fewer = copy.deepcopy(base)
     fewer["trace_cardinality"] = 5
     with pytest.raises(InfrastructureError, match="cardinality"):
         resume_validation.compare_runs(base, fewer)
+
+
+def test_tensor_state_hashes_distinguish_and_stabilize():
+    import torch
+    state = {"a": torch.ones(2, dtype=torch.bfloat16),
+             "b": torch.zeros(3)}
+    first = resume_validation.tensor_state_hashes(state)
+    assert first == resume_validation.tensor_state_hashes(state)
+    other = {"a": torch.ones(2, dtype=torch.bfloat16) * 2,
+             "b": torch.zeros(3)}
+    assert first != resume_validation.tensor_state_hashes(other)
