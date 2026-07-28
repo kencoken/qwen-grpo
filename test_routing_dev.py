@@ -1904,3 +1904,80 @@ def test_rev6_declares_precision_and_lineage():
         "918ca212")
     assert "243_f" in lineage["motivating_evidence"]
     assert "237d4c21" in lineage["motivating_evidence"]
+
+
+# --- Step-6 grouped probe (CPU-testable parts) ----------------------------------
+
+from tasks.routing import probe_run
+
+
+def test_probe_freeze_binds_the_registered_design():
+    frozen = probe_run.tranche_freeze()
+    config = frozen["config"]
+    assert frozen["budget_gpu_hours"] == 3.0        # charter ceiling
+    assert config["probe_rule_sha256"] == (
+        "0b616b8863bf73263c11c63cd8cc1572b880e6586f15059bde642c2a"
+        "397c9f7b")
+    assert config["probe_cohort_sha256"] == (
+        "7f31bd091aaa97664e71ecb86b17078861b4e28af284162ee6ac5033"
+        "8d661e3b")
+    assert config["total_groups"] == 432
+    assert config["groups_per_observation"] == 4
+    assert config["grpo"]["learning_rate"] == 0.0   # zero-update
+    assert config["grpo"]["beta"] == 0.0
+    assert config["lora"]["adapter_dtype"] == "float32"
+    assert config["lineage"]["outcome_informed"] is False
+    assert config["lineage"]["parent_entry_sha256"] == (
+        "1a8d41fde4ffb64a9d9d9886f8fbcf9dc20578ab33c3c0d72a44fa8e"
+        "a9b6a44a")
+    # the committed rule bytes revalidate against the frozen hash
+    rule = probe_run.load_frozen_rule()
+    assert rule["rule"]["group_size"] == 8
+    assert rule["rule"]["groups_per_observation"] == 4
+
+
+def test_probe_cohort_and_schedule_rederive(step4_support, tmp_path,
+                                            monkeypatch):
+    """The frozen cohort binding rederives from committed bytes, and
+    the schedule is the bound order × 4 consecutive groups."""
+    replica = tmp_path / "surface"
+    support_run.restore_surface_evidence(
+        "plans/conductor/evidence/routing_dev_support_v1/surface",
+        replica)
+    monkeypatch.setitem(probe_run.PROBE_CONFIG, "surface_dir",
+                        str(replica))
+    cohort = probe_run.bound_cohort()
+    assert cohort["cohort_sha256"] == \
+        probe_run.PROBE_CONFIG["probe_cohort_sha256"]
+    assert len(cohort["observation_ids"]) == 108
+    loaded = step4_support
+    rows = probe_run.probe_schedule(loaded, cohort)
+    assert len(rows) == 432
+    assert [r["observation_id"] for r in rows[:4]] == \
+        [cohort["observation_ids"][0]] * 4
+    assert rows[4]["observation_id"] == cohort["observation_ids"][1]
+    manifest = probe_run.static_identity_manifest(loaded, cohort)
+    assert manifest["probe_cohort_sha256"] == cohort["cohort_sha256"]
+    assert manifest["manifest_sha256"] == charter.content_sha256(
+        {k: v for k, v in manifest.items() if k != "manifest_sha256"})
+
+
+def test_probe_groups_rebuild_from_trace_rows(step4_support):
+    """Trace rows rebuild into authenticated group_stats inputs; a
+    reward disagreeing with the surface still refuses downstream."""
+    loaded = step4_support
+    record = dev_support.select_c_fixed_dev(loaded)
+    oid = _code_obs(loaded)
+    surface = loaded["surface"]
+    valid_text = json.dumps({"worker_ids": [2]})
+    row = {"global_group_index": 0, "observation_id": oid,
+           "completions": [valid_text] * 7 + ["nope"],
+           "actions": [[2]] * 7 + [None],
+           "assignments": [[2]] * 7 + [None],
+           "rewards": [surface[(oid, (2,))]] * 7 + [0.0]}
+    groups = probe_run.groups_from_trace([row], loaded, record)
+    assert groups[0]["valid"] == 7
+    assert groups[0]["parseable"] == 7
+    tampered = dict(row, rewards=[0.5] * 7 + [0.0])
+    with pytest.raises(InfrastructureError, match="authenticated"):
+        probe_run.groups_from_trace([tampered], loaded, record)
