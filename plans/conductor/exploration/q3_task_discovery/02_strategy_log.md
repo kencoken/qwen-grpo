@@ -161,3 +161,37 @@ Frozen hashes:
 - latents
   `bab429864350b5f812b60b9af901e419876d0e80478de11ae1120b6543e390df`;
 - cases `fb4546dc5ad623a2808f8ee151b9834030bae002761ddd0ff666ec0bc2c43099`.
+
+### Strategy 2 pilot — dropped
+
+Run `02-pilot-s2-v1` executed all 96 planned calls from clean commit
+`e36d57ee9c4aea8000c3ff03535255564e620200`; all were physical cache
+misses. Independent verification passed.
+
+| Condition | Both | Only w2 | Only w3 | Neither | w2 acc. | w3 acc. |
+|---|---:|---:|---:|---:|---:|---:|
+| distracting continuation | 24 | 0 | 0 | 0 | 100.0% | 100.0% |
+| relevant continuation | 23 | 1 | 0 | 0 | 100.0% | 95.8% |
+| overall | 47 | 1 | 0 | 0 | 100.0% | 97.9% |
+
+The sole w2-only observation was a w3 `over-composition/wrong target`
+failure under `goal_first`; every `bound_var` observation was both-correct.
+There were no w3-only wins, no renderer-stable unique-win targets in either
+direction, and no oracle gap over fixed w2. The prospective semantic router
+scored 97.9%, 2.1 percentage points below fixed w2.
+
+**Decision:** drop revision `s2-v1` for ceiling behavior and lack of
+bidirectional, renderer-stable support. No instance, value, or observation
+was filtered. Proceed to the prospectively declared Strategy 3 factorial
+pilot.
+
+Frozen hashes:
+
+- calls `aa21916898a534c25a0b315797a0366f484e20c6dcd4ff58c03168fb014949d0`;
+- compact rows
+  `5c6155211505f3dadd844c6094a3dafcde9dd7dfe009cf2f667a47d13d8ab045`;
+- summary
+  `38f19cdd5327a147adf3582212ebc5f7e06983e6e969a3df3f7dee738bf836c8`;
+- latents
+  `7b282c35390a88c9a7b7577cfab3f85e17f7446ea170002243d7aa7a4034eb64`;
+- cases `93ae7c543d4b62adb1a5dd299c3425274b4314777a1a7b33fea3ca07ed9f4d10`.
