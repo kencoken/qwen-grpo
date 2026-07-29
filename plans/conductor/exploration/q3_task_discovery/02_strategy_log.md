@@ -195,3 +195,49 @@ Frozen hashes:
 - latents
   `7b282c35390a88c9a7b7577cfab3f85e17f7446ea170002243d7aa7a4034eb64`;
 - cases `93ae7c543d4b62adb1a5dd299c3425274b4314777a1a7b33fea3ca07ed9f4d10`.
+
+### Strategy 3 factorial pilot — dropped; search terminated
+
+Run `03-pilot-s3-v1` executed all 192 planned calls from clean commit
+`488c18f078dfa845c471fa46878da88cf196e17e`; all were physical cache
+misses. Independent verification passed.
+
+| Condition | Both | Only w2 | Only w3 | Neither | w2 acc. | w3 acc. |
+|---|---:|---:|---:|---:|---:|---:|
+| direct literal | 21 | 3 | 0 | 0 | 100.0% | 87.5% |
+| direct bound | 24 | 0 | 0 | 0 | 100.0% | 100.0% |
+| nested literal | 24 | 0 | 0 | 0 | 100.0% | 100.0% |
+| nested bound | 21 | 3 | 0 | 0 | 100.0% | 87.5% |
+| overall | 90 | 6 | 0 | 0 | 100.0% | 93.8% |
+
+All six disagreements occurred under `goal_first`; all 48 `bound_var`
+observations were both-correct. The three direct-literal w3 failures were
+`parse/grammar`; the three nested-bound failures were legal
+`over-composition/wrong target` errors. There were no w3-only wins, no
+renderer-stable unique-win targets in either direction, and no oracle gap
+over fixed w2. The prospective semantic router scored 96.9%, 3.1 percentage
+points below fixed w2. The rendered-observation group-of-eight diversity
+projection was 6.20% under iid balanced sampling, but it came entirely from
+one-direction, one-renderer w2-only failures and is not suitable
+specialization support.
+
+**Decision:** drop revision `s3-v1` for w2 domination, renderer-local
+separation, and zero oracle headroom. No instance, value, or observation was
+filtered.
+
+All three prospectively planned strategies are RED. A fourth strategy is not
+motivated within the existing scalar DSL: continued search would require the
+new sequence-valued target semantics explicitly outside this overnight
+scope. Per the termination rule, no expanded development surface, candidate
+freeze, or holdout is revealed.
+
+Frozen hashes:
+
+- calls `1705094c4d23886400708784505458cf7e59523f34e418cd76b0b16b5ae0c6bd`;
+- compact rows
+  `892798d98c81094e8f7c2ad724b61c0d62fc2c196d9fcde5f4d516ae2f78564b`;
+- summary
+  `6431003e34d3fed1b94f60c81debd202ceb74eed8c86a43bdf9f4cb0624dd098`;
+- latents
+  `5560c4dabb742ccf0cee9b130583f8840b2698d8e87e593c632deacecbfb5bff`;
+- cases `6627f8fdf95015791d12192f05ccb0d8f5035558adba731b1be88128eaf59ec7`.
