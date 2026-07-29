@@ -101,7 +101,7 @@ _EXTENSION_LAUNCH_KEYS = frozenset({
     "kind", "declaration_sha256", "namespace",
     "worker_visible_fingerprint", "runtime_profile_fingerprint",
     "worker_pool_fingerprint", "request_contract", "cache_identity",
-    "prefix_k", "search_cap", "budget_gpu_hours",
+    "prefix_k", "search_cap", "budget_gpu_hours", "run_root",
     "original_surface_lock_sha256", "planned_node_executions",
     "planned_new_node_executions", "expected_new_gpu_hours",
     "routing_source_sha256", "driver", "environment_manifest_sha256",
@@ -224,6 +224,7 @@ def build_extension_launch_manifest(*, declaration: Mapping[str, Any],
         "prefix_k": k,
         "search_cap": config["search_cap"],
         "budget_gpu_hours": config["ceiling_gpu_hours"],
+        "run_root": config["run_root"],
         "original_surface_lock_sha256":
             config["original_surface_lock_sha256"],
         "planned_node_executions": counts["planned_node_executions"],
@@ -290,6 +291,10 @@ def validate_extension_launch_manifest(manifest: Mapping[str, Any],
         raise InfrastructureError(
             "extension-launch original-lock binding is not the frozen "
             "Step-4 lock")
+    if manifest["run_root"] != EXTENSION_CONFIG["run_root"]:
+        raise InfrastructureError(
+            "extension-launch run root is not the frozen lifecycle "
+            "root (262_s)")
     if recompute:
         from .charter import routing_execution_digest
         digest = routing_execution_digest(manifest["driver"])
@@ -391,10 +396,40 @@ def immutable_comparator(original_loaded: Mapping[str, Any],
 
 # --- the total selector (259_s/260_f) ------------------------------------------
 
-def direction_table(loaded: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+def observable_subtype(cell_id: str, latent_index: int,
+                       _cache: dict = {}) -> str:
+    """262_s P1-3: the observable public-factor subtype of a latent,
+    built ONLY from the existing safe public projection and the
+    public collision flags — nothing private enters the label."""
+    key = (cell_id, latent_index)
+    if key not in _cache:
+        from tasks.conductor import program
+        from tasks.conductor.profiles import DEFAULT_PROFILE
+        from tasks.conductor.types import public_param_keys
+        latent = program.generate_latent(
+            cell_id, EXTENSION_CONFIG["namespace"], latent_index,
+            DEFAULT_PROFILE).latent
+        params = latent["params"]
+        shape = params.get("shape") if isinstance(params, Mapping) \
+            else None
+        parts = [f"keys={','.join(public_param_keys(cell_id, params))}"
+                 if public_param_keys(cell_id, params) else "keys=-"]
+        if shape is not None:
+            parts.insert(0, f"shape={shape}")
+        for flag in ("public_numeric_collision",
+                     "sink_public_numeric_collision"):
+            if flag in latent:
+                parts.append(f"{flag.split('_')[0]}"
+                             f"-collision={bool(latent[flag])}")
+        _cache[key] = "|".join(parts)
+    return _cache[key]
+
+
+def direction_table(loaded: Mapping[str, Any]
+                    ) -> dict[str, dict[str, Any]]:
     """Per-observation direction from authenticated surface geometry —
     the probe-report semantics (`derive_pair_entry`), never rollout
-    data."""
+    data — plus the observable public-factor subtype (262_s P1-3)."""
     from .telemetry import derive_pair_entry
     table: dict[str, dict[str, Any]] = {}
     for obs in loaded["observations"]:
@@ -406,26 +441,48 @@ def direction_table(loaded: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
             direction = "tied"
         else:
             direction = f"w{entry['direction']}_favoured"
+        latent_index = int(obs["observation_id"].split(":")[2])
         table[obs["observation_id"]] = {
             "cell_id": obs["cell_id"],
             "renderer_id": obs["renderer_id"],
-            "latent_index": int(obs["observation_id"].split(":")[2]),
+            "latent_index": latent_index,
             "direction": direction,
+            "subtype": observable_subtype(obs["cell_id"],
+                                          latent_index),
         }
     return table
 
 
+def _code_bearing_cells() -> list[str]:
+    from tasks.conductor.stage1 import NODE_FAMILIES
+    return sorted(cell for cell, families in NODE_FAMILIES.items()
+                  if any(f == "code" for f in families.values()))
+
+
 def run_extension_selector(loaded: Mapping[str, Any]
                            ) -> dict[str, Any]:
-    """The TOTAL selector: every latent globally assigned to at most
-    one direction bucket (260_f §2 — rev2 dual-direction counting is
-    superseded); buckets keep ALL qualifying latents in ascending
-    index order (unselected payoff-distinct rows can then only go to
-    Direction or Screened-but-unused, never Bridge — 260_f §1);
-    dispositions, renderer-reversal diagnostics, the predeclared
-    eligible common-cell set, and subtype yield disclosure are all
-    derived here and rederivable byte-exactly."""
+    """The signed TOTAL selector (258_f §4.1 / 260_f §2 as repaired
+    by 262_s P1-1/P1-2):
+
+    - the CANDIDATE DOMAIN is indices >= original_prefix_k — legacy
+      0..5 latents never qualify for direction buckets; they appear
+      only in the complete yield/legacy disclosure (Anchor material);
+    - frozen bucket ordering (Code cells ascending, w2 before w3);
+      when a candidate latent qualifies for more than one bucket, the
+      FIRST bucket in that order consumes it (direction-disjoint by
+      construction; renderer reversals stay diagnostics);
+    - within each bucket, the CANONICAL QUOTA-BOUNDED SUBSET:
+      ascending latent index, stopping once the quota constraints
+      (target latents, renderer strata, non-goal_first coverage) are
+      all met; qualifying-but-unselected candidates are disclosed as
+      screened surplus (Unit B may place them ONLY in Direction or
+      Screened-but-unused, never Bridge);
+    - dispositions enumerate ALL Code cells x both directions
+      (explicit dropped at zero yield), and Q3 common-cell
+      eligibility derives from ACCEPTABLE DISPOSITION STATES, never
+      raw bucket sizes."""
     config = EXTENSION_CONFIG["selector"]
+    domain_start = EXTENSION_CONFIG["original_prefix_k"]
     table = direction_table(loaded)
     # per latent: favoured renderer strata per direction
     latents: dict[tuple[str, int], dict[str, dict[str, str]]] = {}
@@ -434,13 +491,25 @@ def run_extension_selector(loaded: Mapping[str, Any]
         latents.setdefault(key, {"w2_favoured": {}, "w3_favoured": {}})
         if row["direction"] in ("w2_favoured", "w3_favoured"):
             latents[key][row["direction"]][row["renderer_id"]] = oid
-    assignments: dict[str, Any] = {}
+    # legacy (index < original_prefix_k) direction yield: disclosure
+    # only — never candidates (262_s P1-1)
+    legacy_disclosure: dict[str, dict[str, list[int]]] = {}
     reversals: list[dict[str, Any]] = []
+    candidates: dict[tuple[str, int],
+                     dict[str, dict[str, str]]] = {}
     for (cell, index) in sorted(latents):
         favoured = latents[(cell, index)]
         n2 = len(favoured["w2_favoured"])
         n3 = len(favoured["w3_favoured"])
         if n2 == 0 and n3 == 0:
+            continue
+        if index < domain_start:
+            bucket = legacy_disclosure.setdefault(
+                cell, {"w2_favoured": [], "w3_favoured": []})
+            if n2:
+                bucket["w2_favoured"].append(index)
+            if n3:
+                bucket["w3_favoured"].append(index)
             continue
         if n2 > 0 and n3 > 0:
             # renderer-induced winner reversal: a DIAGNOSTIC of
@@ -451,43 +520,62 @@ def run_extension_selector(loaded: Mapping[str, Any]
                                   sorted(favoured["w2_favoured"]),
                               "w3_renderers":
                                   sorted(favoured["w3_favoured"])})
-        if n2 != n3:
-            direction = "w2_favoured" if n2 > n3 else "w3_favoured"
-        else:
-            # tie: the direction whose favoured rendering appears
-            # first in the frozen renderer order
-            for renderer in RENDERER_IDS:
-                hit2 = renderer in favoured["w2_favoured"]
-                hit3 = renderer in favoured["w3_favoured"]
-                if hit2 or hit3:
-                    direction = "w2_favoured" if hit2 else "w3_favoured"
-                    break
-        strata = favoured[direction]
-        assignments[f"{cell}|{index}"] = {
-            "cell_id": cell,
-            "latent_index": index,
-            "direction": direction,
-            "favoured_renderers": sorted(strata),
-            "observation_ids": [strata[r] for r in sorted(strata)],
-            "non_goal_first": sorted(
-                r for r in strata if r != "goal_first"),
-        }
-    # buckets: ALL qualifying latents, ascending index
-    buckets: dict[str, list[dict[str, Any]]] = {}
-    for key in sorted(assignments,
-                      key=lambda k: (assignments[k]["cell_id"],
-                                     assignments[k]["latent_index"])):
-        entry = assignments[key]
-        buckets.setdefault(
-            f"{entry['cell_id']}|{entry['direction']}", []).append(entry)
-    dispositions: dict[str, dict[str, Any]] = {}
-    for cell in sorted({e["cell_id"] for e in assignments.values()}):
+        candidates[(cell, index)] = favoured
+
+    def member_entry(cell: str, index: int, direction: str
+                     ) -> dict[str, Any]:
+        strata = candidates[(cell, index)][direction]
+        return {"cell_id": cell, "latent_index": index,
+                "direction": direction,
+                "favoured_renderers": sorted(strata),
+                "observation_ids": [strata[r] for r in sorted(strata)],
+                "non_goal_first": sorted(
+                    r for r in strata if r != "goal_first")}
+
+    # frozen bucket order: Code cells ascending, w2 before w3; the
+    # FIRST bucket a latent qualifies for consumes it
+    code_cells = _code_bearing_cells()
+    consumed: set[tuple[str, int]] = set()
+    owner: dict[tuple[str, int], str] = {}
+    for cell in code_cells:
         for direction in ("w2_favoured", "w3_favoured"):
-            members = buckets.get(f"{cell}|{direction}", [])
-            n = len(members)
-            strata = sorted({r for m in members
-                             for r in m["favoured_renderers"]})
-            non_gf = sum(1 for m in members if m["non_goal_first"])
+            for (c, index) in sorted(candidates):
+                if c != cell or (c, index) in consumed:
+                    continue
+                if candidates[(c, index)][direction]:
+                    consumed.add((c, index))
+                    owner[(c, index)] = direction
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    surplus: dict[str, list[dict[str, Any]]] = {}
+    dispositions: dict[str, dict[str, Any]] = {}
+    for cell in code_cells:
+        for direction in ("w2_favoured", "w3_favoured"):
+            pool = [index for (c, index) in sorted(candidates)
+                    if c == cell and owner.get((c, index)) == direction]
+            selected: list[dict[str, Any]] = []
+            strata_seen: set[str] = set()
+            non_gf = 0
+
+            def quota_met() -> bool:
+                return (len(selected) >= config["target_latents"]
+                        and len(strata_seen)
+                        >= config["min_renderer_strata"]
+                        and non_gf >= config["min_non_goal_first"])
+
+            rest: list[dict[str, Any]] = []
+            for index in pool:
+                entry = member_entry(cell, index, direction)
+                if quota_met():
+                    rest.append(entry)
+                    continue
+                selected.append(entry)
+                strata_seen.update(entry["favoured_renderers"])
+                non_gf += 1 if entry["non_goal_first"] else 0
+            key = f"{cell}|{direction}"
+            buckets[key] = selected
+            surplus[key] = rest
+            n = len(selected)
+            strata = sorted(strata_seen)
             if n >= config["target_latents"]:
                 status = "full_quota"
             elif n >= config["reduced_power_latents"]:
@@ -498,23 +586,28 @@ def run_extension_selector(loaded: Mapping[str, Any]
                     len(strata) < config["min_renderer_strata"]
                     or non_gf < config["min_non_goal_first"]):
                 status = "quota_constraints_unmet"
-            dispositions[f"{cell}|{direction}"] = {
+            dispositions[key] = {
                 "latents": n, "renderer_strata": strata,
                 "non_goal_first_latents": non_gf, "status": status}
-    # 258_f §2: the predeclared eligible common-cell set for Q3
+    # 262_s P1-2: Q3 eligibility derives from ACCEPTABLE disposition
+    # states — a quota_constraints_unmet direction cannot authorize a
+    # common cell
+    acceptable = {"full_quota", "reduced_power_disclosed"}
     common_cells = sorted(
-        cell for cell in {e["cell_id"] for e in assignments.values()}
-        if len(buckets.get(f"{cell}|w2_favoured", []))
-        >= config["reduced_power_latents"]
-        and len(buckets.get(f"{cell}|w3_favoured", []))
-        >= config["reduced_power_latents"])
-    # subtype/public-factor yield disclosure (260_f freeze gate 3)
+        cell for cell in code_cells
+        if dispositions[f"{cell}|w2_favoured"]["status"] in acceptable
+        and dispositions[f"{cell}|w3_favoured"]["status"] in acceptable)
+    # subtype/public-factor yield disclosure (262_s P1-3): every
+    # observation of the surface enters every stratum family
     yield_disclosure: dict[str, dict[str, int]] = {}
     for row in table.values():
         for factor in (f"cell|{row['cell_id']}",
                        f"renderer|{row['renderer_id']}",
+                       f"subtype|{row['subtype']}",
                        f"cell+renderer|{row['cell_id']}"
-                       f"+{row['renderer_id']}"):
+                       f"+{row['renderer_id']}",
+                       f"cell+renderer+subtype|{row['cell_id']}"
+                       f"+{row['renderer_id']}+{row['subtype']}"):
             bucket = yield_disclosure.setdefault(factor, {
                 "w2_favoured": 0, "w3_favoured": 0, "tied": 0,
                 "no_pair": 0})
@@ -523,9 +616,14 @@ def run_extension_selector(loaded: Mapping[str, Any]
         "kind": "routing-dev-extension-selection-v1",
         "config_sha256": CONFIG_SHA256,
         "selector": dict(config),
+        "candidate_domain": {
+            "first_index": domain_start,
+            "last_index": EXTENSION_CONFIG["prefix_k"] - 1},
         "extension_surface_lock_sha256":
             loaded["lock"]["lock_sha256"],
         "direction_buckets": buckets,
+        "screened_surplus": surplus,
+        "legacy_direction_disclosure": legacy_disclosure,
         "dispositions": dispositions,
         "eligible_common_cells_q3": common_cells,
         "renderer_reversal_diagnostics": reversals,
@@ -561,6 +659,11 @@ def prepare_extension_launch(*, run_dir: str | Path,
                              ) -> dict[str, Any]:
     """Phase 1: build and persist every prelaunch input exactly once."""
     run_dir = Path(run_dir)
+    if run_dir.resolve() != \
+            Path(EXTENSION_CONFIG["run_root"]).resolve():
+        raise InfrastructureError(
+            f"run_dir {run_dir} is not the frozen lifecycle root "
+            f"{EXTENSION_CONFIG['run_root']} (262_s)")
     prelaunch = run_dir / "prelaunch"
     if prelaunch.exists():
         raise InfrastructureError(
@@ -624,6 +727,12 @@ def execute_extension(*, run_dir: str | Path,
         raise InfrastructureError(
             "prepared extension-launch manifest is not the externally "
             "frozen one")
+    # 262_s: the lifecycle root is identity-bound — copied prelaunch
+    # artifacts cannot be executed under a different root
+    if run_dir.resolve() != Path(manifest["run_root"]).resolve():
+        raise InfrastructureError(
+            f"run_dir {run_dir} is not the manifest's identity-bound "
+            f"run root {manifest['run_root']} (262_s)")
     if expected_head_sha256 != \
             EXTENSION_CONFIG["lineage"]["parent_entry_sha256"]:
         raise InfrastructureError(
@@ -862,3 +971,48 @@ def verify_extension_outputs(run_dir: str | Path,
         raise InfrastructureError(
             "comparator does not rederive from the ORIGINAL locked "
             "surface (257_s B3)")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """The reproducible entry points (262_s): every launch argument
+    is a reviewed hash — nothing defaults to trust."""
+    import argparse
+    parser = argparse.ArgumentParser(prog="extension_run")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("prepare")
+    execute = sub.add_parser("execute")
+    execute.add_argument("--expected-manifest-sha256", required=True)
+    execute.add_argument("--expected-head-sha256", required=True)
+    verify = sub.add_parser("verify")
+    verify.add_argument("--closeout-entry-sha256", required=True)
+    args = parser.parse_args(argv)
+    run_root = EXTENSION_CONFIG["run_root"]
+    if args.command == "prepare":
+        manifest = prepare_extension_launch(run_dir=run_root)
+        print(json.dumps({"manifest_sha256":
+                          manifest["manifest_sha256"]}, indent=1))
+        return 0
+    if args.command == "execute":
+        result = execute_extension(
+            run_dir=run_root,
+            expected_manifest_sha256=args.expected_manifest_sha256,
+            expected_head_sha256=args.expected_head_sha256)
+        print(json.dumps({k: result[k] for k in
+                          ("surface_lock_sha256", "measured_gpu_hours",
+                           "closeout_entry_sha256", "ledger_head")},
+                         indent=1))
+        return 0
+    from .ledger import ledger_head, verify_ledger_head
+    entries = verify_ledger_head(ledger_head(LEDGER_PATH), LEDGER_PATH)
+    matches = [e for e in entries
+               if e.get("entry_sha256") == args.closeout_entry_sha256]
+    if not matches:
+        raise InfrastructureError(
+            f"no ledger entry {args.closeout_entry_sha256!r}")
+    verify_extension_outputs(run_root, matches[0])
+    print(json.dumps({"verdict": "PASS"}, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

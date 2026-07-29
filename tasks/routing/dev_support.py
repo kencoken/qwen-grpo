@@ -843,12 +843,24 @@ def load_dev_surface(out_dir: str | Path, *,
             f"trace holds {trace_manifest['steps_written']} step rows; "
             f"the declared plan is "
             f"{declaration['planned_step_executions']}")
-    if not (0 < manifest["unique_singleton_generations"]
+    if not (0 <= manifest["unique_singleton_generations"]
             <= manifest["uncached_step_records"]
             <= manifest["executed_step_records"]
             <= declaration["planned_step_executions"]):
         raise InfrastructureError(
             "surface accounting invariants do not hold")
+    # 262_s: a FULLY cache-served run is legitimate (a reviewed retry
+    # over a warm slw cache); what stays impossible is live uncached
+    # work that generated no singletons, or a run that executed
+    # nothing at all.
+    if manifest["uncached_step_records"] > 0 \
+            and manifest["unique_singleton_generations"] == 0:
+        raise InfrastructureError(
+            "uncached step records without singleton generations — "
+            "the accounting is inconsistent")
+    if manifest["executed_step_records"] == 0:
+        raise InfrastructureError(
+            "the surface executed no step records at all")
     if manifest["uncached_step_records"] + manifest["cache_hits"] != \
             manifest["executed_step_records"]:
         raise InfrastructureError(

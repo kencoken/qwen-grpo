@@ -120,6 +120,71 @@ def _collapse_code(cell_id: str, assignment: tuple[int, ...],
         for node, worker in zip(nodes, assignment))
 
 
+EXTENSION_COMPARATOR_KIND = \
+    "routing-dev-extension-scale-lift-comparator-v1"
+_EXTENSION_COMPARATOR_KEYS = frozenset({
+    "kind", "c_fixed_dev", "source_record_sha256",
+    "original_surface_lock_sha256", "extension_surface_lock_sha256",
+    "reselected", "consumes", "development_only",
+})
+
+
+def validate_extension_comparator_for(loaded: Mapping[str, Any],
+                                      record: Mapping[str, Any]
+                                      ) -> int:
+    """262_s P1-4: the extension-aware ScaleLift comparator boundary.
+    The record must use the exact closed schema, rehash, bind THIS
+    extension surface's lock, carry `reselected: false` and the
+    ScaleLift-only scope, and hold a frozen worker in {2, 3}. Full
+    source reverification against the ORIGINAL lock happens at
+    construction (`immutable_comparator`) and in
+    `verify_extension_outputs` — this consumer boundary can therefore
+    never trigger reselection."""
+    from .charter import content_sha256
+    if not isinstance(record, Mapping) \
+            or set(record) != _EXTENSION_COMPARATOR_KEYS | \
+            {"record_sha256"}:
+        raise InfrastructureError(
+            "extension comparator keys do not match the closed schema")
+    body = {k: v for k, v in record.items() if k != "record_sha256"}
+    if content_sha256(body) != record.get("record_sha256"):
+        raise InfrastructureError(
+            "extension comparator record does not rehash")
+    lock = loaded.get("lock")
+    if not isinstance(lock, Mapping) or "lock_sha256" not in lock:
+        raise InfrastructureError(
+            "the extension comparator needs the lock-validated loader "
+            "result")
+    if record["extension_surface_lock_sha256"] != lock["lock_sha256"]:
+        raise InfrastructureError(
+            "extension comparator is bound to a different extension "
+            "surface lock (262_s P1-4)")
+    if record["reselected"] is not False \
+            or record["consumes"] != "scale_lift_only" \
+            or record["development_only"] is not True:
+        raise InfrastructureError(
+            "extension comparator must be the never-reselected "
+            "ScaleLift-only development consumer (257_s B3)")
+    worker = record["c_fixed_dev"]
+    if worker not in (2, 3):
+        raise InfrastructureError(
+            f"extension comparator worker {worker!r} not in {{2,3}}")
+    return worker
+
+
+def resolve_scale_lift_comparator(loaded: Mapping[str, Any],
+                                  record: Mapping[str, Any]) -> int:
+    """The ONE comparator entry point for group scoring: original
+    `c_fixed_dev-v1` records verify + REDERIVE against this surface's
+    lock (216_s F3); extension consumer records verify through the
+    never-reselecting boundary above."""
+    from .dev_support import verify_c_fixed_for
+    if isinstance(record, Mapping) \
+            and record.get("kind") == EXTENSION_COMPARATOR_KIND:
+        return validate_extension_comparator_for(loaded, record)
+    return verify_c_fixed_for(loaded, record)
+
+
 def group_stats(group: Mapping[str, Any], *,
                 loaded: Mapping[str, Any],
                 c_fixed_record: Mapping[str, Any]) -> dict[str, Any]:
@@ -128,11 +193,10 @@ def group_stats(group: Mapping[str, Any], *,
     observation must be a member of the locked support, the comparator
     must rederive against that exact lock, and every reward is
     authenticated against the locked surface (216_s F3)."""
-    from .dev_support import verify_c_fixed_for
     surface = loaded["surface"]
     membership = {obs["observation_id"]
                   for obs in loaded["observations"]}
-    c_fixed_dev = verify_c_fixed_for(loaded, c_fixed_record)
+    c_fixed_dev = resolve_scale_lift_comparator(loaded, c_fixed_record)
     completions = group["completions"]
     if not completions:
         raise InfrastructureError("empty group")

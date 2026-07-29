@@ -2368,6 +2368,8 @@ def extension_fixture(support_run_fixture, tmp_path_factory):
     pre_extension_ledger = tmp / "ledger-pre-extension.md"
     shutil.copy2(ledger_copy, pre_extension_ledger)
     run_dir = tmp / "ext-run"
+    mp.setitem(extension_run.EXTENSION_CONFIG, "run_root",
+               str(run_dir))
     manifest = extension_run.prepare_extension_launch(
         run_dir=run_dir,
         _runtime_factory=lambda: ext_fake_rt(tmp, cohort),
@@ -2423,9 +2425,40 @@ def test_extension_end_to_end(extension_fixture):
         (fx["run_dir"] / "selection.json").read_text("utf-8"))
     assert selection["dispositions"]
     assert isinstance(selection["eligible_common_cells_q3"], list)
+    domain_start = \
+        extension_run.EXTENSION_CONFIG["original_prefix_k"]
     for bucket, members in selection["direction_buckets"].items():
         indices = [m["latent_index"] for m in members]
         assert indices == sorted(indices)
+        # 262_s P1-1: legacy indices never enter direction buckets
+        assert all(i >= domain_start for i in indices)
+    for bucket, members in selection["screened_surplus"].items():
+        assert all(m["latent_index"] >= domain_start for m in members)
+    # 262_s P1-2: eligibility derives from acceptable dispositions
+    acceptable = {"full_quota", "reduced_power_disclosed"}
+    for cell in selection["eligible_common_cells_q3"]:
+        for direction in ("w2_favoured", "w3_favoured"):
+            assert selection["dispositions"][
+                f"{cell}|{direction}"]["status"] in acceptable
+    # all three Code cells x both directions carry dispositions
+    assert set(selection["dispositions"]) == {
+        f"{cell}|{direction}"
+        for cell in ("code_atomic", "fork_join", "math_code")
+        for direction in ("w2_favoured", "w3_favoured")}
+    # 262_s P1-3: every observation enters the subtype disclosure
+    total_obs = 6 * 7 * 3
+    cell_strata = {k: v for k, v in
+                   selection["yield_disclosure"].items()
+                   if k.startswith("cell|")}
+    assert sum(sum(v.values()) for v in cell_strata.values()) \
+        == total_obs
+    subtype_strata = {k: v for k, v in
+                      selection["yield_disclosure"].items()
+                      if k.startswith("subtype|")}
+    assert sum(sum(v.values()) for v in subtype_strata.values()) \
+        == total_obs
+    assert any(k.startswith("cell+renderer+subtype|")
+               for k in selection["yield_disclosure"])
     # one latent never sits in two buckets (260_f §2)
     seen = {}
     for bucket, members in selection["direction_buckets"].items():
@@ -2648,7 +2681,7 @@ def test_support_extension_admission_boundary(extension_fixture,
 
 
 def test_extension_overlap_divergence_aborts_before_lock(
-        extension_fixture, tmp_path):
+        extension_fixture, tmp_path, monkeypatch):
     """259_s test obligation 1: overlap validation runs BEFORE the
     new lock is accepted — a run whose workers diverge from the
     original support materializes, then ABORTS at the overlap gate
@@ -2658,6 +2691,8 @@ def test_extension_overlap_divergence_aborts_before_lock(
     shutil.copy2(fx["pre_extension_ledger"], ledger_copy)
     head = ledger.ledger_head(ledger_copy)
     run_dir = tmp_path / "divergent-run"
+    monkeypatch.setitem(extension_run.EXTENSION_CONFIG, "run_root",
+                        str(run_dir))
     # a HEALTHY worker 3 diverges from the sabotaged original
     manifest = extension_run.prepare_extension_launch(
         run_dir=run_dir,
@@ -2685,3 +2720,126 @@ def test_extension_overlap_divergence_aborts_before_lock(
     assert closeout["freeze"]["partial_artifact_hashes"]
     extension_run.verify_extension_outputs(
         run_dir, closeout, original_surface_dir=fx["original_dir"])
+
+
+def test_extension_selector_excludes_legacy_and_matches_step4(
+        step4_support, monkeypatch):
+    """262_s P1-1: on the REAL Step-4 surface (prefix 6) with the
+    pristine domain (candidates = 6..47), every latent is legacy —
+    buckets are empty, all dispositions dropped, and the legacy
+    disclosure reproduces the reviewer's probe exactly."""
+    for key in ("original_prefix_k", "prefix_k", "namespace"):
+        monkeypatch.setitem(extension_run.EXTENSION_CONFIG, key,
+                            PRISTINE_EXT_CONFIG[key])
+    record = extension_run.run_extension_selector(step4_support)
+    assert all(not members for members in
+               record["direction_buckets"].values())
+    assert all(d["status"] == "dropped_from_q3"
+               for d in record["dispositions"].values())
+    assert record["eligible_common_cells_q3"] == []
+    legacy = record["legacy_direction_disclosure"]
+    assert legacy["code_atomic"]["w2_favoured"] == [5]
+    assert legacy["fork_join"]["w2_favoured"] == [1, 5]
+    assert legacy["math_code"]["w3_favoured"] == [2, 3]
+    # subtype disclosure covers all 108 observations
+    cell_strata = {k: v for k, v in record["yield_disclosure"].items()
+                   if k.startswith("cell|")}
+    assert sum(sum(v.values()) for v in cell_strata.values()) == 108
+
+
+def test_extension_scale_lift_consumer_boundary(extension_fixture):
+    """262_s P1-4: the extension comparator record WORKS in the real
+    scoring boundary — ScaleLift computes on the extension surface
+    without reselection; the original record refuses there; a
+    tampered consumer refuses."""
+    fx = extension_fixture
+    loaded = dev_support.load_dev_surface(
+        fx["run_dir"] / "surface",
+        expected_lock_sha256=fx["result"]["surface_lock_sha256"])
+    comparator = json.loads(
+        (fx["run_dir"] / "comparator.json").read_text("utf-8"))
+    obs = next(o for o in loaded["observations"]
+               if o["cell_id"] == "code_atomic")
+    oid = obs["observation_id"]
+    assignment = next(a for (i, a) in loaded["surface"]
+                      if i == oid)
+    reward = loaded["surface"][(oid, assignment)]
+    group = {"observation_id": oid,
+             "completions": [
+                 {"parseable": True, "valid": True,
+                  "assignment": list(assignment),
+                  "reward": reward}] * 4}
+    stats = telemetry.group_stats(group, loaded=loaded,
+                                  c_fixed_record=comparator)
+    assert isinstance(stats["scale_lift_mean"], float)
+    assert stats["cell_id"] == "code_atomic"
+    # the ORIGINAL c_fixed record cannot score the extension surface
+    original_record = json.loads(Path(extension_run.EXTENSION_CONFIG[
+        "original_c_fixed_path"]).read_text("utf-8"))
+    with pytest.raises(InfrastructureError, match="different surface "
+                       "lock"):
+        telemetry.group_stats(group, loaded=loaded,
+                              c_fixed_record=original_record)
+    # a consumer bound to a different extension lock refuses
+    tampered = dict(comparator,
+                    extension_surface_lock_sha256="ab" * 32)
+    body = {k: v for k, v in tampered.items() if k != "record_sha256"}
+    tampered["record_sha256"] = charter.content_sha256(body)
+    with pytest.raises(InfrastructureError, match="different "
+                       "extension surface lock"):
+        telemetry.group_stats(group, loaded=loaded,
+                              c_fixed_record=tampered)
+    # reselected/scope flags are load-bearing
+    tampered = dict(comparator, reselected=True)
+    body = {k: v for k, v in tampered.items() if k != "record_sha256"}
+    tampered["record_sha256"] = charter.content_sha256(body)
+    with pytest.raises(InfrastructureError, match="never-reselected"):
+        telemetry.group_stats(group, loaded=loaded,
+                              c_fixed_record=tampered)
+
+
+def test_extension_cache_served_retry_completes(extension_fixture,
+                                                tmp_path, monkeypatch):
+    """262_s smaller item: a reviewed retry served ENTIRELY from the
+    warm slw cache (zero live generations) completes and locks."""
+    fx = extension_fixture
+    ledger_copy = tmp_path / "ledger.md"
+    shutil.copy2(fx["pre_extension_ledger"], ledger_copy)
+    head = ledger.ledger_head(ledger_copy)
+    run_dir = tmp_path / "retry-run"
+    monkeypatch.setitem(extension_run.EXTENSION_CONFIG, "run_root",
+                        str(run_dir))
+    manifest = extension_run.prepare_extension_launch(
+        run_dir=run_dir,
+        _runtime_factory=lambda: ext_fake_rt(fx["tmp"], fx["cohort"]),
+        _environment_builder=_env_manifest)
+    result = extension_run.execute_extension(
+        run_dir=run_dir,
+        expected_manifest_sha256=manifest["manifest_sha256"],
+        expected_head_sha256=head,
+        ledger_path=ledger_copy,
+        _runtime_factory=lambda: ext_fake_rt(fx["tmp"], fx["cohort"]),
+        _environment_builder=lambda: _env_manifest(
+            git_commit="feedbeef"),
+        _original_surface_dir=fx["original_dir"])
+    surface_manifest = json.loads(
+        (run_dir / "surface" / "manifest.json").read_text("utf-8"))
+    assert surface_manifest["uncached_step_records"] == 0
+    assert surface_manifest["unique_singleton_generations"] == 0
+    assert surface_manifest["cache_hits"] == \
+        surface_manifest["executed_step_records"] > 0
+    entries = ledger.verify_ledger_head(result["ledger_head"],
+                                        ledger_copy)
+    assert entries[-1]["terminal_status"] == "complete"
+
+
+def test_extension_cli_is_hash_bound(extension_fixture):
+    """262_s smaller item: the CLI exists, requires the reviewed
+    hashes, and the verify command refuses an unknown closeout."""
+    with pytest.raises(SystemExit):
+        extension_run.main(["execute"])          # hashes are required
+    with pytest.raises(SystemExit):
+        extension_run.main(["verify"])
+    with pytest.raises(InfrastructureError, match="no ledger entry"):
+        extension_run.main(["verify",
+                            "--closeout-entry-sha256", "ab" * 32])
