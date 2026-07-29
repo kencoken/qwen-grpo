@@ -123,3 +123,41 @@ and a 48-latent, three-renderer holdout costs 576 calls. For Strategy 3, the
 candidate freeze will select two complete semantic condition strata (never
 individual cases) for a 576-call holdout. Thus even the most expensive
 predeclared path costs 1,736 calls, below the hard 2,000-generation cap.
+
+## Executed adaptive sequence
+
+### Strategy 1 pilot — dropped
+
+Run `01-pilot-s1-v2` executed all 96 planned calls from clean commit
+`45d656107362c6a7df0d79a1dd0c2a3ec6704279`; all were physical cache
+misses. Independent verification passed.
+
+| Condition | Both | Only w2 | Only w3 | Neither | w2 acc. | w3 acc. |
+|---|---:|---:|---:|---:|---:|---:|
+| intermediate target | 24 | 0 | 0 | 0 | 100.0% | 100.0% |
+| terminal target | 22 | 2 | 0 | 0 | 100.0% | 91.7% |
+| overall | 46 | 2 | 0 | 0 | 100.0% | 95.8% |
+
+Both terminal-only w2 wins occurred under `goal_first`; `bound_var` was
+24/24 both-correct across the two conditions. There were no w3-only wins,
+no renderer-stable unique-win targets in either direction, and no oracle gap
+over fixed w2. The prospective semantic router scored 95.8%, 4.2 percentage
+points below fixed w2. The two w3 failures were one
+`over-composition/wrong target` and one `predecessor/binding`; w2 had no
+failure.
+
+**Decision:** drop revision `s1-v2` for ceiling behavior, absence of
+bidirectional support, and renderer-local rather than renderer-stable
+separation. No instance, value, or observation was filtered. Proceed to the
+prospectively declared Strategy 2 pilot.
+
+Frozen hashes:
+
+- calls `197a22031365ac2491ec4854966d736cad239ea2fc6109c0ccea632635ef2bcd`;
+- compact rows
+  `71f448d8c26fca5af486fd6ee11b59333fead9569bba974ea3cedae48bbff73d`;
+- summary
+  `88a7fee8919a81a851c2d171845e28d44e28981579949428a2aad455dc1d69a8`;
+- latents
+  `bab429864350b5f812b60b9af901e419876d0e80478de11ae1120b6543e390df`;
+- cases `fb4546dc5ad623a2808f8ee151b9834030bae002761ddd0ff666ec0bc2c43099`.
