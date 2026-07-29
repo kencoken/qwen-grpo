@@ -350,3 +350,65 @@ chains the previous entry's hash. Never edit a recorded entry.
  "terminal_status": "complete"
 }
 ```
+
+## entry 10 — grouped_probe
+
+```json
+{
+ "budget_allocated_gpu_hours": 3.0,
+ "cohort_selection": "outcome_blind",
+ "entry_sha256": "0eca0fcb77345eac695ab380058475e77aafbc494d1eefacd19ae80a45374e04",
+ "freeze": {
+  "attested_environment_sha256": "372f958f5e5aa30805222d338f2e90d665cf8188a7c2ac8d559d231b3f53cd42",
+  "config_sha256": "4acf08f3f34acf7f46236b29259a5a0cabaa2b20e4a2169c3fcd68ca9ecc3b53",
+  "environment_manifest_sha256": "2dc59815aca4e622d23857d2488c2e5e815657d6c915a8dfdc937e598651f9d8",
+  "freeze_sha256": "88fee9217e79ef261468387f1bcafc7b2a50f07eccbd04ebc4abf86f7e0fae6b",
+  "identity_manifest_sha256": "2155a8bf46c87f5288b5e8e9e76d86ae5d146f9c502bed26f381d5d93b817dd6",
+  "probe_cohort_sha256": "7f31bd091aaa97664e71ecb86b17078861b4e28af284162ee6ac50338d661e3b",
+  "probe_rule_sha256": "0b616b8863bf73263c11c63cd8cc1572b880e6586f15059bde642c2a397c9f7b",
+  "session_preflight_sha256": "7e79f947786a7a5859aaedbebedd5decc0b3cb6439d1c8da545adbd7c6ecb08e"
+ },
+ "kind": "grouped_probe",
+ "motivating_evidence": "246_f Step-5 pass (closeout 1a8d41fd\u2026); 231_f bound cohort 7f31bd09\u2026; 211_f \u00a75 / 232_s registered design",
+ "outcome_informed": false,
+ "parent": "1a8d41fde4ffb64a9d9d9886f8fbcf9dc20578ab33c3c0d72a44fa8ea9b6a44a",
+ "previous_entry_sha256": "1a8d41fde4ffb64a9d9d9886f8fbcf9dc20578ab33c3c0d72a44fa8ea9b6a44a",
+ "question": "What exposure do REAL grouped G=8 rollouts contain on the outcome-blind routing_dev support \u2014 structured-action validity, family routing, semantic reward variance, and actual specialist co-sampling \u2014 versus the B iid-singleton plug-ins?"
+}
+```
+
+## entry 11 — closeout
+
+```json
+{
+ "budget_allocated_gpu_hours": 0.0,
+ "budget_consumed_gpu_hours": 0.5192,
+ "closes_entry_sha256": "0eca0fcb77345eac695ab380058475e77aafbc494d1eefacd19ae80a45374e04",
+ "entry_sha256": "88c037a188c6c8f5aca21e7690ea288b76dd1f64eb53f6fc2647196d32cb0eeb",
+ "freeze": {
+  "freeze_sha256": "88fee9217e79ef261468387f1bcafc7b2a50f07eccbd04ebc4abf86f7e0fae6b",
+  "probe_record_file_sha256": "f43c20d3263a4080c50137e15260cde5720de11b5fb1699cfc19be115dd9be9f",
+  "probe_report_file_sha256": "3a001c99de1ccf15e3c6a828949ca3f285ee784c0ed1a0880358b73c742df35e",
+  "terminal_artifact_hashes": {
+   "actions.jsonl": "44172e55ba4ae711bd526b6d48bca3ec40b258c70db9862eff0193586c1c4356",
+   "bound_cohort.json": "8056f9669d4a519271d3a19d91e9ba86e3aea5c16ef7f98524e44088a66b7cd4",
+   "checkpoint_final_hashes.json": "846646c1f0119b7036f85366ac7b1327d386041ed98c0188b33bf960640c82a1",
+   "checkpoint_zero_hashes.json": "846646c1f0119b7036f85366ac7b1327d386041ed98c0188b33bf960640c82a1",
+   "environment_manifest.json": "0a069246b8490ca8e92b194a1cc1d0c663165bef36626b9929c71a3242925e0f",
+   "identity_manifest.json": "0e988d27c6eb793addb6165cb7290a598c3c7ca84d7760f1de3771c466fa7143",
+   "probe_record.json": "f43c20d3263a4080c50137e15260cde5720de11b5fb1699cfc19be115dd9be9f",
+   "probe_report.json": "3a001c99de1ccf15e3c6a828949ca3f285ee784c0ed1a0880358b73c742df35e",
+   "schedule.json": "6de967eeef6881cfb32a49f66b18605e828b18bb639eec38f9c1def94d8c26d5",
+   "session_preflight.json": "b60be37258c4d5463829a56ba6d26806ed7010dae946373b0626b4c34065f3f4"
+  }
+ },
+ "kind": "closeout",
+ "motivating_evidence": "grouped probe complete",
+ "outcome_informed": false,
+ "outcome_pointer": "runs/routing-dev/probe-v1/probe_report.json",
+ "parent": "0eca0fcb77345eac695ab380058475e77aafbc494d1eefacd19ae80a45374e04",
+ "previous_entry_sha256": "0eca0fcb77345eac695ab380058475e77aafbc494d1eefacd19ae80a45374e04",
+ "question": "What exposure do REAL grouped G=8 rollouts contain on the outcome-blind routing_dev support \u2014 structured-action validity, family routing, semantic reward variance, and actual specialist co-sampling \u2014 versus the B iid-singleton plug-ins?",
+ "terminal_status": "complete"
+}
+```

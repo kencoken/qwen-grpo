@@ -1,0 +1,4277 @@
+{
+ "by_cell": {
+  "code_atomic": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 194,
+     "1": 10,
+     "2": 344,
+     "3": 28
+    },
+    "denominator": 576
+   },
+   "c1_family_correct": {
+    "count": 372.0,
+    "denominator": 576,
+    "rate": 0.6458333333333334
+   },
+   "c2_eligible_completions": {
+    "count": 372,
+    "denominator": 576,
+    "rate": 0.6458333333333334
+   },
+   "c2_optimal_specialist": {
+    "count": 21,
+    "denominator": 26,
+    "rate": 0.8076923076923077
+   },
+   "completions": 576,
+   "direct_contrast": {
+    "count": 18,
+    "denominator": 72,
+    "rate": 0.25
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 72,
+    "rate": 0.0
+   },
+   "groups": 72,
+   "mean_reward": 0.8185763888888888,
+   "model_acc": {
+    "count": 21.0,
+    "denominator": 32,
+    "rate": 0.65625
+   },
+   "parse": {
+    "count": 576,
+    "denominator": 576,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.8420138888888888,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 576,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 209,
+     "denominator": 576,
+     "rate": 0.3628472222222222
+    },
+    "1": {
+     "count": 367,
+     "denominator": 576,
+     "rate": 0.6371527777777778
+    }
+   },
+   "routing_entropy_bits_mean": 0.5169308796800991,
+   "scale_lift": {
+    "denominator": 576,
+    "mean": -0.004340277777777778
+   },
+   "semantic_contrast": {
+    "count": 34,
+    "denominator": 72,
+    "rate": 0.4722222222222222
+   },
+   "valid": {
+    "count": 576,
+    "denominator": 576,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 194,
+     "1": 10,
+     "2": 344,
+     "3": 28
+    },
+    "denominator": 576
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 72,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 14,
+     "denominator": 72,
+     "rate": 0.19444444444444445
+    },
+    "all_1": {
+     "count": 24,
+     "denominator": 72,
+     "rate": 0.3333333333333333
+    },
+    "any": {
+     "count": 38,
+     "denominator": 72,
+     "rate": 0.5277777777777778
+    }
+   }
+  },
+  "fork_join": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1,2": 250,
+     "0,1,3": 9,
+     "0,2,1": 3,
+     "0,3,1": 45,
+     "0,3,2": 1,
+     "1,0,2": 10,
+     "1,2,0": 5,
+     "1,2,3": 6,
+     "1,3,0": 2,
+     "1,3,2": 13,
+     "2,1,3": 2,
+     "2,3,1": 105,
+     "3,1,2": 1,
+     "3,2,1": 124
+    },
+    "denominator": 576
+   },
+   "c1_family_correct": {
+    "count": 296.3333333333333,
+    "denominator": 576,
+    "rate": 0.5144675925925926
+   },
+   "c2_eligible_completions": {
+    "count": 48,
+    "denominator": 576,
+    "rate": 0.08333333333333333
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 38,
+    "rate": 0.0
+   },
+   "completions": 576,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 72,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 72,
+    "rate": 0.0
+   },
+   "groups": 72,
+   "mean_reward": 0.5086805555555556,
+   "model_acc": {
+    "count": 6.0,
+    "denominator": 96,
+    "rate": 0.0625
+   },
+   "parse": {
+    "count": 576,
+    "denominator": 576,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.7916666666666666,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 576,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 566,
+     "denominator": 576,
+     "rate": 0.9826388888888888
+    },
+    "1": {
+     "count": 10,
+     "denominator": 576,
+     "rate": 0.017361111111111112
+    }
+   },
+   "routing_entropy_bits_mean": 0.7366229020007276,
+   "scale_lift": {
+    "denominator": 576,
+    "mean": -0.03298611111111111
+   },
+   "semantic_contrast": {
+    "count": 8,
+    "denominator": 72,
+    "rate": 0.1111111111111111
+   },
+   "valid": {
+    "count": 576,
+    "denominator": 576,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 325,
+     "1": 575,
+     "2": 520,
+     "3": 308
+    },
+    "denominator": 1728
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 72,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 64,
+     "denominator": 72,
+     "rate": 0.8888888888888888
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 72,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 64,
+     "denominator": 72,
+     "rate": 0.8888888888888888
+    }
+   }
+  },
+  "lookup_atomic": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 576
+    },
+    "denominator": 576
+   },
+   "c1_family_correct": {
+    "count": 576.0,
+    "denominator": 576,
+    "rate": 1.0
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 576,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 576,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 72,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 72,
+    "rate": 0.0
+   },
+   "groups": 72,
+   "mean_reward": 1.0,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 576,
+    "denominator": 576,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 1.0,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 576,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 0,
+     "denominator": 576,
+     "rate": 0.0
+    },
+    "1": {
+     "count": 576,
+     "denominator": 576,
+     "rate": 1.0
+    }
+   },
+   "routing_entropy_bits_mean": 0.0,
+   "scale_lift": {
+    "denominator": 576,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 72,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 576,
+    "denominator": 576,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 576
+    },
+    "denominator": 576
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 72,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 0,
+     "denominator": 72,
+     "rate": 0.0
+    },
+    "all_1": {
+     "count": 72,
+     "denominator": 72,
+     "rate": 1.0
+    },
+    "any": {
+     "count": 72,
+     "denominator": 72,
+     "rate": 1.0
+    }
+   }
+  },
+  "lookup_math": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1": 576
+    },
+    "denominator": 576
+   },
+   "c1_family_correct": {
+    "count": 576.0,
+    "denominator": 576,
+    "rate": 1.0
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 576,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 576,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 72,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 72,
+    "rate": 0.0
+   },
+   "groups": 72,
+   "mean_reward": 1.0,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 576,
+    "denominator": 576,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 1.0,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 576,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 0,
+     "denominator": 576,
+     "rate": 0.0
+    },
+    "1": {
+     "count": 576,
+     "denominator": 576,
+     "rate": 1.0
+    }
+   },
+   "routing_entropy_bits_mean": 0.0,
+   "scale_lift": {
+    "denominator": 576,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 72,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 576,
+    "denominator": 576,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 576,
+     "1": 576
+    },
+    "denominator": 1152
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 72,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 0,
+     "denominator": 72,
+     "rate": 0.0
+    },
+    "all_1": {
+     "count": 72,
+     "denominator": 72,
+     "rate": 1.0
+    },
+    "any": {
+     "count": 72,
+     "denominator": 72,
+     "rate": 1.0
+    }
+   }
+  },
+  "math_atomic": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 573,
+     "1": 2,
+     "2": 1
+    },
+    "denominator": 576
+   },
+   "c1_family_correct": {
+    "count": 2.0,
+    "denominator": 576,
+    "rate": 0.003472222222222222
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 576,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 576,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 72,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 72,
+    "rate": 0.0
+   },
+   "groups": 72,
+   "mean_reward": 0.5017361111111112,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 576,
+    "denominator": 576,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.9947916666666666,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 576,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 574,
+     "denominator": 576,
+     "rate": 0.9965277777777778
+    },
+    "1": {
+     "count": 2,
+     "denominator": 576,
+     "rate": 0.003472222222222222
+    }
+   },
+   "routing_entropy_bits_mean": 0.02264851846664985,
+   "scale_lift": {
+    "denominator": 576,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 2,
+    "denominator": 72,
+    "rate": 0.027777777777777776
+   },
+   "valid": {
+    "count": 576,
+    "denominator": 576,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 573,
+     "1": 2,
+     "2": 1
+    },
+    "denominator": 576
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 72,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 70,
+     "denominator": 72,
+     "rate": 0.9722222222222222
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 72,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 70,
+     "denominator": 72,
+     "rate": 0.9722222222222222
+    }
+   }
+  },
+  "math_code": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1": 170,
+     "0,2": 2,
+     "0,3": 94,
+     "1,0": 34,
+     "1,2": 1,
+     "1,3": 1,
+     "2,3": 235,
+     "3,0": 3,
+     "3,2": 29
+    },
+    "denominator": 569
+   },
+   "c1_family_correct": {
+    "count": 199.0,
+    "denominator": 576,
+    "rate": 0.3454861111111111
+   },
+   "c2_eligible_completions": {
+    "count": 2,
+    "denominator": 576,
+    "rate": 0.003472222222222222
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 576,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 72,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 6,
+    "denominator": 72,
+    "rate": 0.08333333333333333
+   },
+   "groups": 72,
+   "mean_reward": 0.4956597222222222,
+   "model_acc": {
+    "count": 20.0,
+    "denominator": 64,
+    "rate": 0.3125
+   },
+   "parse": {
+    "count": 576,
+    "denominator": 576,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.7863756613756614,
+   "reward_levels": {
+    "0": {
+     "count": 7,
+     "denominator": 576,
+     "rate": 0.012152777777777778
+    },
+    "0.5": {
+     "count": 567,
+     "denominator": 576,
+     "rate": 0.984375
+    },
+    "1": {
+     "count": 2,
+     "denominator": 576,
+     "rate": 0.003472222222222222
+    }
+   },
+   "routing_entropy_bits_mean": 0.6685759165750514,
+   "scale_lift": {
+    "denominator": 576,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 2,
+    "denominator": 72,
+    "rate": 0.027777777777777776
+   },
+   "valid": {
+    "count": 569,
+    "denominator": 576,
+    "rate": 0.9878472222222222
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 303,
+     "1": 206,
+     "2": 267,
+     "3": 362
+    },
+    "denominator": 1138
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 72,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 64,
+     "denominator": 72,
+     "rate": 0.8888888888888888
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 72,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 64,
+     "denominator": 72,
+     "rate": 0.8888888888888888
+    }
+   }
+  }
+ },
+ "by_cell_renderer_direction": {
+  "code_atomic|bound_var|tied": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 107,
+     "2": 85
+    },
+    "denominator": 192
+   },
+   "c1_family_correct": {
+    "count": 85.0,
+    "denominator": 192,
+    "rate": 0.4427083333333333
+   },
+   "c2_eligible_completions": {
+    "count": 85,
+    "denominator": 192,
+    "rate": 0.4427083333333333
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "groups": 24,
+   "mean_reward": 0.7213541666666666,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.9427083333333334,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 107,
+     "denominator": 192,
+     "rate": 0.5572916666666666
+    },
+    "1": {
+     "count": 85,
+     "denominator": 192,
+     "rate": 0.4427083333333333
+    }
+   },
+   "routing_entropy_bits_mean": 0.21465235789064085,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 8,
+    "denominator": 24,
+    "rate": 0.3333333333333333
+   },
+   "valid": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 107,
+     "2": 85
+    },
+    "denominator": 192
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 12,
+     "denominator": 24,
+     "rate": 0.5
+    },
+    "all_1": {
+     "count": 4,
+     "denominator": 24,
+     "rate": 0.16666666666666666
+    },
+    "any": {
+     "count": 16,
+     "denominator": 24,
+     "rate": 0.6666666666666666
+    }
+   }
+  },
+  "code_atomic|goal_first|tied": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 21,
+     "1": 3,
+     "2": 129,
+     "3": 7
+    },
+    "denominator": 160
+   },
+   "c1_family_correct": {
+    "count": 136.0,
+    "denominator": 160,
+    "rate": 0.85
+   },
+   "c2_eligible_completions": {
+    "count": 136,
+    "denominator": 160,
+    "rate": 0.85
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 160,
+   "direct_contrast": {
+    "count": 7,
+    "denominator": 20,
+    "rate": 0.35
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 20,
+    "rate": 0.0
+   },
+   "groups": 20,
+   "mean_reward": 0.925,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 160,
+    "denominator": 160,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.8125,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 160,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 24,
+     "denominator": 160,
+     "rate": 0.15
+    },
+    "1": {
+     "count": 136,
+     "denominator": 160,
+     "rate": 0.85
+    }
+   },
+   "routing_entropy_bits_mean": 0.5870554695042827,
+   "scale_lift": {
+    "denominator": 160,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 9,
+    "denominator": 20,
+    "rate": 0.45
+   },
+   "valid": {
+    "count": 160,
+    "denominator": 160,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 21,
+     "1": 3,
+     "2": 129,
+     "3": 7
+    },
+    "denominator": 160
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 20,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 0,
+     "denominator": 20,
+     "rate": 0.0
+    },
+    "all_1": {
+     "count": 11,
+     "denominator": 20,
+     "rate": 0.55
+    },
+    "any": {
+     "count": 11,
+     "denominator": 20,
+     "rate": 0.55
+    }
+   }
+  },
+  "code_atomic|goal_first|w2_favoured": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 5,
+     "1": 1,
+     "2": 21,
+     "3": 5
+    },
+    "denominator": 32
+   },
+   "c1_family_correct": {
+    "count": 26.0,
+    "denominator": 32,
+    "rate": 0.8125
+   },
+   "c2_eligible_completions": {
+    "count": 26,
+    "denominator": 32,
+    "rate": 0.8125
+   },
+   "c2_optimal_specialist": {
+    "count": 21,
+    "denominator": 26,
+    "rate": 0.8076923076923077
+   },
+   "completions": 32,
+   "direct_contrast": {
+    "count": 3,
+    "denominator": 4,
+    "rate": 0.75
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 4,
+    "rate": 0.0
+   },
+   "groups": 4,
+   "mean_reward": 0.828125,
+   "model_acc": {
+    "count": 21.0,
+    "denominator": 32,
+    "rate": 0.65625
+   },
+   "parse": {
+    "count": 32,
+    "denominator": 32,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.65625,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 32,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 11,
+     "denominator": 32,
+     "rate": 0.34375
+    },
+    "1": {
+     "count": 21,
+     "denominator": 32,
+     "rate": 0.65625
+    }
+   },
+   "routing_entropy_bits_mean": 1.0537289082033152,
+   "scale_lift": {
+    "denominator": 32,
+    "mean": -0.078125
+   },
+   "semantic_contrast": {
+    "count": 4,
+    "denominator": 4,
+    "rate": 1.0
+   },
+   "valid": {
+    "count": 32,
+    "denominator": 32,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 5,
+     "1": 1,
+     "2": 21,
+     "3": 5
+    },
+    "denominator": 32
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 4,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 0,
+     "denominator": 4,
+     "rate": 0.0
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 4,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 0,
+     "denominator": 4,
+     "rate": 0.0
+    }
+   }
+  },
+  "code_atomic|resource_first|tied": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 61,
+     "1": 6,
+     "2": 109,
+     "3": 16
+    },
+    "denominator": 192
+   },
+   "c1_family_correct": {
+    "count": 125.0,
+    "denominator": 192,
+    "rate": 0.6510416666666666
+   },
+   "c2_eligible_completions": {
+    "count": 125,
+    "denominator": 192,
+    "rate": 0.6510416666666666
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 8,
+    "denominator": 24,
+    "rate": 0.3333333333333333
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "groups": 24,
+   "mean_reward": 0.8255208333333334,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.796875,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 67,
+     "denominator": 192,
+     "rate": 0.3489583333333333
+    },
+    "1": {
+     "count": 125,
+     "denominator": 192,
+     "rate": 0.6510416666666666
+    }
+   },
+   "routing_entropy_bits_mean": 0.6713059051955349,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 13,
+    "denominator": 24,
+    "rate": 0.5416666666666666
+   },
+   "valid": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 61,
+     "1": 6,
+     "2": 109,
+     "3": 16
+    },
+    "denominator": 192
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 2,
+     "denominator": 24,
+     "rate": 0.08333333333333333
+    },
+    "all_1": {
+     "count": 9,
+     "denominator": 24,
+     "rate": 0.375
+    },
+    "any": {
+     "count": 11,
+     "denominator": 24,
+     "rate": 0.4583333333333333
+    }
+   }
+  },
+  "fork_join|bound_var|tied": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1,2": 84,
+     "0,1,3": 6,
+     "0,3,1": 5,
+     "1,0,2": 9,
+     "1,3,2": 1,
+     "2,1,3": 1,
+     "2,3,1": 25,
+     "3,2,1": 29
+    },
+    "denominator": 160
+   },
+   "c1_family_correct": {
+    "count": 71.33333333333333,
+    "denominator": 160,
+    "rate": 0.4458333333333333
+   },
+   "c2_eligible_completions": {
+    "count": 5,
+    "denominator": 160,
+    "rate": 0.03125
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 160,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 20,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 20,
+    "rate": 0.0
+   },
+   "groups": 20,
+   "mean_reward": 0.515625,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 160,
+    "denominator": 160,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.79375,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 160,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 155,
+     "denominator": 160,
+     "rate": 0.96875
+    },
+    "1": {
+     "count": 5,
+     "denominator": 160,
+     "rate": 0.03125
+    }
+   },
+   "routing_entropy_bits_mean": 0.7469608185474331,
+   "scale_lift": {
+    "denominator": 160,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 3,
+    "denominator": 20,
+    "rate": 0.15
+   },
+   "valid": {
+    "count": 160,
+    "denominator": 160,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 104,
+     "1": 160,
+     "2": 149,
+     "3": 67
+    },
+    "denominator": 480
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 20,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 17,
+     "denominator": 20,
+     "rate": 0.85
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 20,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 17,
+     "denominator": 20,
+     "rate": 0.85
+    }
+   }
+  },
+  "fork_join|bound_var|w2_favoured": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,3,1": 9,
+     "1,2,3": 1,
+     "1,3,0": 1,
+     "2,3,1": 16,
+     "3,2,1": 5
+    },
+    "denominator": 32
+   },
+   "c1_family_correct": {
+    "count": 23.666666666666664,
+    "denominator": 32,
+    "rate": 0.7395833333333333
+   },
+   "c2_eligible_completions": {
+    "count": 9,
+    "denominator": 32,
+    "rate": 0.28125
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 9,
+    "rate": 0.0
+   },
+   "completions": 32,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 4,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 4,
+    "rate": 0.0
+   },
+   "groups": 4,
+   "mean_reward": 0.5,
+   "model_acc": {
+    "count": 6.0,
+    "denominator": 32,
+    "rate": 0.1875
+   },
+   "parse": {
+    "count": 32,
+    "denominator": 32,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.59375,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 32,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 32,
+     "denominator": 32,
+     "rate": 1.0
+    },
+    "1": {
+     "count": 0,
+     "denominator": 32,
+     "rate": 0.0
+    }
+   },
+   "routing_entropy_bits_mean": 1.474096205521549,
+   "scale_lift": {
+    "denominator": 32,
+    "mean": -0.140625
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 4,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 32,
+    "denominator": 32,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 10,
+     "1": 32,
+     "2": 22,
+     "3": 32
+    },
+    "denominator": 96
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 4,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 4,
+     "denominator": 4,
+     "rate": 1.0
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 4,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 4,
+     "denominator": 4,
+     "rate": 1.0
+    }
+   }
+  },
+  "fork_join|goal_first|tied": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1,2": 95,
+     "0,3,1": 1,
+     "1,2,3": 1,
+     "2,3,1": 31
+    },
+    "denominator": 128
+   },
+   "c1_family_correct": {
+    "count": 53.666666666666664,
+    "denominator": 128,
+    "rate": 0.4192708333333333
+   },
+   "c2_eligible_completions": {
+    "count": 1,
+    "denominator": 128,
+    "rate": 0.0078125
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 128,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 16,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 16,
+    "rate": 0.0
+   },
+   "groups": 16,
+   "mean_reward": 0.50390625,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 128,
+    "denominator": 128,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.984375,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 128,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 127,
+     "denominator": 128,
+     "rate": 0.9921875
+    },
+    "1": {
+     "count": 1,
+     "denominator": 128,
+     "rate": 0.0078125
+    }
+   },
+   "routing_entropy_bits_mean": 0.06794555539994955,
+   "scale_lift": {
+    "denominator": 128,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 1,
+    "denominator": 16,
+    "rate": 0.0625
+   },
+   "valid": {
+    "count": 128,
+    "denominator": 128,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 96,
+     "1": 128,
+     "2": 127,
+     "3": 33
+    },
+    "denominator": 384
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 16,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 15,
+     "denominator": 16,
+     "rate": 0.9375
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 16,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 15,
+     "denominator": 16,
+     "rate": 0.9375
+    }
+   }
+  },
+  "fork_join|goal_first|w2_favoured": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,3,1": 29,
+     "0,3,2": 1,
+     "1,0,2": 1,
+     "1,3,2": 9,
+     "2,3,1": 24
+    },
+    "denominator": 64
+   },
+   "c1_family_correct": {
+    "count": 48.666666666666664,
+    "denominator": 64,
+    "rate": 0.7604166666666666
+   },
+   "c2_eligible_completions": {
+    "count": 29,
+    "denominator": 64,
+    "rate": 0.453125
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 29,
+    "rate": 0.0
+   },
+   "completions": 64,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 8,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 8,
+    "rate": 0.0
+   },
+   "groups": 8,
+   "mean_reward": 0.5,
+   "model_acc": {
+    "count": 0.0,
+    "denominator": 64,
+    "rate": 0.0
+   },
+   "parse": {
+    "count": 64,
+    "denominator": 64,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.546875,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 64,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 64,
+     "denominator": 64,
+     "rate": 1.0
+    },
+    "1": {
+     "count": 0,
+     "denominator": 64,
+     "rate": 0.0
+    }
+   },
+   "routing_entropy_bits_mean": 1.3240877974034162,
+   "scale_lift": {
+    "denominator": 64,
+    "mean": -0.2265625
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 8,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 64,
+    "denominator": 64,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 31,
+     "1": 63,
+     "2": 35,
+     "3": 63
+    },
+    "denominator": 192
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 8,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 8,
+     "denominator": 8,
+     "rate": 1.0
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 8,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 8,
+     "denominator": 8,
+     "rate": 1.0
+    }
+   }
+  },
+  "fork_join|resource_first|tied": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1,2": 71,
+     "0,1,3": 3,
+     "0,2,1": 3,
+     "0,3,1": 1,
+     "1,2,0": 5,
+     "1,2,3": 4,
+     "1,3,0": 1,
+     "1,3,2": 3,
+     "2,1,3": 1,
+     "2,3,1": 9,
+     "3,1,2": 1,
+     "3,2,1": 90
+    },
+    "denominator": 192
+   },
+   "c1_family_correct": {
+    "count": 99.0,
+    "denominator": 192,
+    "rate": 0.515625
+   },
+   "c2_eligible_completions": {
+    "count": 4,
+    "denominator": 192,
+    "rate": 0.020833333333333332
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "groups": 24,
+   "mean_reward": 0.5104166666666666,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.7760416666666666,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 188,
+     "denominator": 192,
+     "rate": 0.9791666666666666
+    },
+    "1": {
+     "count": 4,
+     "denominator": 192,
+     "rate": 0.020833333333333332
+    }
+   },
+   "routing_entropy_bits_mean": 0.8550590202246252,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 4,
+    "denominator": 24,
+    "rate": 0.16666666666666666
+   },
+   "valid": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 84,
+     "1": 192,
+     "2": 187,
+     "3": 113
+    },
+    "denominator": 576
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 20,
+     "denominator": 24,
+     "rate": 0.8333333333333334
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 20,
+     "denominator": 24,
+     "rate": 0.8333333333333334
+    }
+   }
+  },
+  "lookup_atomic|bound_var|no_pair": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 192
+    },
+    "denominator": 192
+   },
+   "c1_family_correct": {
+    "count": 192.0,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 192,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "groups": 24,
+   "mean_reward": 1.0,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 1.0,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "1": {
+     "count": 192,
+     "denominator": 192,
+     "rate": 1.0
+    }
+   },
+   "routing_entropy_bits_mean": 0.0,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 192
+    },
+    "denominator": 192
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_1": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    },
+    "any": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    }
+   }
+  },
+  "lookup_atomic|goal_first|no_pair": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 192
+    },
+    "denominator": 192
+   },
+   "c1_family_correct": {
+    "count": 192.0,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 192,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "groups": 24,
+   "mean_reward": 1.0,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 1.0,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "1": {
+     "count": 192,
+     "denominator": 192,
+     "rate": 1.0
+    }
+   },
+   "routing_entropy_bits_mean": 0.0,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 192
+    },
+    "denominator": 192
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_1": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    },
+    "any": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    }
+   }
+  },
+  "lookup_atomic|resource_first|no_pair": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 192
+    },
+    "denominator": 192
+   },
+   "c1_family_correct": {
+    "count": 192.0,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 192,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "groups": 24,
+   "mean_reward": 1.0,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 1.0,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "1": {
+     "count": 192,
+     "denominator": 192,
+     "rate": 1.0
+    }
+   },
+   "routing_entropy_bits_mean": 0.0,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 192
+    },
+    "denominator": 192
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_1": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    },
+    "any": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    }
+   }
+  },
+  "lookup_math|bound_var|no_pair": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1": 192
+    },
+    "denominator": 192
+   },
+   "c1_family_correct": {
+    "count": 192.0,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 192,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "groups": 24,
+   "mean_reward": 1.0,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 1.0,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "1": {
+     "count": 192,
+     "denominator": 192,
+     "rate": 1.0
+    }
+   },
+   "routing_entropy_bits_mean": 0.0,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 192,
+     "1": 192
+    },
+    "denominator": 384
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_1": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    },
+    "any": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    }
+   }
+  },
+  "lookup_math|goal_first|no_pair": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1": 192
+    },
+    "denominator": 192
+   },
+   "c1_family_correct": {
+    "count": 192.0,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 192,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "groups": 24,
+   "mean_reward": 1.0,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 1.0,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "1": {
+     "count": 192,
+     "denominator": 192,
+     "rate": 1.0
+    }
+   },
+   "routing_entropy_bits_mean": 0.0,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 192,
+     "1": 192
+    },
+    "denominator": 384
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_1": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    },
+    "any": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    }
+   }
+  },
+  "lookup_math|resource_first|no_pair": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1": 192
+    },
+    "denominator": 192
+   },
+   "c1_family_correct": {
+    "count": 192.0,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 192,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "groups": 24,
+   "mean_reward": 1.0,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 1.0,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "1": {
+     "count": 192,
+     "denominator": 192,
+     "rate": 1.0
+    }
+   },
+   "routing_entropy_bits_mean": 0.0,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 192,
+     "1": 192
+    },
+    "denominator": 384
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_1": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    },
+    "any": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    }
+   }
+  },
+  "math_atomic|bound_var|no_pair": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 191,
+     "1": 1
+    },
+    "denominator": 192
+   },
+   "c1_family_correct": {
+    "count": 1.0,
+    "denominator": 192,
+    "rate": 0.005208333333333333
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 192,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "groups": 24,
+   "mean_reward": 0.5026041666666666,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.9947916666666666,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 191,
+     "denominator": 192,
+     "rate": 0.9947916666666666
+    },
+    "1": {
+     "count": 1,
+     "denominator": 192,
+     "rate": 0.005208333333333333
+    }
+   },
+   "routing_entropy_bits_mean": 0.02264851846664985,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 1,
+    "denominator": 24,
+    "rate": 0.041666666666666664
+   },
+   "valid": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 191,
+     "1": 1
+    },
+    "denominator": 192
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 23,
+     "denominator": 24,
+     "rate": 0.9583333333333334
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 23,
+     "denominator": 24,
+     "rate": 0.9583333333333334
+    }
+   }
+  },
+  "math_atomic|goal_first|no_pair": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 191,
+     "2": 1
+    },
+    "denominator": 192
+   },
+   "c1_family_correct": {
+    "count": 0.0,
+    "denominator": 192,
+    "rate": 0.0
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 192,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "groups": 24,
+   "mean_reward": 0.5,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.9947916666666666,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 192,
+     "denominator": 192,
+     "rate": 1.0
+    },
+    "1": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    }
+   },
+   "routing_entropy_bits_mean": 0.02264851846664985,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 191,
+     "2": 1
+    },
+    "denominator": 192
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    }
+   }
+  },
+  "math_atomic|resource_first|no_pair": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 191,
+     "1": 1
+    },
+    "denominator": 192
+   },
+   "c1_family_correct": {
+    "count": 1.0,
+    "denominator": 192,
+    "rate": 0.005208333333333333
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 192,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "groups": 24,
+   "mean_reward": 0.5026041666666666,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.9947916666666666,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 191,
+     "denominator": 192,
+     "rate": 0.9947916666666666
+    },
+    "1": {
+     "count": 1,
+     "denominator": 192,
+     "rate": 0.005208333333333333
+    }
+   },
+   "routing_entropy_bits_mean": 0.02264851846664985,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 1,
+    "denominator": 24,
+    "rate": 0.041666666666666664
+   },
+   "valid": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 191,
+     "1": 1
+    },
+    "denominator": 192
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 23,
+     "denominator": 24,
+     "rate": 0.9583333333333334
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 23,
+     "denominator": 24,
+     "rate": 0.9583333333333334
+    }
+   }
+  },
+  "math_code|bound_var|tied": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1": 71,
+     "0,3": 9,
+     "1,0": 5,
+     "2,3": 105,
+     "3,2": 1
+    },
+    "denominator": 191
+   },
+   "c1_family_correct": {
+    "count": 60.0,
+    "denominator": 192,
+    "rate": 0.3125
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 192,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 1,
+    "denominator": 24,
+    "rate": 0.041666666666666664
+   },
+   "groups": 24,
+   "mean_reward": 0.4973958333333333,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.8623511904761906,
+   "reward_levels": {
+    "0": {
+     "count": 1,
+     "denominator": 192,
+     "rate": 0.005208333333333333
+    },
+    "0.5": {
+     "count": 191,
+     "denominator": 192,
+     "rate": 0.9947916666666666
+    },
+    "1": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    }
+   },
+   "routing_entropy_bits_mean": 0.4055197105385413,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 191,
+    "denominator": 192,
+    "rate": 0.9947916666666666
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 85,
+     "1": 76,
+     "2": 106,
+     "3": 115
+    },
+    "denominator": 382
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 23,
+     "denominator": 24,
+     "rate": 0.9583333333333334
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 23,
+     "denominator": 24,
+     "rate": 0.9583333333333334
+    }
+   }
+  },
+  "math_code|goal_first|tied": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1": 48,
+     "0,2": 1,
+     "0,3": 12,
+     "1,0": 21,
+     "1,2": 1,
+     "1,3": 1,
+     "2,3": 21,
+     "3,0": 2,
+     "3,2": 18
+    },
+    "denominator": 125
+   },
+   "c1_family_correct": {
+    "count": 38.5,
+    "denominator": 128,
+    "rate": 0.30078125
+   },
+   "c2_eligible_completions": {
+    "count": 2,
+    "denominator": 128,
+    "rate": 0.015625
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 128,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 16,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 3,
+    "denominator": 16,
+    "rate": 0.1875
+   },
+   "groups": 16,
+   "mean_reward": 0.49609375,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 128,
+    "denominator": 128,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.609375,
+   "reward_levels": {
+    "0": {
+     "count": 3,
+     "denominator": 128,
+     "rate": 0.0234375
+    },
+    "0.5": {
+     "count": 123,
+     "denominator": 128,
+     "rate": 0.9609375
+    },
+    "1": {
+     "count": 2,
+     "denominator": 128,
+     "rate": 0.015625
+    }
+   },
+   "routing_entropy_bits_mean": 1.2023960032884922,
+   "scale_lift": {
+    "denominator": 128,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 2,
+    "denominator": 16,
+    "rate": 0.125
+   },
+   "valid": {
+    "count": 125,
+    "denominator": 128,
+    "rate": 0.9765625
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 84,
+     "1": 71,
+     "2": 41,
+     "3": 54
+    },
+    "denominator": 250
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 16,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 11,
+     "denominator": 16,
+     "rate": 0.6875
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 16,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 11,
+     "denominator": 16,
+     "rate": 0.6875
+    }
+   }
+  },
+  "math_code|goal_first|w3_favoured": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1": 28,
+     "0,2": 1,
+     "0,3": 2,
+     "1,0": 3,
+     "2,3": 18,
+     "3,0": 1,
+     "3,2": 8
+    },
+    "denominator": 61
+   },
+   "c1_family_correct": {
+    "count": 16.0,
+    "denominator": 64,
+    "rate": 0.25
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 64,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 64,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 8,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 2,
+    "denominator": 8,
+    "rate": 0.25
+   },
+   "groups": 8,
+   "mean_reward": 0.4765625,
+   "model_acc": {
+    "count": 20.0,
+    "denominator": 64,
+    "rate": 0.3125
+   },
+   "parse": {
+    "count": 64,
+    "denominator": 64,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.7559523809523809,
+   "reward_levels": {
+    "0": {
+     "count": 3,
+     "denominator": 64,
+     "rate": 0.046875
+    },
+    "0.5": {
+     "count": 61,
+     "denominator": 64,
+     "rate": 0.953125
+    },
+    "1": {
+     "count": 0,
+     "denominator": 64,
+     "rate": 0.0
+    }
+   },
+   "routing_entropy_bits_mean": 0.8924018882436033,
+   "scale_lift": {
+    "denominator": 64,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 8,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 61,
+    "denominator": 64,
+    "rate": 0.953125
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 35,
+     "1": 31,
+     "2": 27,
+     "3": 29
+    },
+    "denominator": 122
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 8,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 6,
+     "denominator": 8,
+     "rate": 0.75
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 8,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 6,
+     "denominator": 8,
+     "rate": 0.75
+    }
+   }
+  },
+  "math_code|resource_first|tied": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1": 23,
+     "0,3": 71,
+     "1,0": 5,
+     "2,3": 91,
+     "3,2": 2
+    },
+    "denominator": 192
+   },
+   "c1_family_correct": {
+    "count": 84.5,
+    "denominator": 192,
+    "rate": 0.4401041666666667
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 192,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 192,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "groups": 24,
+   "mean_reward": 0.5,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.8385416666666666,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 192,
+     "denominator": 192,
+     "rate": 1.0
+    },
+    "1": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    }
+   },
+   "routing_entropy_bits_mean": 0.5011434075797504,
+   "scale_lift": {
+    "denominator": 192,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 24,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 192,
+    "denominator": 192,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 99,
+     "1": 28,
+     "2": 93,
+     "3": 164
+    },
+    "denominator": 384
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 24,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 24,
+     "denominator": 24,
+     "rate": 1.0
+    }
+   }
+  }
+ },
+ "by_direction": {
+  "no_pair": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 1149,
+     "0,1": 576,
+     "1": 2,
+     "2": 1
+    },
+    "denominator": 1728
+   },
+   "c1_family_correct": {
+    "count": 1154.0,
+    "denominator": 1728,
+    "rate": 0.6678240740740741
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 1728,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 1728,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 216,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 216,
+    "rate": 0.0
+   },
+   "groups": 216,
+   "mean_reward": 0.8339120370370371,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 1728,
+    "denominator": 1728,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.9982638888888888,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 1728,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 574,
+     "denominator": 1728,
+     "rate": 0.33217592592592593
+    },
+    "1": {
+     "count": 1154,
+     "denominator": 1728,
+     "rate": 0.6678240740740741
+    }
+   },
+   "routing_entropy_bits_mean": 0.00754950615554995,
+   "scale_lift": {
+    "denominator": 1728,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 2,
+    "denominator": 216,
+    "rate": 0.009259259259259259
+   },
+   "valid": {
+    "count": 1728,
+    "denominator": 1728,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 1725,
+     "1": 578,
+     "2": 1
+    },
+    "denominator": 2304
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 216,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 70,
+     "denominator": 216,
+     "rate": 0.32407407407407407
+    },
+    "all_1": {
+     "count": 144,
+     "denominator": 216,
+     "rate": 0.6666666666666666
+    },
+    "any": {
+     "count": 214,
+     "denominator": 216,
+     "rate": 0.9907407407407407
+    }
+   }
+  },
+  "tied": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 189,
+     "0,1": 142,
+     "0,1,2": 250,
+     "0,1,3": 9,
+     "0,2": 1,
+     "0,2,1": 3,
+     "0,3": 92,
+     "0,3,1": 7,
+     "1": 9,
+     "1,0": 31,
+     "1,0,2": 9,
+     "1,2": 1,
+     "1,2,0": 5,
+     "1,2,3": 5,
+     "1,3": 1,
+     "1,3,0": 1,
+     "1,3,2": 4,
+     "2": 323,
+     "2,1,3": 2,
+     "2,3": 217,
+     "2,3,1": 65,
+     "3": 23,
+     "3,0": 2,
+     "3,1,2": 1,
+     "3,2": 21,
+     "3,2,1": 119
+    },
+    "denominator": 1532
+   },
+   "c1_family_correct": {
+    "count": 753.0,
+    "denominator": 1536,
+    "rate": 0.490234375
+   },
+   "c2_eligible_completions": {
+    "count": 358,
+    "denominator": 1536,
+    "rate": 0.23307291666666666
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 1536,
+   "direct_contrast": {
+    "count": 15,
+    "denominator": 192,
+    "rate": 0.078125
+   },
+   "format_contrast": {
+    "count": 4,
+    "denominator": 192,
+    "rate": 0.020833333333333332
+   },
+   "groups": 192,
+   "mean_reward": 0.615234375,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 1536,
+    "denominator": 1536,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.8271949404761906,
+   "reward_levels": {
+    "0": {
+     "count": 4,
+     "denominator": 1536,
+     "rate": 0.0026041666666666665
+    },
+    "0.5": {
+     "count": 1174,
+     "denominator": 1536,
+     "rate": 0.7643229166666666
+    },
+    "1": {
+     "count": 358,
+     "denominator": 1536,
+     "rate": 0.23307291666666666
+    }
+   },
+   "routing_entropy_bits_mean": 0.5757818767413938,
+   "scale_lift": {
+    "denominator": 1536,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 40,
+    "denominator": 192,
+    "rate": 0.20833333333333334
+   },
+   "valid": {
+    "count": 1532,
+    "denominator": 1536,
+    "rate": 0.9973958333333334
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 741,
+     "1": 664,
+     "2": 1026,
+     "3": 569
+    },
+    "denominator": 3000
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 192,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 124,
+     "denominator": 192,
+     "rate": 0.6458333333333334
+    },
+    "all_1": {
+     "count": 24,
+     "denominator": 192,
+     "rate": 0.125
+    },
+    "any": {
+     "count": 148,
+     "denominator": 192,
+     "rate": 0.7708333333333334
+    }
+   }
+  },
+  "w2_favoured": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 5,
+     "0,3,1": 38,
+     "0,3,2": 1,
+     "1": 1,
+     "1,0,2": 1,
+     "1,2,3": 1,
+     "1,3,0": 1,
+     "1,3,2": 9,
+     "2": 21,
+     "2,3,1": 40,
+     "3": 5,
+     "3,2,1": 5
+    },
+    "denominator": 128
+   },
+   "c1_family_correct": {
+    "count": 98.33333333333333,
+    "denominator": 128,
+    "rate": 0.7682291666666666
+   },
+   "c2_eligible_completions": {
+    "count": 64,
+    "denominator": 128,
+    "rate": 0.5
+   },
+   "c2_optimal_specialist": {
+    "count": 21,
+    "denominator": 64,
+    "rate": 0.328125
+   },
+   "completions": 128,
+   "direct_contrast": {
+    "count": 3,
+    "denominator": 16,
+    "rate": 0.1875
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 16,
+    "rate": 0.0
+   },
+   "groups": 16,
+   "mean_reward": 0.58203125,
+   "model_acc": {
+    "count": 27.0,
+    "denominator": 128,
+    "rate": 0.2109375
+   },
+   "parse": {
+    "count": 128,
+    "denominator": 128,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.5859375,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 128,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 107,
+     "denominator": 128,
+     "rate": 0.8359375
+    },
+    "1": {
+     "count": 21,
+     "denominator": 128,
+     "rate": 0.1640625
+    }
+   },
+   "routing_entropy_bits_mean": 1.2940001771329241,
+   "scale_lift": {
+    "denominator": 128,
+    "mean": -0.16796875
+   },
+   "semantic_contrast": {
+    "count": 4,
+    "denominator": 16,
+    "rate": 0.25
+   },
+   "valid": {
+    "count": 128,
+    "denominator": 128,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 46,
+     "1": 96,
+     "2": 78,
+     "3": 100
+    },
+    "denominator": 320
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 16,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 12,
+     "denominator": 16,
+     "rate": 0.75
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 16,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 12,
+     "denominator": 16,
+     "rate": 0.75
+    }
+   }
+  },
+  "w3_favoured": {
+   "assignment_frequencies": {
+    "counts": {
+     "0,1": 28,
+     "0,2": 1,
+     "0,3": 2,
+     "1,0": 3,
+     "2,3": 18,
+     "3,0": 1,
+     "3,2": 8
+    },
+    "denominator": 61
+   },
+   "c1_family_correct": {
+    "count": 16.0,
+    "denominator": 64,
+    "rate": 0.25
+   },
+   "c2_eligible_completions": {
+    "count": 0,
+    "denominator": 64,
+    "rate": 0.0
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 64,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 8,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 2,
+    "denominator": 8,
+    "rate": 0.25
+   },
+   "groups": 8,
+   "mean_reward": 0.4765625,
+   "model_acc": {
+    "count": 20.0,
+    "denominator": 64,
+    "rate": 0.3125
+   },
+   "parse": {
+    "count": 64,
+    "denominator": 64,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.7559523809523809,
+   "reward_levels": {
+    "0": {
+     "count": 3,
+     "denominator": 64,
+     "rate": 0.046875
+    },
+    "0.5": {
+     "count": 61,
+     "denominator": 64,
+     "rate": 0.953125
+    },
+    "1": {
+     "count": 0,
+     "denominator": 64,
+     "rate": 0.0
+    }
+   },
+   "routing_entropy_bits_mean": 0.8924018882436033,
+   "scale_lift": {
+    "denominator": 64,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 0,
+    "denominator": 8,
+    "rate": 0.0
+   },
+   "valid": {
+    "count": 61,
+    "denominator": 64,
+    "rate": 0.953125
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 35,
+     "1": 31,
+     "2": 27,
+     "3": 29
+    },
+    "denominator": 122
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 8,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 6,
+     "denominator": 8,
+     "rate": 0.75
+    },
+    "all_1": {
+     "count": 0,
+     "denominator": 8,
+     "rate": 0.0
+    },
+    "any": {
+     "count": 6,
+     "denominator": 8,
+     "rate": 0.75
+    }
+   }
+  }
+ },
+ "by_renderer": {
+  "bound_var": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 490,
+     "0,1": 263,
+     "0,1,2": 84,
+     "0,1,3": 6,
+     "0,3": 9,
+     "0,3,1": 14,
+     "1": 1,
+     "1,0": 5,
+     "1,0,2": 9,
+     "1,2,3": 1,
+     "1,3,0": 1,
+     "1,3,2": 1,
+     "2": 85,
+     "2,1,3": 1,
+     "2,3": 105,
+     "2,3,1": 41,
+     "3,2": 1,
+     "3,2,1": 34
+    },
+    "denominator": 1151
+   },
+   "c1_family_correct": {
+    "count": 625.0,
+    "denominator": 1152,
+    "rate": 0.5425347222222222
+   },
+   "c2_eligible_completions": {
+    "count": 99,
+    "denominator": 1152,
+    "rate": 0.0859375
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 9,
+    "rate": 0.0
+   },
+   "completions": 1152,
+   "direct_contrast": {
+    "count": 0,
+    "denominator": 144,
+    "rate": 0.0
+   },
+   "format_contrast": {
+    "count": 1,
+    "denominator": 144,
+    "rate": 0.006944444444444444
+   },
+   "groups": 144,
+   "mean_reward": 0.7057291666666666,
+   "model_acc": {
+    "count": 6.0,
+    "denominator": 32,
+    "rate": 0.1875
+   },
+   "parse": {
+    "count": 1152,
+    "denominator": 1152,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.9267113095238096,
+   "reward_levels": {
+    "0": {
+     "count": 1,
+     "denominator": 1152,
+     "rate": 0.0008680555555555555
+    },
+    "0.5": {
+     "count": 676,
+     "denominator": 1152,
+     "rate": 0.5868055555555556
+    },
+    "1": {
+     "count": 475,
+     "denominator": 1152,
+     "rate": 0.4123263888888889
+    }
+   },
+   "routing_entropy_bits_mean": 0.25182843943426964,
+   "scale_lift": {
+    "denominator": 1152,
+    "mean": -0.00390625
+   },
+   "semantic_contrast": {
+    "count": 12,
+    "denominator": 144,
+    "rate": 0.08333333333333333
+   },
+   "valid": {
+    "count": 1151,
+    "denominator": 1152,
+    "rate": 0.9991319444444444
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 881,
+     "1": 461,
+     "2": 362,
+     "3": 214
+    },
+    "denominator": 1918
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 144,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 79,
+     "denominator": 144,
+     "rate": 0.5486111111111112
+    },
+    "all_1": {
+     "count": 52,
+     "denominator": 144,
+     "rate": 0.3611111111111111
+    },
+    "any": {
+     "count": 131,
+     "denominator": 144,
+     "rate": 0.9097222222222222
+    }
+   }
+  },
+  "goal_first": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 409,
+     "0,1": 268,
+     "0,1,2": 95,
+     "0,2": 2,
+     "0,3": 14,
+     "0,3,1": 30,
+     "0,3,2": 1,
+     "1": 4,
+     "1,0": 24,
+     "1,0,2": 1,
+     "1,2": 1,
+     "1,2,3": 1,
+     "1,3": 1,
+     "1,3,2": 9,
+     "2": 151,
+     "2,3": 39,
+     "2,3,1": 55,
+     "3": 12,
+     "3,0": 3,
+     "3,2": 26
+    },
+    "denominator": 1146
+   },
+   "c1_family_correct": {
+    "count": 702.8333333333334,
+    "denominator": 1152,
+    "rate": 0.6100983796296297
+   },
+   "c2_eligible_completions": {
+    "count": 194,
+    "denominator": 1152,
+    "rate": 0.1684027777777778
+   },
+   "c2_optimal_specialist": {
+    "count": 21,
+    "denominator": 55,
+    "rate": 0.38181818181818183
+   },
+   "completions": 1152,
+   "direct_contrast": {
+    "count": 10,
+    "denominator": 144,
+    "rate": 0.06944444444444445
+   },
+   "format_contrast": {
+    "count": 5,
+    "denominator": 144,
+    "rate": 0.034722222222222224
+   },
+   "groups": 144,
+   "mean_reward": 0.7335069444444444,
+   "model_acc": {
+    "count": 41.0,
+    "denominator": 160,
+    "rate": 0.25625
+   },
+   "parse": {
+    "count": 1152,
+    "denominator": 1152,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.8796709656084656,
+   "reward_levels": {
+    "0": {
+     "count": 6,
+     "denominator": 1152,
+     "rate": 0.005208333333333333
+    },
+    "0.5": {
+     "count": 602,
+     "denominator": 1152,
+     "rate": 0.5225694444444444
+    },
+    "1": {
+     "count": 544,
+     "denominator": 1152,
+     "rate": 0.4722222222222222
+    }
+   },
+   "routing_entropy_bits_mean": 0.3788678603492343,
+   "scale_lift": {
+    "denominator": 1152,
+    "mean": -0.014756944444444444
+   },
+   "semantic_contrast": {
+    "count": 16,
+    "denominator": 144,
+    "rate": 0.1111111111111111
+   },
+   "valid": {
+    "count": 1146,
+    "denominator": 1152,
+    "rate": 0.9947916666666666
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 847,
+     "1": 489,
+     "2": 381,
+     "3": 191
+    },
+    "denominator": 1908
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 144,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 64,
+     "denominator": 144,
+     "rate": 0.4444444444444444
+    },
+    "all_1": {
+     "count": 59,
+     "denominator": 144,
+     "rate": 0.4097222222222222
+    },
+    "any": {
+     "count": 123,
+     "denominator": 144,
+     "rate": 0.8541666666666666
+    }
+   }
+  },
+  "resource_first": {
+   "assignment_frequencies": {
+    "counts": {
+     "0": 444,
+     "0,1": 215,
+     "0,1,2": 71,
+     "0,1,3": 3,
+     "0,2,1": 3,
+     "0,3": 71,
+     "0,3,1": 1,
+     "1": 7,
+     "1,0": 5,
+     "1,2,0": 5,
+     "1,2,3": 4,
+     "1,3,0": 1,
+     "1,3,2": 3,
+     "2": 109,
+     "2,1,3": 1,
+     "2,3": 91,
+     "2,3,1": 9,
+     "3": 16,
+     "3,1,2": 1,
+     "3,2": 2,
+     "3,2,1": 90
+    },
+    "denominator": 1152
+   },
+   "c1_family_correct": {
+    "count": 693.5,
+    "denominator": 1152,
+    "rate": 0.6019965277777778
+   },
+   "c2_eligible_completions": {
+    "count": 129,
+    "denominator": 1152,
+    "rate": 0.11197916666666667
+   },
+   "c2_optimal_specialist": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "completions": 1152,
+   "direct_contrast": {
+    "count": 8,
+    "denominator": 144,
+    "rate": 0.05555555555555555
+   },
+   "format_contrast": {
+    "count": 0,
+    "denominator": 144,
+    "rate": 0.0
+   },
+   "groups": 144,
+   "mean_reward": 0.7230902777777778,
+   "model_acc": {
+    "count": 0,
+    "denominator": 0,
+    "rate": null
+   },
+   "parse": {
+    "count": 1152,
+    "denominator": 1152,
+    "rate": 1.0
+   },
+   "repeated_output_concentration_mean": 0.9010416666666666,
+   "reward_levels": {
+    "0": {
+     "count": 0,
+     "denominator": 1152,
+     "rate": 0.0
+    },
+    "0.5": {
+     "count": 638,
+     "denominator": 1152,
+     "rate": 0.5538194444444444
+    },
+    "1": {
+     "count": 514,
+     "denominator": 1152,
+     "rate": 0.4461805555555556
+    }
+   },
+   "routing_entropy_bits_mean": 0.3416928085777601,
+   "scale_lift": {
+    "denominator": 1152,
+    "mean": 0.0
+   },
+   "semantic_contrast": {
+    "count": 18,
+    "denominator": 144,
+    "rate": 0.125
+   },
+   "valid": {
+    "count": 1152,
+    "denominator": 1152,
+    "rate": 1.0
+   },
+   "worker_frequencies": {
+    "counts": {
+     "0": 819,
+     "1": 419,
+     "2": 389,
+     "3": 293
+    },
+    "denominator": 1920
+   },
+   "zero_variance": {
+    "all_0": {
+     "count": 0,
+     "denominator": 144,
+     "rate": 0.0
+    },
+    "all_0.5": {
+     "count": 69,
+     "denominator": 144,
+     "rate": 0.4791666666666667
+    },
+    "all_1": {
+     "count": 57,
+     "denominator": 144,
+     "rate": 0.3958333333333333
+    },
+    "any": {
+     "count": 126,
+     "denominator": 144,
+     "rate": 0.875
+    }
+   }
+  }
+ },
+ "design": {
+  "cohort_sha256": "7f31bd091aaa97664e71ecb86b17078861b4e28af284162ee6ac50338d661e3b",
+  "group_size": 8,
+  "groups_per_observation": 4,
+  "observations": 108,
+  "rule_sha256": "0b616b8863bf73263c11c63cd8cc1572b880e6586f15059bde642c2a397c9f7b",
+  "surface_lock_sha256": "61c4e85a53683c9e2dbcbf15f60794935a76a86d979a69412a97f44ea9f2562b"
+ },
+ "equal_cell": {
+  "c1_family_correct": 0.5848765432098766,
+  "c2_optimal_specialist": {
+   "cells": [
+    "code_atomic",
+    "fork_join"
+   ],
+   "denominator": 64,
+   "numerator": 21.0,
+   "value": 0.40384615384615385
+  },
+  "cells": [
+   "code_atomic",
+   "fork_join",
+   "lookup_atomic",
+   "lookup_math",
+   "math_atomic",
+   "math_code"
+  ],
+  "direct_contrast_rate": 0.041666666666666664,
+  "format_contrast_rate": 0.013888888888888888,
+  "mean_reward": 0.7207754629629629,
+  "model_acc": {
+   "cells": [
+    "code_atomic",
+    "fork_join",
+    "math_code"
+   ],
+   "denominator": 192,
+   "numerator": 47.0,
+   "value": 0.3385416666666667
+  },
+  "parse_rate": 1.0,
+  "scale_lift": -0.006221064814814815,
+  "semantic_contrast_rate": 0.1064814814814815,
+  "valid_rate": 0.9979745370370371,
+  "zero_variance_rate": 0.8796296296296297
+ },
+ "support_matrix": {
+  "code_atomic|bound_var|no_pair": 0,
+  "code_atomic|bound_var|tied": 24,
+  "code_atomic|bound_var|w2_favoured": 0,
+  "code_atomic|bound_var|w3_favoured": 0,
+  "code_atomic|goal_first|no_pair": 0,
+  "code_atomic|goal_first|tied": 20,
+  "code_atomic|goal_first|w2_favoured": 4,
+  "code_atomic|goal_first|w3_favoured": 0,
+  "code_atomic|resource_first|no_pair": 0,
+  "code_atomic|resource_first|tied": 24,
+  "code_atomic|resource_first|w2_favoured": 0,
+  "code_atomic|resource_first|w3_favoured": 0,
+  "fork_join|bound_var|no_pair": 0,
+  "fork_join|bound_var|tied": 20,
+  "fork_join|bound_var|w2_favoured": 4,
+  "fork_join|bound_var|w3_favoured": 0,
+  "fork_join|goal_first|no_pair": 0,
+  "fork_join|goal_first|tied": 16,
+  "fork_join|goal_first|w2_favoured": 8,
+  "fork_join|goal_first|w3_favoured": 0,
+  "fork_join|resource_first|no_pair": 0,
+  "fork_join|resource_first|tied": 24,
+  "fork_join|resource_first|w2_favoured": 0,
+  "fork_join|resource_first|w3_favoured": 0,
+  "lookup_atomic|bound_var|no_pair": 24,
+  "lookup_atomic|bound_var|tied": 0,
+  "lookup_atomic|bound_var|w2_favoured": 0,
+  "lookup_atomic|bound_var|w3_favoured": 0,
+  "lookup_atomic|goal_first|no_pair": 24,
+  "lookup_atomic|goal_first|tied": 0,
+  "lookup_atomic|goal_first|w2_favoured": 0,
+  "lookup_atomic|goal_first|w3_favoured": 0,
+  "lookup_atomic|resource_first|no_pair": 24,
+  "lookup_atomic|resource_first|tied": 0,
+  "lookup_atomic|resource_first|w2_favoured": 0,
+  "lookup_atomic|resource_first|w3_favoured": 0,
+  "lookup_math|bound_var|no_pair": 24,
+  "lookup_math|bound_var|tied": 0,
+  "lookup_math|bound_var|w2_favoured": 0,
+  "lookup_math|bound_var|w3_favoured": 0,
+  "lookup_math|goal_first|no_pair": 24,
+  "lookup_math|goal_first|tied": 0,
+  "lookup_math|goal_first|w2_favoured": 0,
+  "lookup_math|goal_first|w3_favoured": 0,
+  "lookup_math|resource_first|no_pair": 24,
+  "lookup_math|resource_first|tied": 0,
+  "lookup_math|resource_first|w2_favoured": 0,
+  "lookup_math|resource_first|w3_favoured": 0,
+  "math_atomic|bound_var|no_pair": 24,
+  "math_atomic|bound_var|tied": 0,
+  "math_atomic|bound_var|w2_favoured": 0,
+  "math_atomic|bound_var|w3_favoured": 0,
+  "math_atomic|goal_first|no_pair": 24,
+  "math_atomic|goal_first|tied": 0,
+  "math_atomic|goal_first|w2_favoured": 0,
+  "math_atomic|goal_first|w3_favoured": 0,
+  "math_atomic|resource_first|no_pair": 24,
+  "math_atomic|resource_first|tied": 0,
+  "math_atomic|resource_first|w2_favoured": 0,
+  "math_atomic|resource_first|w3_favoured": 0,
+  "math_code|bound_var|no_pair": 0,
+  "math_code|bound_var|tied": 24,
+  "math_code|bound_var|w2_favoured": 0,
+  "math_code|bound_var|w3_favoured": 0,
+  "math_code|goal_first|no_pair": 0,
+  "math_code|goal_first|tied": 16,
+  "math_code|goal_first|w2_favoured": 0,
+  "math_code|goal_first|w3_favoured": 8,
+  "math_code|resource_first|no_pair": 0,
+  "math_code|resource_first|tied": 24,
+  "math_code|resource_first|w2_favoured": 0,
+  "math_code|resource_first|w3_favoured": 0
+ },
+ "total": {
+  "assignment_frequencies": {
+   "counts": {
+    "0": 1343,
+    "0,1": 746,
+    "0,1,2": 250,
+    "0,1,3": 9,
+    "0,2": 2,
+    "0,2,1": 3,
+    "0,3": 94,
+    "0,3,1": 45,
+    "0,3,2": 1,
+    "1": 12,
+    "1,0": 34,
+    "1,0,2": 10,
+    "1,2": 1,
+    "1,2,0": 5,
+    "1,2,3": 6,
+    "1,3": 1,
+    "1,3,0": 2,
+    "1,3,2": 13,
+    "2": 345,
+    "2,1,3": 2,
+    "2,3": 235,
+    "2,3,1": 105,
+    "3": 28,
+    "3,0": 3,
+    "3,1,2": 1,
+    "3,2": 29,
+    "3,2,1": 124
+   },
+   "denominator": 3449
+  },
+  "c1_family_correct": {
+   "count": 2021.3333333333333,
+   "denominator": 3456,
+   "rate": 0.5848765432098765
+  },
+  "c2_eligible_completions": {
+   "count": 422,
+   "denominator": 3456,
+   "rate": 0.12210648148148148
+  },
+  "c2_optimal_specialist": {
+   "count": 21,
+   "denominator": 64,
+   "rate": 0.328125
+  },
+  "completions": 3456,
+  "direct_contrast": {
+   "count": 18,
+   "denominator": 432,
+   "rate": 0.041666666666666664
+  },
+  "format_contrast": {
+   "count": 6,
+   "denominator": 432,
+   "rate": 0.013888888888888888
+  },
+  "groups": 432,
+  "mean_reward": 0.7207754629629629,
+  "model_acc": {
+   "count": 47.0,
+   "denominator": 192,
+   "rate": 0.24479166666666666
+  },
+  "parse": {
+   "count": 3456,
+   "denominator": 3456,
+   "rate": 1.0
+  },
+  "repeated_output_concentration_mean": 0.9024746472663139,
+  "reward_levels": {
+   "0": {
+    "count": 7,
+    "denominator": 3456,
+    "rate": 0.002025462962962963
+   },
+   "0.5": {
+    "count": 1916,
+    "denominator": 3456,
+    "rate": 0.5543981481481481
+   },
+   "1": {
+    "count": 1533,
+    "denominator": 3456,
+    "rate": 0.4435763888888889
+   }
+  },
+  "routing_entropy_bits_mean": 0.32412970278708797,
+  "scale_lift": {
+   "denominator": 3456,
+   "mean": -0.006221064814814815
+  },
+  "semantic_contrast": {
+   "count": 46,
+   "denominator": 432,
+   "rate": 0.10648148148148148
+  },
+  "valid": {
+   "count": 3449,
+   "denominator": 3456,
+   "rate": 0.9979745370370371
+  },
+  "worker_frequencies": {
+   "counts": {
+    "0": 2547,
+    "1": 1369,
+    "2": 1132,
+    "3": 698
+   },
+   "denominator": 5746
+  },
+  "zero_variance": {
+   "all_0": {
+    "count": 0,
+    "denominator": 432,
+    "rate": 0.0
+   },
+   "all_0.5": {
+    "count": 212,
+    "denominator": 432,
+    "rate": 0.49074074074074076
+   },
+   "all_1": {
+    "count": 168,
+    "denominator": 432,
+    "rate": 0.3888888888888889
+   },
+   "any": {
+    "count": 380,
+    "denominator": 432,
+    "rate": 0.8796296296296297
+   }
+  }
+ }
+}

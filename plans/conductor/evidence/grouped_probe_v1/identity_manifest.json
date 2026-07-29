@@ -1,0 +1,15 @@
+{
+ "cache_identity": "worker_completions/slw/worker-blocks-task-last-v1",
+ "config_sha256": "4acf08f3f34acf7f46236b29259a5a0cabaa2b20e4a2169c3fcd68ca9ecc3b53",
+ "kind": "routing-dev-probe-identity-v1",
+ "manifest_sha256": "2155a8bf46c87f5288b5e8e9e76d86ae5d146f9c502bed26f381d5d93b817dd6",
+ "probe_cohort_sha256": "7f31bd091aaa97664e71ecb86b17078861b4e28af284162ee6ac50338d661e3b",
+ "probe_rule_sha256": "0b616b8863bf73263c11c63cd8cc1572b880e6586f15059bde642c2a397c9f7b",
+ "prompt_sha256": "fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070",
+ "routing_source_sha256": "5be0e94cf7ed6bb0bd1fea961c39d010cc168c12feb31ec13d493cb369cc052a",
+ "seed": "20260729",
+ "surface_lock_sha256": "61c4e85a53683c9e2dbcbf15f60794935a76a86d979a69412a97f44ea9f2562b",
+ "surface_manifest_sha256": "beb975d36c4ea4282c9a4acfd739fabb2b487a4ffc9d163a92d34623e2b58915",
+ "training_cohort_sha256": "32bfd51c794bbf1aaf72a056c42d8ea3d7100d47dae404a979c1937b654e99d9",
+ "worker_pool_fingerprint": "wp-197e286115f56e4a"
+}
