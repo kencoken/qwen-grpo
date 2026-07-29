@@ -412,3 +412,69 @@ chains the previous entry's hash. Never edit a recorded entry.
  "terminal_status": "complete"
 }
 ```
+
+## entry 12 — support_extension
+
+```json
+{
+ "budget_allocated_gpu_hours": 1.0,
+ "cohort_selection": "outcome_blind",
+ "entry_sha256": "68943a64fcf9c4c41c511bcffe50d4cbaa78fc80e91b14abae10e4750944b6fe",
+ "freeze": {
+  "config_sha256": "22de3e4e72c41c250b0298867956336552e239f7c6aa8a8ce5d790346dacdeef",
+  "extension_launch_sha256": "bd8f90ca23383312f66951fc49639aa8573eb895d88ecee9dbad19d340a555f7",
+  "freeze_sha256": "03f740af3ced6dd7dfccef558b024de23f210e0717560a13b551cbeb435a993e",
+  "original_surface_lock_sha256": "61c4e85a53683c9e2dbcbf15f60794935a76a86d979a69412a97f44ea9f2562b",
+  "scientific_design_sha256": "951e16b9b04fe83ca9f52dba1d60543b99985a293f3c43746e1607897cdd9bdd"
+ },
+ "kind": "support_extension",
+ "motivating_evidence": "253_s exposure reading; 260_f signed design Unit A",
+ "outcome_informed": true,
+ "parent": "88c037a188c6c8f5aca21e7690ea288b76dd1f64eb53f6fc2647196d32cb0eeb",
+ "previous_entry_sha256": "88c037a188c6c8f5aca21e7690ea288b76dd1f64eb53f6fc2647196d32cb0eeb",
+ "question": "Unit A: what structural direction support does the six-cell prefix 0..47 add \u2014 per-cell direction-disjoint latent buckets, renderer strata, non-goal_first coverage, and the eligible common-cell set for Q3?"
+}
+```
+
+## entry 13 — closeout
+
+```json
+{
+ "budget_allocated_gpu_hours": 0.0,
+ "budget_consumed_gpu_hours": 0.4934,
+ "closes_entry_sha256": "68943a64fcf9c4c41c511bcffe50d4cbaa78fc80e91b14abae10e4750944b6fe",
+ "entry_sha256": "b88eba021ddc42b9d0aa2ba4abc95c04347cc450f2ea7a7e749edacf691033fd",
+ "freeze": {
+  "execute_env_file_sha256": "8bb3a5a2e0a845ebe050730e66b297a7cbace4f37cf8b60e4c3d6c53c0b9ce55",
+  "rendered_observations": 864,
+  "run_record_file_sha256": "a9af3c693f44b12a9fb435ca050544ef6a3ab91b7f5939ba41411828a3512a0d",
+  "surface_lock_sha256": "ccb1c3e2db2422a82919292144c0bdecc21d2cc89cb7a3a2c69bec17a2ce6d1b",
+  "terminal_artifact_hashes": {
+   "comparator.json": "331efa8617b95b9230a26bf891a1b4741a87cbe0f7c40dc885eb7426c349d141",
+   "disclosure.json": "c68cf9c61eb235ce5fcbf4c45d96d997319260f1c98f133cd361f30bb4bb098e",
+   "execute_env_manifest.json": "8bb3a5a2e0a845ebe050730e66b297a7cbace4f37cf8b60e4c3d6c53c0b9ce55",
+   "prelaunch/declaration.json": "1f4587b17c02738497a64bb3c5957c4df736d560956a639bd69268f12180caa6",
+   "prelaunch/env_manifest.json": "ce5265d9368383097da3b5666c56c59d30ecabfe6dfdd79eb2ed1999227718c3",
+   "prelaunch/extension_launch.json": "94a98a0d415a1deeeb8851965622238a188281bda276328a9707f12600adcbc3",
+   "run_record.json": "a9af3c693f44b12a9fb435ca050544ef6a3ab91b7f5939ba41411828a3512a0d",
+   "selection.json": "e0bbb75d61aa0405c86a9a69a0e68957d5db995a389d1b34f353fe1dce546724",
+   "surface/declaration.json": "1f4587b17c02738497a64bb3c5957c4df736d560956a639bd69268f12180caa6",
+   "surface/env_manifest.json": "ce5265d9368383097da3b5666c56c59d30ecabfe6dfdd79eb2ed1999227718c3",
+   "surface/manifest.json": "8c8c1b34fcca2417c6d81f073d871ab0c93f51f0e79a6c273771ed0323777b76",
+   "surface/payoffs.jsonl": "35004276d072d3b21f28ca58b03a57f2508a48b6ab9aa01f05714627ba83f565",
+   "surface/support_launch.json": "94a98a0d415a1deeeb8851965622238a188281bda276328a9707f12600adcbc3",
+   "surface/surface_lock.json": "fc3cd5d13af582b1f3f0ecf8d85491bb09453d729146729585bc1df87f38f7af",
+   "surface/traces/traces/manifest.json": "78a2a3cdab0e5959fd6cdaad8ab9e4c7a44c71c743257aece9b62ae34ca96e0b",
+   "surface/traces/traces/steps.jsonl": "8740ec8ce43e67f6da794b0dac5b350a558bca455b2a37a3efb845920dd397d6"
+  }
+ },
+ "kind": "closeout",
+ "motivating_evidence": "measured support-extension cost",
+ "outcome_informed": true,
+ "outcome_pointer": "runs/routing-dev/support-ext-v1/run_record.json",
+ "parent": "68943a64fcf9c4c41c511bcffe50d4cbaa78fc80e91b14abae10e4750944b6fe",
+ "previous_entry_sha256": "68943a64fcf9c4c41c511bcffe50d4cbaa78fc80e91b14abae10e4750944b6fe",
+ "question": "Unit A: what structural direction support does the six-cell prefix 0..47 add \u2014 per-cell direction-disjoint latent buckets, renderer strata, non-goal_first coverage, and the eligible common-cell set for Q3?",
+ "terminal_status": "complete"
+}
+```

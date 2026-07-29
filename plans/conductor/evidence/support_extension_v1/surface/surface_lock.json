@@ -1,0 +1,21 @@
+{
+ "cache_identity": "worker_completions/slw/worker-blocks-task-last-v1",
+ "declaration_sha256": "1f4587b17c02738497a64bb3c5957c4df736d560956a639bd69268f12180caa6",
+ "driver": "tasks/routing/extension_run.py",
+ "env_manifest_file_sha256": "ce5265d9368383097da3b5666c56c59d30ecabfe6dfdd79eb2ed1999227718c3",
+ "environment_manifest_sha256": "57562b9e4bef65d25de0ebd4bcbaae1b2129bdc2123493e982a3ecdb1608fa0f",
+ "lock": "routing-dev-surface-lock-v3",
+ "lock_sha256": "ccb1c3e2db2422a82919292144c0bdecc21d2cc89cb7a3a2c69bec17a2ce6d1b",
+ "manifest_sha256": "8c8c1b34fcca2417c6d81f073d871ab0c93f51f0e79a6c273771ed0323777b76",
+ "payoffs_sha256": "35004276d072d3b21f28ca58b03a57f2508a48b6ab9aa01f05714627ba83f565",
+ "probe_rule_sha256": null,
+ "request_contract": "worker-blocks-task-last-v1",
+ "routing_source_sha256": "c33dae53c85a91447c3738e0342752b38c6d2fc5c9916d9a649cac199c11ff7d",
+ "runtime_profile_fingerprint": "rtp-8510479a336ee0dc",
+ "support": "routing-dev-support-extension-v1",
+ "support_launch_sha256": "bd8f90ca23383312f66951fc49639aa8573eb895d88ecee9dbad19d340a555f7",
+ "trace_manifest_sha256": "78a2a3cdab0e5959fd6cdaad8ab9e4c7a44c71c743257aece9b62ae34ca96e0b",
+ "trace_steps_sha256": "8740ec8ce43e67f6da794b0dac5b350a558bca455b2a37a3efb845920dd397d6",
+ "worker_pool_fingerprint": "wp-197e286115f56e4a",
+ "worker_visible_fingerprint": "wv-4e196a1c467d108b"
+}

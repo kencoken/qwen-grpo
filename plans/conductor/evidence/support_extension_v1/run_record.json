@@ -1,0 +1,57 @@
+{
+ "comparator_sha256": "9220c2c7a7efe890c60e5abbdcc3b84eecbbb971e75fa69e313e6d61888e5f1f",
+ "dispositions": {
+  "code_atomic|w2_favoured": {
+   "latents": 0,
+   "non_goal_first_latents": 0,
+   "renderer_strata": [],
+   "status": "dropped_from_q3"
+  },
+  "code_atomic|w3_favoured": {
+   "latents": 5,
+   "non_goal_first_latents": 0,
+   "renderer_strata": [
+    "goal_first"
+   ],
+   "status": "quota_constraints_unmet"
+  },
+  "fork_join|w2_favoured": {
+   "latents": 3,
+   "non_goal_first_latents": 1,
+   "renderer_strata": [
+    "bound_var",
+    "goal_first"
+   ],
+   "status": "full_quota"
+  },
+  "fork_join|w3_favoured": {
+   "latents": 0,
+   "non_goal_first_latents": 0,
+   "renderer_strata": [],
+   "status": "dropped_from_q3"
+  },
+  "math_code|w2_favoured": {
+   "latents": 0,
+   "non_goal_first_latents": 0,
+   "renderer_strata": [],
+   "status": "dropped_from_q3"
+  },
+  "math_code|w3_favoured": {
+   "latents": 7,
+   "non_goal_first_latents": 0,
+   "renderer_strata": [
+    "goal_first"
+   ],
+   "status": "quota_constraints_unmet"
+  }
+ },
+ "eligible_common_cells_q3": [],
+ "extension_launch_sha256": "bd8f90ca23383312f66951fc49639aa8573eb895d88ecee9dbad19d340a555f7",
+ "launch_entry_sha256": "68943a64fcf9c4c41c511bcffe50d4cbaa78fc80e91b14abae10e4750944b6fe",
+ "original_surface_lock_sha256": "61c4e85a53683c9e2dbcbf15f60794935a76a86d979a69412a97f44ea9f2562b",
+ "overlap_rows_verified": 1944,
+ "run": "routing-dev-support-extension-v1",
+ "selection_sha256": "c6c087757eb4673c42ad37121f9037ca57ce9488e65c4d339d78b37d07fbee34",
+ "surface_dir": "runs/routing-dev/support-ext-v1/surface",
+ "surface_lock_sha256": "ccb1c3e2db2422a82919292144c0bdecc21d2cc89cb7a3a2c69bec17a2ce6d1b"
+}

@@ -1,0 +1,11 @@
+{
+ "c_fixed_dev": 2,
+ "consumes": "scale_lift_only",
+ "development_only": true,
+ "extension_surface_lock_sha256": "ccb1c3e2db2422a82919292144c0bdecc21d2cc89cb7a3a2c69bec17a2ce6d1b",
+ "kind": "routing-dev-extension-scale-lift-comparator-v1",
+ "original_surface_lock_sha256": "61c4e85a53683c9e2dbcbf15f60794935a76a86d979a69412a97f44ea9f2562b",
+ "record_sha256": "9220c2c7a7efe890c60e5abbdcc3b84eecbbb971e75fa69e313e6d61888e5f1f",
+ "reselected": false,
+ "source_record_sha256": "c65a15e681c813549036f5cb4b99dec955d54bf701bddd3b0484b446cef149b7"
+}
