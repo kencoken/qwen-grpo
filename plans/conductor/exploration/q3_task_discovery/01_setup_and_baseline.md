@@ -98,3 +98,45 @@ executed artifact is not treated as correct merely because it parses.
 
 Execution command and result will be appended after the frozen checkpoints
 run. No new strategy task will run unless this baseline passes.
+
+## Executed known-support result
+
+Executed from clean commit
+`5d3e9227b04af4b0dce4292f1f6c1edd155b7468`:
+
+```text
+env CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  uv run python -m tasks.conductor.q3_discovery baseline \
+  --out-dir runs/q3-task-discovery/00-baseline
+```
+
+Result: **PASS**. All eight calls were cold physical singleton generations;
+the initial exact-key cache preflight found 0/8 present keys. Generation time
+was 4.816 seconds and session wall time was 7.957 seconds.
+
+| Retained case | Actual result | Required distinction |
+|---|---|---|
+| code_atomic index 0 | both correct | reproduced |
+| code_atomic index 5 | only w2 correct | w3 `E_PARSE`, reproduced |
+| code_atomic index 9 | only w3 correct | w2 `E_PARSE`, reproduced |
+| fork_join index 1 | only w2 correct | w3 legal success at the wrong value, reproduced |
+
+Both physical checkpoints were loaded and measured at 1,543,714,304 and
+3,085,938,688 parameters. Runtime identity was
+`rtp-734994ee45569c1f`; the environment recorded PyTorch 2.11.0+cu130,
+CUDA 13.0, bitsandbytes 0.49.2, transformers 5.13.0, driver 595.84, and
+NVIDIA GeForce RTX 4090.
+
+Independent verification returned `status = verified` for 4 cases and 8
+calls. Frozen artifact hashes:
+
+- calls:
+  `bac8bbd0392421a19356ceed5618d1b6b817f53a60985e7b8a3791d14137083d`;
+- compact rows:
+  `c7594df847eee8384048e1fb7397abe1965b18fc8f09f10e6376a706111fc576`;
+- summary:
+  `741b6f4956778aa80e95577b224d5dbfb5fe78bd51cf19e6359dc6b1a092f6b1`;
+- cases:
+  `1f90639c2bb9e7820c66319abf4f1dcc6a51928e6dc9a23a566b23d3ef5f03b3`.
+
+The known-support gate is satisfied. Strategy exploration is authorized.
