@@ -129,17 +129,50 @@ _EXTENSION_COMPARATOR_KEYS = frozenset({
 })
 
 
+_ORIGINAL_COMPARATOR_CACHE: dict[tuple[str, str, str],
+                                 tuple[int, str, str]] = {}
+
+
+def _verified_original_comparator() -> tuple[int, str, str]:
+    """264_s P1: the consuming boundary itself reverifies the ORIGINAL
+    Step-4 comparator — the record bytes are read from the frozen
+    evidence path and verified against the ORIGINAL locked surface
+    (full 216_s F3 rederivation), never against the extension.
+    Returns (worker, source_record_sha256, original_lock_sha256);
+    cached per (surface_dir, lock, record_path) so group scoring pays
+    the reverification once per identity."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    from .dev_support import verify_c_fixed_for
+    from .extension_run import EXTENSION_CONFIG, load_original_surface
+    key = (str(EXTENSION_CONFIG["original_surface_dir"]),
+           EXTENSION_CONFIG["original_surface_lock_sha256"],
+           str(EXTENSION_CONFIG["original_c_fixed_path"]))
+    if key not in _ORIGINAL_COMPARATOR_CACHE:
+        original_loaded = load_original_surface()
+        source = _json.loads(_Path(
+            EXTENSION_CONFIG["original_c_fixed_path"]).read_text(
+            "utf-8"))
+        worker = verify_c_fixed_for(original_loaded, source)
+        _ORIGINAL_COMPARATOR_CACHE[key] = (
+            worker, source["record_sha256"],
+            original_loaded["lock"]["lock_sha256"])
+    return _ORIGINAL_COMPARATOR_CACHE[key]
+
+
 def validate_extension_comparator_for(loaded: Mapping[str, Any],
                                       record: Mapping[str, Any]
                                       ) -> int:
-    """262_s P1-4: the extension-aware ScaleLift comparator boundary.
-    The record must use the exact closed schema, rehash, bind THIS
-    extension surface's lock, carry `reselected: false` and the
-    ScaleLift-only scope, and hold a frozen worker in {2, 3}. Full
-    source reverification against the ORIGINAL lock happens at
-    construction (`immutable_comparator`) and in
-    `verify_extension_outputs` — this consumer boundary can therefore
-    never trigger reselection."""
+    """262_s P1-4 as repaired by 264_s P1: the extension-aware
+    ScaleLift comparator boundary. The record must use the exact
+    closed schema, rehash, bind THIS extension surface's lock, carry
+    `reselected: false` and the ScaleLift-only scope, hold a frozen
+    worker in {2, 3} — AND its source/original/worker fields must
+    AGREE with the original Step-4 comparator REVERIFIED HERE against
+    the original locked surface. A correctly rehashed record with a
+    bogus source, a bogus original lock, or a flipped worker refuses
+    at consumption; selection on the extension is never invoked."""
     from .charter import content_sha256
     if not isinstance(record, Mapping) \
             or set(record) != _EXTENSION_COMPARATOR_KEYS | \
@@ -169,6 +202,21 @@ def validate_extension_comparator_for(loaded: Mapping[str, Any],
     if worker not in (2, 3):
         raise InfrastructureError(
             f"extension comparator worker {worker!r} not in {{2,3}}")
+    original_worker, source_sha, original_lock = \
+        _verified_original_comparator()
+    if record["source_record_sha256"] != source_sha:
+        raise InfrastructureError(
+            "extension comparator source is not the verified original "
+            "Step-4 record (264_s P1)")
+    if record["original_surface_lock_sha256"] != original_lock:
+        raise InfrastructureError(
+            "extension comparator original-lock field is not the "
+            "verified original lock (264_s P1)")
+    if worker != original_worker:
+        raise InfrastructureError(
+            f"extension comparator worker {worker} != the worker "
+            f"{original_worker} derived from the verified original "
+            "record (264_s P1)")
     return worker
 
 

@@ -2745,6 +2745,25 @@ def test_extension_selector_excludes_legacy_and_matches_step4(
     cell_strata = {k: v for k, v in record["yield_disclosure"].items()
                    if k.startswith("cell|")}
     assert sum(sum(v.values()) for v in cell_strata.values()) == 108
+    # 264_s P1: subtypes are EXACTLY the frozen public levels — and
+    # math_atomic templates / lookup_math signs / fork_join branch
+    # orders are represented, not collapsed
+    from tasks.conductor.baselines import OBSERVABLE_SUBTYPES
+    seen: dict[str, set] = {}
+    for key in record["yield_disclosure"]:
+        if key.startswith("subtype|"):
+            cell, label = key.split("|", 1)[1].split("+", 1)
+            seen.setdefault(cell, set()).add(label)
+    for cell, labels in seen.items():
+        assert labels <= set(OBSERVABLE_SUBTYPES[cell]), (cell, labels)
+    assert len(seen["math_atomic"]) > 1
+    assert len(seen["fork_join"]) > 1
+    # generator-side collision analysis is SEPARATELY labelled and
+    # never inside the public subtype strata
+    assert any(k.startswith("generator-side-collision|")
+               for k in record["yield_disclosure"])
+    assert not any("pnc=" in k for k in record["yield_disclosure"]
+                   if k.startswith("cell+renderer+subtype|"))
 
 
 def test_extension_scale_lift_consumer_boundary(extension_fixture):
@@ -2758,21 +2777,48 @@ def test_extension_scale_lift_consumer_boundary(extension_fixture):
         expected_lock_sha256=fx["result"]["surface_lock_sha256"])
     comparator = json.loads(
         (fx["run_dir"] / "comparator.json").read_text("utf-8"))
-    obs = next(o for o in loaded["observations"]
-               if o["cell_id"] == "code_atomic")
-    oid = obs["observation_id"]
-    assignment = next(a for (i, a) in loaded["surface"]
-                      if i == oid)
-    reward = loaded["surface"][(oid, assignment)]
+    # 264_s: an EXACT nonzero ScaleLift case — a group selecting
+    # worker 3 on an observation where the fixed-w2 collapse pays
+    # differently
+    surface = loaded["surface"]
+    oid = next(
+        o["observation_id"] for o in loaded["observations"]
+        if o["cell_id"] == "code_atomic"
+        and surface[(o["observation_id"], (3,))]
+        != surface[(o["observation_id"], (2,))])
+    reward3 = surface[(oid, (3,))]
+    expected_lift = reward3 - surface[(oid, (2,))]
+    assert expected_lift != 0.0
     group = {"observation_id": oid,
              "completions": [
                  {"parseable": True, "valid": True,
-                  "assignment": list(assignment),
-                  "reward": reward}] * 4}
+                  "assignment": [3], "reward": reward3}] * 4}
     stats = telemetry.group_stats(group, loaded=loaded,
                                   c_fixed_record=comparator)
-    assert isinstance(stats["scale_lift_mean"], float)
+    assert stats["scale_lift_mean"] == pytest.approx(expected_lift)
     assert stats["cell_id"] == "code_atomic"
+    # 264_s P1 reproduction: a correctly REHASHED record with bogus
+    # source/original locks and a flipped worker refuses AT
+    # CONSUMPTION
+    forged = dict(comparator, c_fixed_dev=3,
+                  source_record_sha256="ab" * 32,
+                  original_surface_lock_sha256="cd" * 32)
+    body = {k: v for k, v in forged.items() if k != "record_sha256"}
+    forged["record_sha256"] = charter.content_sha256(body)
+    with pytest.raises(InfrastructureError, match="264_s P1"):
+        telemetry.group_stats(group, loaded=loaded,
+                              c_fixed_record=forged)
+    # each field is independently load-bearing
+    for tamper in ({"c_fixed_dev": 3},
+                   {"source_record_sha256": "ab" * 32},
+                   {"original_surface_lock_sha256": "cd" * 32}):
+        forged = dict(comparator, **tamper)
+        body = {k: v for k, v in forged.items()
+                if k != "record_sha256"}
+        forged["record_sha256"] = charter.content_sha256(body)
+        with pytest.raises(InfrastructureError, match="264_s P1"):
+            telemetry.group_stats(group, loaded=loaded,
+                                  c_fixed_record=forged)
     # the ORIGINAL c_fixed record cannot score the extension surface
     original_record = json.loads(Path(extension_run.EXTENSION_CONFIG[
         "original_c_fixed_path"]).read_text("utf-8"))

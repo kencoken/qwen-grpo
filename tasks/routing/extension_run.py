@@ -396,32 +396,37 @@ def immutable_comparator(original_loaded: Mapping[str, Any],
 
 # --- the total selector (259_s/260_f) ------------------------------------------
 
-def observable_subtype(cell_id: str, latent_index: int,
-                       _cache: dict = {}) -> str:
-    """262_s P1-3: the observable public-factor subtype of a latent,
-    built ONLY from the existing safe public projection and the
-    public collision flags — nothing private enters the label."""
+def public_subtype_record(cell_id: str, latent_index: int,
+                          _cache: dict = {}) -> dict[str, Any]:
+    """264_s P1: the FROZEN public-subtype contract — the label comes
+    from `baselines.observable_subtype` over the sanitized
+    `public_feature_record` projection (derivable from the public
+    prompt alone; generator-only fields cannot reach it). The
+    generator-side collision flags are returned SEPARATELY and may
+    only appear under an explicitly generator-side disclosure label —
+    never inside the public subtype."""
     key = (cell_id, latent_index)
     if key not in _cache:
-        from tasks.conductor import program
+        from tasks.conductor import baselines, program
         from tasks.conductor.profiles import DEFAULT_PROFILE
-        from tasks.conductor.types import public_param_keys
         latent = program.generate_latent(
             cell_id, EXTENSION_CONFIG["namespace"], latent_index,
             DEFAULT_PROFILE).latent
-        params = latent["params"]
-        shape = params.get("shape") if isinstance(params, Mapping) \
-            else None
-        parts = [f"keys={','.join(public_param_keys(cell_id, params))}"
-                 if public_param_keys(cell_id, params) else "keys=-"]
-        if shape is not None:
-            parts.insert(0, f"shape={shape}")
-        for flag in ("public_numeric_collision",
-                     "sink_public_numeric_collision"):
-            if flag in latent:
-                parts.append(f"{flag.split('_')[0]}"
-                             f"-collision={bool(latent[flag])}")
-        _cache[key] = "|".join(parts)
+        record = baselines.public_feature_record(latent)
+        subtype = baselines.observable_subtype(cell_id, record.params)
+        if subtype not in baselines.OBSERVABLE_SUBTYPES[cell_id]:
+            raise InfrastructureError(
+                f"{cell_id}: subtype {subtype!r} outside the frozen "
+                "levels")
+        _cache[key] = {
+            "subtype": subtype,
+            "generator_side_collisions": {
+                "public_numeric_collision":
+                    bool(latent.get("public_numeric_collision")),
+                "sink_public_numeric_collision":
+                    bool(latent.get("sink_public_numeric_collision")),
+            },
+        }
     return _cache[key]
 
 
@@ -442,13 +447,15 @@ def direction_table(loaded: Mapping[str, Any]
         else:
             direction = f"w{entry['direction']}_favoured"
         latent_index = int(obs["observation_id"].split(":")[2])
+        public = public_subtype_record(obs["cell_id"], latent_index)
         table[obs["observation_id"]] = {
             "cell_id": obs["cell_id"],
             "renderer_id": obs["renderer_id"],
             "latent_index": latent_index,
             "direction": direction,
-            "subtype": observable_subtype(obs["cell_id"],
-                                          latent_index),
+            "subtype": public["subtype"],
+            "generator_side_collisions":
+                public["generator_side_collisions"],
         }
     return table
 
@@ -601,13 +608,22 @@ def run_extension_selector(loaded: Mapping[str, Any]
     # observation of the surface enters every stratum family
     yield_disclosure: dict[str, dict[str, int]] = {}
     for row in table.values():
+        collisions = row["generator_side_collisions"]
+        collision_label = (
+            f"pnc={collisions['public_numeric_collision']}"
+            f"+sink={collisions['sink_public_numeric_collision']}")
         for factor in (f"cell|{row['cell_id']}",
                        f"renderer|{row['renderer_id']}",
-                       f"subtype|{row['subtype']}",
+                       f"subtype|{row['cell_id']}+{row['subtype']}",
                        f"cell+renderer|{row['cell_id']}"
                        f"+{row['renderer_id']}",
                        f"cell+renderer+subtype|{row['cell_id']}"
-                       f"+{row['renderer_id']}+{row['subtype']}"):
+                       f"+{row['renderer_id']}+{row['subtype']}",
+                       # generator-side ANALYSIS ONLY (264_s P1):
+                       # collision flags never enter the public
+                       # subtype strata
+                       f"generator-side-collision|{row['cell_id']}"
+                       f"+{collision_label}"):
             bucket = yield_disclosure.setdefault(factor, {
                 "w2_favoured": 0, "w3_favoured": 0, "tied": 0,
                 "no_pair": 0})
