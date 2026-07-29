@@ -234,7 +234,13 @@ def materialize_dev_support(rt: Any, declaration: Mapping[str, Any],
                             environment_manifest: Mapping[str, Any],
                             expected_manifest_sha256: str,
                             ledger_path: str | Path,
-                            expected_head_sha256: str
+                            expected_head_sha256: str,
+                            _launch_validator: Any = None,
+                            _admitted_kind: str =
+                            "support_materialization",
+                            _admitted_manifest_key: str =
+                            "support_launch_sha256",
+                            deadline_monotonic: float | None = None
                             ) -> dict[str, Any]:
     """Execute the complete declared 4^S surface through a runtime
     whose identity matches the declaration, CONSUMING the externally
@@ -246,7 +252,8 @@ def materialize_dev_support(rt: Any, declaration: Mapping[str, Any],
     environment bytes beside the surface for the post-run lock to
     extend. Mirrors the frozen Stage-0 materializer."""
     from .ledger import verify_ledger_head
-    launch_manifest = validate_support_launch_manifest(
+    launch_manifest = (_launch_validator
+                       or validate_support_launch_manifest)(
         launch_manifest, declaration)
     if launch_manifest["manifest_sha256"] != expected_manifest_sha256:
         raise InfrastructureError(
@@ -258,12 +265,12 @@ def materialize_dev_support(rt: Any, declaration: Mapping[str, Any],
             "environment manifest is not the one the launch manifest "
             "binds")
     entries = verify_ledger_head(expected_head_sha256, ledger_path)
-    if not entries or entries[-1]["kind"] != "support_materialization":
+    if not entries or entries[-1]["kind"] != _admitted_kind:
         raise InfrastructureError(
-            "the ledger head is not an admitted support launch — "
-            "materialization cannot run unadmitted (220_s F1)")
+            f"the ledger head is not an admitted {_admitted_kind} "
+            "launch — materialization cannot run unadmitted (220_s F1)")
     admitted = entries[-1]
-    if admitted["freeze"].get("support_launch_sha256") != \
+    if admitted["freeze"].get(_admitted_manifest_key) != \
             launch_manifest["manifest_sha256"]:
         raise InfrastructureError(
             "the admitted launch entry names a different "
@@ -325,6 +332,12 @@ def materialize_dev_support(rt: Any, declaration: Mapping[str, Any],
     rows = []
     with PoolTraceWriter("traces", rt, base_dir=out_dir) as trace:
         for obs in observations:
+            if deadline_monotonic is not None \
+                    and time.monotonic() >= deadline_monotonic:
+                raise InfrastructureError(
+                    f"materialization deadline exceeded before "
+                    f"{obs['observation_id']} — the ceiling is "
+                    "enforced per observation (260_f Unit A)")
             gold = obs["instance"]["gold_answer"]
             pairs = _assignment_items(
                 obs, rt.profile["request_contract"])
@@ -619,9 +632,18 @@ def _load_persisted_launch(out_dir: Path, *, recompute: bool
             "(218_s F1)")
     declaration = json.loads(
         (out_dir / "declaration.json").read_text(encoding="utf-8"))
-    launch = validate_support_launch_manifest(
-        json.loads(launch_path.read_text(encoding="utf-8")),
-        declaration, recompute=recompute)
+    raw = json.loads(launch_path.read_text(encoding="utf-8"))
+    if isinstance(raw, Mapping) and raw.get("kind") == \
+            "routing-dev-extension-launch-v1":
+        # 260_f Unit A: an extension surface persists its OWN launch
+        # kind; it validates through the extension boundary (never
+        # the first-probe support contract)
+        from .extension_run import validate_extension_launch_manifest
+        launch = validate_extension_launch_manifest(
+            raw, declaration, recompute=recompute)
+    else:
+        launch = validate_support_launch_manifest(
+            raw, declaration, recompute=recompute)
     env = json.loads(env_path.read_text(encoding="utf-8"))
     verified = (validate_environment_manifest_binding(env) if recompute
                 else validate_env_self_hash(env))
@@ -668,7 +690,7 @@ def build_surface_lock(out_dir: str | Path) -> dict[str, Any]:
             declaration["worker_pool_fingerprint"],
         "request_contract": declaration["request_contract"],
         "cache_identity": declaration["cache_identity"],
-        "probe_rule_sha256": launch["probe_rule_sha256"],
+        "probe_rule_sha256": launch.get("probe_rule_sha256"),
         "routing_source_sha256": launch["routing_source_sha256"],
         "driver": launch["driver"],
         "environment_manifest_sha256":
@@ -721,7 +743,7 @@ def validate_surface_lock(out_dir: str | Path,
         "env_manifest_file_sha256":
             _sha_file(out_dir / "env_manifest.json"),
         "support": manifest["support"],
-        "probe_rule_sha256": launch["probe_rule_sha256"],
+        "probe_rule_sha256": launch.get("probe_rule_sha256"),
         "routing_source_sha256": launch["routing_source_sha256"],
         "driver": launch["driver"],
         "environment_manifest_sha256":

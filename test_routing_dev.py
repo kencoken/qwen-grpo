@@ -8,6 +8,7 @@ binding, rederived cohorts and comparators, authenticated telemetry
 with the complete equal-cell estimand, the head-bound ledger with
 same-entry admission, and the v1 checkpoint/resume contract."""
 
+import copy
 import hashlib
 import json
 import shutil
@@ -24,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import ledger, support_run, telemetry
+from tasks.routing import extension_run, ledger, support_run, telemetry
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -2245,3 +2246,442 @@ def test_probe_archive_verifier_lifecycle(step4_support, tmp_path,
         verify()
     final_path.write_text(good_final, encoding="utf-8")
     assert verify()["verdict"] == "PASS"
+
+# --- Unit A: the support-extension runner (260_f signed design) ----------------
+
+PRISTINE_EXT_CONFIG = copy.deepcopy(extension_run.EXTENSION_CONFIG)
+
+
+def ext_fake_rt(tmp_path, cohort, sabotage_w3=True):
+    """dev_fake_rt generalized to an arbitrary prefix cohort, with the
+    same sabotaged worker 3 as the Step-4 fixture so overlap rows
+    reproduce exactly."""
+    observations = dev_support.dev_cohort_observations(
+        "routing_dev", cohort, DEV_RENDERERS, "private")
+    by_task = {}
+    for obs in observations:
+        _, worker_call = perfect_worker(obs["latent"])
+        for step in program.workflow_steps(obs["latent"]):
+            request = f"Task:\n{step['subtask']}\n\nx"
+            by_task[step["subtask"]] = worker_call(None, request)
+
+    def completion(request: bytes) -> str:
+        user = request.decode("utf-8").split("\x00", 1)[1]
+        task = user.split("Task:\n", 1)[1].split("\n\n", 1)[0]
+        return by_task[task]
+
+    workers = {w: completion for w in range(4)}
+    if sabotage_w3:
+        workers[3] = _wrong_worker3
+    profile = profile_with(cache_path=str(tmp_path / "ext-cache.sqlite"),
+                           device="cpu")
+    pool = FakeFourPool(profile, workers)
+    return FourWorkerRuntime(
+        profile, pool, WorkerCompletionCache(profile["cache_path"]))
+
+
+def test_extension_freeze_binds_the_registered_design():
+    config = PRISTINE_EXT_CONFIG
+    assert config["prefix_k"] == 48
+    assert config["original_prefix_k"] == 6
+    assert config["search_cap"] == 864
+    assert config["ceiling_gpu_hours"] == 1.0
+    assert config["original_surface_lock_sha256"].startswith("61c4e85a")
+    assert config["lineage"]["parent_entry_sha256"].startswith(
+        "88c037a1")
+    assert config["lineage"]["outcome_informed"] is True
+    assert config["selector"] == {
+        "target_latents": 3, "reduced_power_latents": 2,
+        "min_renderer_strata": 2, "min_non_goal_first": 1}
+    assert extension_run.CONFIG_SHA256 == charter.content_sha256(config)
+    cohort = {cell: list(range(48)) for cell in CELL_IDS}
+    assert {cell: sorted(v) for cell, v in cohort.items()} \
+        == {cell: list(range(48)) for cell in CELL_IDS}
+
+
+def test_extension_cost_derivation_is_exact():
+    """257_s feasibility figures rederive exactly from the Step-4
+    evidence declaration and the frozen cost basis."""
+    declaration = json.loads(Path(
+        "plans/conductor/evidence/routing_dev_support_v1/surface/"
+        "declaration.json").read_text("utf-8"))
+    counts = extension_run.planned_node_counts(declaration)
+    assert counts == {"planned_node_executions": 4824,
+                      "planned_new_node_executions": 0}
+    per_index = 4824 // 6
+    assert per_index * 42 == 33768
+    assert per_index * 48 == 38592
+    derivation = extension_run.expected_cost_derivation(
+        {"planned_node_executions": 38592,
+         "planned_new_node_executions": 33768})
+    assert derivation["expected_new_gpu_hours"] == 0.5124
+    assert derivation["full_regeneration_bound_gpu_hours"] == 0.5856
+    assert derivation["expected_new_gpu_hours"] \
+        < PRISTINE_EXT_CONFIG["ceiling_gpu_hours"]
+
+
+@pytest.fixture(scope="module")
+def extension_fixture(support_run_fixture, tmp_path_factory):
+    """The full Unit-A sequence on a prefix-7 extension of the
+    prefix-6 Step-4 fixture surface: prepare → admit (with reserve on
+    record) → materialize under deadline → OVERLAP GATE → lock →
+    total selector → immutable comparator → closeout."""
+    fx = support_run_fixture
+    tmp = tmp_path_factory.mktemp("extension")
+    run_copy = tmp / "orig-run"
+    shutil.copytree(fx["run_dir"], run_copy)
+    ledger_copy = tmp / "ledger.md"
+    shutil.copy2(fx["ledger_path"], ledger_copy)
+    head = ledger.ledger_head(ledger_copy)
+    reserve_entry = support_run.record_provisional_reserve(
+        _derived_reserve(fx), run_dir=run_copy, question="q",
+        motivating_evidence="m", expected_head_sha256=head,
+        ledger_path=ledger_copy)
+    head = reserve_entry["entry_sha256"]
+
+    mp = pytest.MonkeyPatch()
+    cohort = {cell: list(range(7)) for cell in CELL_IDS}
+    for key, value in (
+            ("prefix_k", 7),
+            ("search_cap", 6 * 7 * 3),
+            ("original_surface_dir", str(run_copy / "surface")),
+            ("original_surface_lock_sha256",
+             fx["record"]["surface_lock_sha256"]),
+            ("original_c_fixed_path",
+             str(run_copy / "c_fixed_dev.json"))):
+        mp.setitem(extension_run.EXTENSION_CONFIG, key, value)
+    mp.setitem(extension_run.EXTENSION_CONFIG["lineage"],
+               "parent_entry_sha256", head)
+
+    # 259_s test obligation 2: comparator selection must be
+    # UNREACHABLE on the extension surface — every rederivation call
+    # is spied and must carry the ORIGINAL lock.
+    select_calls = []
+    real_select = dev_support.select_c_fixed_dev
+
+    def spying_select(loaded):
+        select_calls.append(loaded["lock"]["lock_sha256"])
+        return real_select(loaded)
+
+    mp.setattr(dev_support, "select_c_fixed_dev", spying_select)
+
+    pre_extension_ledger = tmp / "ledger-pre-extension.md"
+    shutil.copy2(ledger_copy, pre_extension_ledger)
+    run_dir = tmp / "ext-run"
+    manifest = extension_run.prepare_extension_launch(
+        run_dir=run_dir,
+        _runtime_factory=lambda: ext_fake_rt(tmp, cohort),
+        _environment_builder=_env_manifest)
+    result = extension_run.execute_extension(
+        run_dir=run_dir,
+        expected_manifest_sha256=manifest["manifest_sha256"],
+        expected_head_sha256=head,
+        ledger_path=ledger_copy,
+        _runtime_factory=lambda: ext_fake_rt(tmp, cohort),
+        _environment_builder=lambda: _env_manifest(
+            git_commit="feedbeef"),
+        _original_surface_dir=run_copy / "surface")
+    entries = ledger.verify_ledger_head(result["ledger_head"],
+                                        ledger_copy)
+    yield {"tmp": tmp, "run_dir": run_dir, "ledger_path": ledger_copy,
+           "manifest": manifest, "result": result,
+           "closeout": entries[-1], "launch": entries[-2],
+           "original_dir": run_copy / "surface",
+           "original_run": run_copy, "cohort": cohort,
+           "select_calls": select_calls, "admission_head": head,
+           "pre_extension_ledger": pre_extension_ledger}
+    mp.undo()
+
+
+def test_extension_end_to_end(extension_fixture):
+    fx = extension_fixture
+    result = fx["result"]
+    original_rows = extension_run._payoff_rows(fx["original_dir"])
+    assert result["overlap_rows_verified"] == len(original_rows)
+    assert result["original_surface_lock_sha256"] == \
+        extension_run.EXTENSION_CONFIG["original_surface_lock_sha256"]
+    # the comparator is the immutable Step-4 worker, never reselected
+    comparator = json.loads(
+        (fx["run_dir"] / "comparator.json").read_text("utf-8"))
+    assert comparator["c_fixed_dev"] == 2
+    assert comparator["reselected"] is False
+    assert comparator["consumes"] == "scale_lift_only"
+    # 259_s: every comparator rederivation touched ONLY the original
+    # lock — selection on the extension lock is unreachable
+    assert fx["select_calls"]
+    assert set(fx["select_calls"]) == {
+        extension_run.EXTENSION_CONFIG["original_surface_lock_sha256"]}
+    # the launch entry is a support_extension bound to the manifest
+    assert fx["launch"]["kind"] == "support_extension"
+    assert fx["launch"]["freeze"]["extension_launch_sha256"] == \
+        fx["manifest"]["manifest_sha256"]
+    assert fx["launch"]["outcome_informed"] is True
+    assert fx["launch"]["cohort_selection"] == "outcome_blind"
+    assert fx["closeout"]["terminal_status"] == "complete"
+    # the selector produced dispositions and the Q3 common-cell set
+    selection = json.loads(
+        (fx["run_dir"] / "selection.json").read_text("utf-8"))
+    assert selection["dispositions"]
+    assert isinstance(selection["eligible_common_cells_q3"], list)
+    for bucket, members in selection["direction_buckets"].items():
+        indices = [m["latent_index"] for m in members]
+        assert indices == sorted(indices)
+    # one latent never sits in two buckets (260_f §2)
+    seen = {}
+    for bucket, members in selection["direction_buckets"].items():
+        for m in members:
+            key = (m["cell_id"], m["latent_index"])
+            assert key not in seen, f"{key} in two buckets"
+            seen[key] = bucket
+    # post-hoc verification passes from the archive
+    extension_run.verify_extension_outputs(
+        fx["run_dir"], fx["closeout"],
+        original_surface_dir=fx["original_dir"])
+
+
+def test_extension_overlap_gate_refuses_divergence(extension_fixture,
+                                                   tmp_path):
+    fx = extension_fixture
+    tampered = tmp_path / "surface"
+    shutil.copytree(fx["run_dir"] / "surface", tampered)
+    rows = [json.loads(line) for line in
+            (tampered / "payoffs.jsonl").read_text("utf-8")
+            .splitlines()]
+
+    def write(rows_):
+        (tampered / "payoffs.jsonl").write_text(
+            "\n".join(json.dumps(r, sort_keys=True) for r in rows_)
+            + "\n", encoding="utf-8")
+
+    original = extension_run._payoff_rows(fx["original_dir"])
+    first_key = sorted(original)[0]
+    idx = next(i for i, r in enumerate(rows)
+               if (r["observation_id"], tuple(r["assignment"]))
+               == first_key)
+    # a changed payoff refuses
+    flipped = copy.deepcopy(rows)
+    flipped[idx]["payoff"] = 0.25
+    write(flipped)
+    with pytest.raises(InfrastructureError, match="payoff"):
+        extension_run.verify_overlap_equality(tampered,
+                                              fx["original_dir"])
+    # a changed terminal value refuses
+    flipped = copy.deepcopy(rows)
+    flipped[idx]["terminal_value"] = "tampered"
+    write(flipped)
+    with pytest.raises(InfrastructureError, match="terminal_value"):
+        extension_run.verify_overlap_equality(tampered,
+                                              fx["original_dir"])
+    # a missing overlap row refuses
+    write([r for i, r in enumerate(rows) if i != idx])
+    with pytest.raises(InfrastructureError, match="missing"):
+        extension_run.verify_overlap_equality(tampered,
+                                              fx["original_dir"])
+    # the untampered surface passes
+    write(rows)
+    assert extension_run.verify_overlap_equality(
+        tampered, fx["original_dir"]) == len(original)
+
+
+def test_extension_comparator_is_immutable(extension_fixture,
+                                           tmp_path, monkeypatch):
+    fx = extension_fixture
+    extension_loaded = dev_support.load_dev_surface(
+        fx["run_dir"] / "surface",
+        expected_lock_sha256=fx["result"]["surface_lock_sha256"])
+    # rooted in the EXTENSION surface → refuses
+    with pytest.raises(InfrastructureError, match="ORIGINAL"):
+        extension_run.immutable_comparator(
+            extension_loaded, fx["result"]["surface_lock_sha256"])
+    # a tampered original record refuses at the rehash
+    original_loaded = dev_support.load_dev_surface(
+        fx["original_dir"],
+        expected_lock_sha256=extension_run.EXTENSION_CONFIG[
+            "original_surface_lock_sha256"])
+    record = json.loads(Path(extension_run.EXTENSION_CONFIG[
+        "original_c_fixed_path"]).read_text("utf-8"))
+    record["c_fixed_dev"] = 3
+    tampered_path = tmp_path / "c_fixed_dev.json"
+    tampered_path.write_text(json.dumps(record), encoding="utf-8")
+    monkeypatch.setitem(extension_run.EXTENSION_CONFIG,
+                        "original_c_fixed_path", str(tampered_path))
+    with pytest.raises(InfrastructureError, match="rehash"):
+        extension_run.immutable_comparator(
+            original_loaded,
+            fx["result"]["surface_lock_sha256"])
+
+
+def test_extension_selection_verifier_and_tampering(extension_fixture):
+    fx = extension_fixture
+    loaded = dev_support.load_dev_surface(
+        fx["run_dir"] / "surface",
+        expected_lock_sha256=fx["result"]["surface_lock_sha256"])
+    selection = json.loads(
+        (fx["run_dir"] / "selection.json").read_text("utf-8"))
+    extension_run.verify_extension_selection(loaded, selection)
+    # a curated bucket (dropped member) refuses even when rehashed
+    tampered = copy.deepcopy(selection)
+    for bucket, members in tampered["direction_buckets"].items():
+        if members:
+            members.pop()
+            break
+    body = {k: v for k, v in tampered.items() if k != "record_sha256"}
+    tampered["record_sha256"] = charter.content_sha256(body)
+    with pytest.raises(InfrastructureError, match="rederive"):
+        extension_run.verify_extension_selection(loaded, tampered)
+    # a corrupted hash refuses first
+    corrupted = dict(selection, record_sha256="ab" * 32)
+    with pytest.raises(InfrastructureError, match="rehash"):
+        extension_run.verify_extension_selection(loaded, corrupted)
+
+
+def test_extension_deadline_enforced(extension_fixture, tmp_path):
+    """The ceiling is enforced per observation BEFORE any worker
+    executes (259_s test obligation 4)."""
+    fx = extension_fixture
+    prelaunch = fx["run_dir"] / "prelaunch"
+    declaration = json.loads(
+        (prelaunch / "declaration.json").read_text("utf-8"))
+    manifest = json.loads(
+        (prelaunch / "extension_launch.json").read_text("utf-8"))
+    frozen_env = json.loads(
+        (prelaunch / "env_manifest.json").read_text("utf-8"))
+    ledger_copy = tmp_path / "ledger.md"
+    shutil.copy2(fx["ledger_path"], ledger_copy)
+    # the fixture ledger head is the extension closeout; admit a fresh
+    # extension launch for this materialization attempt
+    head = ledger.ledger_head(ledger_copy)
+    frozen = extension_run.tranche_freeze()
+    admitted = ledger.admit_and_append_launch(
+        {"kind": "support_extension", "question": frozen["question"],
+         "motivating_evidence": "deadline test",
+         "freeze": {"extension_launch_sha256":
+                    manifest["manifest_sha256"],
+                    "scientific_design_sha256":
+                    manifest["scientific_design_sha256"]},
+         "parent": head,
+         "budget_allocated_gpu_hours":
+             manifest["budget_gpu_hours"],
+         "outcome_informed": True,
+         "cohort_selection": "outcome_blind"},
+        head, ledger_copy, launch_manifest=manifest)
+
+    class ExplodingRuntime:
+        """The real runtime identity, but any worker execution past
+        the deadline explodes."""
+
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+        def execute_batch(self, *a, **k):
+            raise AssertionError("a worker executed past the deadline")
+
+    rt = ext_fake_rt(fx["tmp"], fx["cohort"])
+    try:
+        exploding = ExplodingRuntime(rt)
+        with pytest.raises(InfrastructureError,
+                           match="deadline exceeded"):
+            dev_support.materialize_dev_support(
+                exploding, declaration, tmp_path / "surface",
+                launch_manifest=manifest,
+                environment_manifest=frozen_env,
+                expected_manifest_sha256=manifest["manifest_sha256"],
+                ledger_path=ledger_copy,
+                expected_head_sha256=admitted["entry_sha256"],
+                _launch_validator=
+                extension_run.validate_extension_launch_manifest,
+                _admitted_kind="support_extension",
+                _admitted_manifest_key="extension_launch_sha256",
+                deadline_monotonic=0.0)
+    finally:
+        rt.close()
+    assert not (tmp_path / "surface" / "payoffs.jsonl").exists()
+
+
+def test_support_extension_admission_boundary(extension_fixture,
+                                              tmp_path):
+    """260_f Unit A: the ledger admits a support extension only WITH
+    its own manifest, bound hash, budget, and design identity."""
+    fx = extension_fixture
+    ledger_copy = tmp_path / "ledger.md"
+    shutil.copy2(fx["ledger_path"], ledger_copy)
+    head = ledger.ledger_head(ledger_copy)
+    manifest = fx["manifest"]
+    base = {"kind": "support_extension", "question": "q",
+            "motivating_evidence": "m",
+            "freeze": {"extension_launch_sha256":
+                       manifest["manifest_sha256"],
+                       "scientific_design_sha256":
+                       manifest["scientific_design_sha256"]},
+            "parent": head,
+            "budget_allocated_gpu_hours":
+                manifest["budget_gpu_hours"],
+            "outcome_informed": True,
+            "cohort_selection": "outcome_blind"}
+    with pytest.raises(InfrastructureError, match="WITH its"):
+        ledger.admit_and_append_launch(dict(base), head, ledger_copy)
+    with pytest.raises(InfrastructureError,
+                       match="extension-launch manifest, not"):
+        ledger.admit_and_append_launch(
+            dict(base), head, ledger_copy,
+            launch_manifest={"kind": "other"})
+    bad = dict(base, freeze={"extension_launch_sha256": "ab" * 32,
+                             "scientific_design_sha256":
+                             manifest["scientific_design_sha256"]})
+    with pytest.raises(InfrastructureError, match="exact "
+                       "extension-launch manifest hash"):
+        ledger.admit_and_append_launch(bad, head, ledger_copy,
+                                       launch_manifest=manifest)
+    bad = dict(base, budget_allocated_gpu_hours=0.5)
+    with pytest.raises(InfrastructureError, match="differs from the "
+                       "manifest budget"):
+        ledger.admit_and_append_launch(bad, head, ledger_copy,
+                                       launch_manifest=manifest)
+    bad = dict(base)
+    bad.pop("cohort_selection")
+    with pytest.raises(InfrastructureError, match="outcome_blind"):
+        ledger.admit_and_append_launch(bad, head, ledger_copy,
+                                       launch_manifest=manifest)
+
+
+def test_extension_overlap_divergence_aborts_before_lock(
+        extension_fixture, tmp_path):
+    """259_s test obligation 1: overlap validation runs BEFORE the
+    new lock is accepted — a run whose workers diverge from the
+    original support materializes, then ABORTS at the overlap gate
+    with NO surface lock written."""
+    fx = extension_fixture
+    ledger_copy = tmp_path / "ledger.md"
+    shutil.copy2(fx["pre_extension_ledger"], ledger_copy)
+    head = ledger.ledger_head(ledger_copy)
+    run_dir = tmp_path / "divergent-run"
+    # a HEALTHY worker 3 diverges from the sabotaged original
+    manifest = extension_run.prepare_extension_launch(
+        run_dir=run_dir,
+        _runtime_factory=lambda: ext_fake_rt(
+            tmp_path, fx["cohort"], sabotage_w3=False),
+        _environment_builder=_env_manifest)
+    with pytest.raises(InfrastructureError, match="overlap gate"):
+        extension_run.execute_extension(
+            run_dir=run_dir,
+            expected_manifest_sha256=manifest["manifest_sha256"],
+            expected_head_sha256=head,
+            ledger_path=ledger_copy,
+            _runtime_factory=lambda: ext_fake_rt(
+                tmp_path, fx["cohort"], sabotage_w3=False),
+            _environment_builder=lambda: _env_manifest(
+                git_commit="feedbeef"),
+            _original_surface_dir=fx["original_dir"])
+    assert not (run_dir / "surface" / "surface_lock.json").exists()
+    entries = ledger.verify_ledger_head(
+        ledger.ledger_head(ledger_copy), ledger_copy)
+    closeout = entries[-1]
+    assert closeout["kind"] == "closeout"
+    assert closeout["terminal_status"] == "aborted"
+    assert "overlap gate" in closeout["interpretation"]
+    assert closeout["freeze"]["partial_artifact_hashes"]
+    extension_run.verify_extension_outputs(
+        run_dir, closeout, original_surface_dir=fx["original_dir"])

@@ -46,7 +46,8 @@ _OPTIONAL_ENTRY_KEYS = frozenset({
     "closes_entry_sha256", "terminal_status",
 })
 _ENTRY_KINDS = (
-    "support_materialization", "resume_validation", "grouped_probe",
+    "support_materialization", "support_extension",
+    "resume_validation", "grouped_probe",
     "engineering_smoke", "standalone_evaluation", "training_run",
     "engineering_resume", "adaptive_continuation", "fork",
     "reserve_update", "cycle_closure", "cycle_synthesis",
@@ -57,7 +58,8 @@ _ENTRY_KINDS = (
 )
 # Entry kinds that describe a GPU launch and therefore consume budget.
 _LAUNCH_KINDS = frozenset({
-    "support_materialization", "resume_validation", "grouped_probe",
+    "support_materialization", "support_extension",
+    "resume_validation", "grouped_probe",
     "engineering_smoke", "standalone_evaluation", "training_run",
     "engineering_resume", "adaptive_continuation", "fork",
     "cycle_closure",
@@ -101,7 +103,8 @@ def validate_entry(entry: Mapping[str, Any]) -> None:
     if selection is not None and selection not in _COHORT_SELECTIONS:
         raise InfrastructureError(
             f"cohort_selection must be one of {_COHORT_SELECTIONS}")
-    if entry["kind"] in ("support_materialization", "grouped_probe") \
+    if entry["kind"] in ("support_materialization",
+                         "support_extension", "grouped_probe") \
             and selection != "outcome_blind":
         raise InfrastructureError(
             f"a {entry['kind']} launch must declare "
@@ -484,6 +487,38 @@ def admit_and_append_launch(entry: Mapping[str, Any],
             raise InfrastructureError(
                 "the support entry's freeze must carry the manifest's "
                 "scientific_design_sha256 (224_s F2)")
+    if launch_kind == "support_extension":
+        # 260_f Unit A: a support EXTENSION is admitted WITH its own
+        # self-contained extension-launch manifest — it never carries
+        # the first-probe contract (257_s B3), and its freeze binds
+        # the manifest hash, the budget, and the manifest's own
+        # scientific-design identity.
+        if launch_manifest is None:
+            raise InfrastructureError(
+                "a support extension is admitted WITH its "
+                "extension-launch manifest (260_f Unit A)")
+        if launch_manifest.get("kind") != \
+                "routing-dev-extension-launch-v1":
+            raise InfrastructureError(
+                "a support extension binds an extension-launch "
+                "manifest, not a "
+                f"{launch_manifest.get('kind')!r} (260_f Unit A)")
+        named = entry["freeze"].get("extension_launch_sha256")
+        if named != launch_manifest.get("manifest_sha256") or not named:
+            raise InfrastructureError(
+                "the extension entry's freeze must name the exact "
+                "extension-launch manifest hash (260_f Unit A)")
+        if launch_max != launch_manifest.get("budget_gpu_hours"):
+            raise InfrastructureError(
+                f"the admitted budget {launch_max} differs from the "
+                f"manifest budget "
+                f"{launch_manifest.get('budget_gpu_hours')}")
+        design = entry["freeze"].get("scientific_design_sha256")
+        if not design or design != \
+                launch_manifest.get("scientific_design_sha256"):
+            raise InfrastructureError(
+                "the extension entry's freeze must carry the "
+                "manifest's scientific_design_sha256 (260_f Unit A)")
     state = envelope_state(entries, CYCLE_ENVELOPE_GPU_HOURS)
     remaining = state["remaining_gpu_hours"]
     reserve = state["reserve"]
