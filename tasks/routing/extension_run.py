@@ -420,6 +420,10 @@ def public_subtype_record(cell_id: str, latent_index: int,
                 "levels")
         _cache[key] = {
             "subtype": subtype,
+            # 266_s P1: the frozen public numeric factors, derived
+            # through the sanitized record — lossless, no bins
+            "public_numeric_values":
+                dict(record.public_numeric_values),
             "generator_side_collisions": {
                 "public_numeric_collision":
                     bool(latent.get("public_numeric_collision")),
@@ -452,8 +456,11 @@ def direction_table(loaded: Mapping[str, Any]
             "cell_id": obs["cell_id"],
             "renderer_id": obs["renderer_id"],
             "latent_index": latent_index,
+            "latent_program_id": obs["latent_program_id"],
             "direction": direction,
             "subtype": public["subtype"],
+            "public_numeric_values":
+                dict(public["public_numeric_values"]),
             "generator_side_collisions":
                 public["generator_side_collisions"],
         }
@@ -628,6 +635,23 @@ def run_extension_selector(loaded: Mapping[str, Any]
                 "w2_favoured": 0, "w3_favoured": 0, "tied": 0,
                 "no_pair": 0})
             bucket[row["direction"]] += 1
+    # 266_s P1: the LOSSLESS identity-bound public-factor
+    # disclosure — cell/renderer/latent identity, the exact frozen
+    # subtype, the derived public numeric factors (no bins), and the
+    # direction; collision and other generator-derived fields stay
+    # in their separately labelled strata, never here
+    public_factor_disclosure = {
+        oid: {
+            "cell_id": row["cell_id"],
+            "renderer_id": row["renderer_id"],
+            "latent_index": row["latent_index"],
+            "latent_program_id": row["latent_program_id"],
+            "subtype": row["subtype"],
+            "public_numeric_values":
+                dict(row["public_numeric_values"]),
+            "direction": row["direction"],
+        }
+        for oid, row in sorted(table.items())}
     record = {
         "kind": "routing-dev-extension-selection-v1",
         "config_sha256": CONFIG_SHA256,
@@ -644,6 +668,7 @@ def run_extension_selector(loaded: Mapping[str, Any]
         "eligible_common_cells_q3": common_cells,
         "renderer_reversal_diagnostics": reversals,
         "yield_disclosure": yield_disclosure,
+        "public_factor_disclosure": public_factor_disclosure,
     }
     record["record_sha256"] = content_sha256(record)
     return record

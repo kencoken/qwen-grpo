@@ -2764,6 +2764,28 @@ def test_extension_selector_excludes_legacy_and_matches_step4(
                for k in record["yield_disclosure"])
     assert not any("pnc=" in k for k in record["yield_disclosure"]
                    if k.startswith("cell+renderer+subtype|"))
+    # 266_s P1: the lossless identity-bound public-factor disclosure —
+    # every observation, exact frozen subtype + derived numeric
+    # factors, no private or generator-derived fields
+    from tasks.conductor import baselines
+    disclosure = record["public_factor_disclosure"]
+    assert len(disclosure) == 108
+    closed_keys = {"cell_id", "renderer_id", "latent_index",
+                   "latent_program_id", "subtype",
+                   "public_numeric_values", "direction"}
+    for oid, row in disclosure.items():
+        assert set(row) == closed_keys, oid
+        latent = program.generate_latent(
+            row["cell_id"], "routing_dev", row["latent_index"],
+            DEFAULT_PROFILE).latent
+        feature = baselines.public_feature_record(latent)
+        assert row["subtype"] == baselines.observable_subtype(
+            row["cell_id"], feature.params)
+        assert row["public_numeric_values"] == \
+            feature.public_numeric_values
+        assert row["latent_program_id"] == \
+            latent["latent_program_id"]
+        assert "collision" not in json.dumps(row)
 
 
 def test_extension_scale_lift_consumer_boundary(extension_fixture):
