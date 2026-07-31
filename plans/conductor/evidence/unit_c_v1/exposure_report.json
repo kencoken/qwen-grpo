@@ -1,0 +1,1395 @@
+{
+ "anchor_stability": {
+  "code_atomic": {
+   "draws": 15,
+   "reward_sum": 115.5,
+   "zero_variance_groups": 9
+  },
+  "fork_join": {
+   "draws": 15,
+   "reward_sum": 60.0,
+   "zero_variance_groups": 15
+  },
+  "lookup_atomic": {
+   "draws": 15,
+   "reward_sum": 120.0,
+   "zero_variance_groups": 15
+  },
+  "lookup_math": {
+   "draws": 15,
+   "reward_sum": 120.0,
+   "zero_variance_groups": 15
+  },
+  "math_atomic": {
+   "draws": 15,
+   "reward_sum": 60.0,
+   "zero_variance_groups": 15
+  },
+  "math_code": {
+   "draws": 15,
+   "reward_sum": 59.5,
+   "zero_variance_groups": 14
+  }
+ },
+ "c2_note": "ckpt-0 C2 eligibility on the q2_composite population is the recorded Q2 STARTING CONDITION; zero is permitted and is never a direct-C2-exposure claim (269_s \u00a75)",
+ "design": {
+  "config_sha256": "69f73a5811922bea3ef6d04a891817bec13e30729b1741f4500f2f1f2bb02d59",
+  "epochs": 5,
+  "extension_surface_lock_sha256": "ccb1c3e2db2422a82919292144c0bdecc21d2cc89cb7a3a2c69bec17a2ce6d1b",
+  "mixture_record_sha256": "0100df2bbb13447aa394d31ab87eb0dab1e0660e830186eee99028e30432bc01",
+  "total_groups": 785
+ },
+ "direct_specialist_control": {
+  "c2_eligible_completions": 199,
+  "draws": 25,
+  "reward_sum": 100.5
+ },
+ "p0_size_derived": {
+  "derivable": false,
+  "reason": "a critical cell has zero counted groups \u2014 the Q1 gate has already stopped the run"
+ },
+ "p0_sizing_rule": {
+  "cap_formula": {
+   "available_generation_seconds": "operational_ceiling_seconds - cumulative_consumed_seconds - measured_finalization_reserve_seconds - frozen_non_rollout_overhead_seconds",
+   "capped_epochs": "floor(available_generation_seconds / measured_whole_epoch_seconds)",
+   "capped_semantics": "explicitly UNDER-TARGET: claims are based on achieved projected/observed exposure (capped_epochs x measured rate, DISCLOSED), never the nominal 100-group target",
+   "if_capped_epochs_leq_zero": "stop for a reviewed scope amendment",
+   "inputs_from_smokes": [
+    "measured_whole_epoch_seconds",
+    "measured_finalization_reserve_seconds"
+   ]
+  },
+  "derivation": "derived_epochs = ceil(target * unit_c_epochs / min over critical cells of counted groups); derived_groups = derived_epochs * 157 (exact integer arithmetic)",
+  "groups_per_epoch": 157,
+  "operational_ceiling_hours": 10.0,
+  "target_q1_counted_groups_per_critical_cell": 100,
+  "wall_rate_source": "beta=1e-3 timing smoke (numerical inputs ONLY; formula and branch semantics frozen here)"
+ },
+ "per_class_draws": {
+  "anchor": 90,
+  "bridge": 420,
+  "direct_specialist_control": 25,
+  "goal_first_control": 90,
+  "q2_composite": 160
+ },
+ "preregistered_decision": "Q1 gate failed \u2014 stop-and-review (no P0 launch)",
+ "projected_zero_variance_fraction": 0.8508,
+ "q1_counted_per_epoch_measured": {
+  "code_atomic": 6.4,
+  "fork_join": 0.6,
+  "math_atomic": 0.0,
+  "math_code": 1.4
+ },
+ "q1_gate": {
+  "code_atomic": {
+   "bridge_draws": 60,
+   "counted_groups": 32,
+   "distinct_latents": [
+    8,
+    10,
+    11,
+    12
+   ],
+   "pass": true,
+   "renderers_observed": [
+    "bound_var",
+    "goal_first",
+    "resource_first"
+   ]
+  },
+  "fork_join": {
+   "bridge_draws": 60,
+   "counted_groups": 3,
+   "distinct_latents": [
+    22,
+    27
+   ],
+   "pass": true,
+   "renderers_observed": [
+    "goal_first"
+   ]
+  },
+  "math_atomic": {
+   "bridge_draws": 150,
+   "counted_groups": 0,
+   "distinct_latents": [],
+   "pass": false,
+   "renderers_observed": []
+  },
+  "math_code": {
+   "bridge_draws": 150,
+   "counted_groups": 7,
+   "distinct_latents": [
+    11,
+    12,
+    16,
+    19
+   ],
+   "pass": true,
+   "renderers_observed": [
+    "bound_var",
+    "goal_first",
+    "resource_first"
+   ]
+  }
+ },
+ "q1_gate_pass_all_cells": false,
+ "q2_blocks": {
+  "fork_join|w2_favoured": {
+   "c2_eligible_completions": 142,
+   "c2_optimal_completions": 2,
+   "code_worker_selections": {
+    "2": 66,
+    "3": 415,
+    "other": 219
+   },
+   "direct_contrast_groups": 2,
+   "draws": 90,
+   "latents": [
+    7,
+    8,
+    9,
+    11,
+    12,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    23,
+    25,
+    26,
+    28,
+    29
+   ],
+   "model_acc_denominator": 720,
+   "model_acc_numerator": 66.0,
+   "reward_sum": 351.0,
+   "semantic_contrast_groups": 2,
+   "valid_completions": 700
+  },
+  "math_code|w3_favoured": {
+   "c2_eligible_completions": 19,
+   "c2_optimal_completions": 2,
+   "code_worker_selections": {
+    "2": 61,
+    "3": 115,
+    "other": 380
+   },
+   "direct_contrast_groups": 2,
+   "draws": 70,
+   "latents": [
+    7,
+    10,
+    17,
+    24,
+    25,
+    26,
+    37
+   ],
+   "model_acc_denominator": 560,
+   "model_acc_numerator": 115.0,
+   "reward_sum": 279.0,
+   "semantic_contrast_groups": 2,
+   "valid_completions": 556
+  }
+ },
+ "q2_cold_start_gate": {
+  "min_distinct_latents": 2,
+  "min_target_selections": 8,
+  "pass": true,
+  "per_direction": {
+   "fork_join|w2_favoured": {
+    "distinct_latents": [
+     7,
+     9,
+     11,
+     15,
+     17,
+     19,
+     20,
+     25,
+     26,
+     29
+    ],
+    "pass": true,
+    "target_selections": 66,
+    "target_worker": 2
+   },
+   "math_code|w3_favoured": {
+    "distinct_latents": [
+     7,
+     10,
+     17,
+     24,
+     25,
+     26,
+     37
+    ],
+    "pass": true,
+    "target_selections": 115,
+    "target_worker": 3
+   }
+  }
+ },
+ "q2_specialist_marginals_valid_completions_diagnostic": {
+  "2": 127,
+  "3": 530
+ },
+ "strata": {
+  "code_atomic|bound_var|count|anchor": {
+   "c2_eligible_completions": 32,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 32,
+    "3": 0,
+    "other": 8
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 36.0,
+   "semantic_contrast_groups": 5,
+   "valid_completions": 40,
+   "zero_variance_groups": 0
+  },
+  "code_atomic|bound_var|count|bridge": {
+   "c2_eligible_completions": 36,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 36,
+    "3": 0,
+    "other": 4
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    10
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 2,
+   "reward_sum": 38.0,
+   "semantic_contrast_groups": 2,
+   "valid_completions": 40,
+   "zero_variance_groups": 3
+  },
+  "code_atomic|bound_var|select|bridge": {
+   "c2_eligible_completions": 2,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 2,
+    "3": 0,
+    "other": 118
+   },
+   "direct_contrast_groups": 0,
+   "draws": 15,
+   "latent_indices": [
+    8,
+    11,
+    12
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 2,
+   "reward_sum": 61.0,
+   "semantic_contrast_groups": 2,
+   "valid_completions": 120,
+   "zero_variance_groups": 13
+  },
+  "code_atomic|goal_first|count|anchor": {
+   "c2_eligible_completions": 40,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 40,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 40.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "code_atomic|goal_first|count|bridge": {
+   "c2_eligible_completions": 40,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 39,
+    "3": 1,
+    "other": 0
+   },
+   "direct_contrast_groups": 1,
+   "draws": 5,
+   "latent_indices": [
+    10
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 40.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "code_atomic|goal_first|count|direct_specialist_control": {
+   "c2_eligible_completions": 199,
+   "c2_optimal_completions": 1,
+   "code_worker_selections": {
+    "2": 198,
+    "3": 1,
+    "other": 1
+   },
+   "direct_contrast_groups": 1,
+   "draws": 25,
+   "latent_indices": [
+    9,
+    21,
+    25,
+    34,
+    39
+   ],
+   "model_acc_denominator": 200,
+   "model_acc_numerator": 1.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 100.5,
+   "semantic_contrast_groups": 1,
+   "valid_completions": 200,
+   "zero_variance_groups": 24
+  },
+  "code_atomic|goal_first|count|goal_first_control": {
+   "c2_eligible_completions": 119,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 118,
+    "3": 1,
+    "other": 1
+   },
+   "direct_contrast_groups": 1,
+   "draws": 15,
+   "latent_indices": [
+    3,
+    4,
+    6
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 119.5,
+   "semantic_contrast_groups": 1,
+   "valid_completions": 120,
+   "zero_variance_groups": 14
+  },
+  "code_atomic|goal_first|select|bridge": {
+   "c2_eligible_completions": 38,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 33,
+    "3": 5,
+    "other": 81
+   },
+   "direct_contrast_groups": 4,
+   "draws": 15,
+   "latent_indices": [
+    8,
+    11,
+    12
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 15,
+   "reward_sum": 78.5,
+   "semantic_contrast_groups": 15,
+   "valid_completions": 119,
+   "zero_variance_groups": 0
+  },
+  "code_atomic|goal_first|select|goal_first_control": {
+   "c2_eligible_completions": 92,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 76,
+    "3": 16,
+    "other": 28
+   },
+   "direct_contrast_groups": 9,
+   "draws": 15,
+   "latent_indices": [
+    1,
+    2,
+    7
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 106.0,
+   "semantic_contrast_groups": 13,
+   "valid_completions": 120,
+   "zero_variance_groups": 2
+  },
+  "code_atomic|resource_first|count|anchor": {
+   "c2_eligible_completions": 39,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 38,
+    "3": 1,
+    "other": 1
+   },
+   "direct_contrast_groups": 1,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 39.5,
+   "semantic_contrast_groups": 1,
+   "valid_completions": 40,
+   "zero_variance_groups": 4
+  },
+  "code_atomic|resource_first|count|bridge": {
+   "c2_eligible_completions": 40,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 40,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    10
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 40.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "code_atomic|resource_first|select|bridge": {
+   "c2_eligible_completions": 19,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 11,
+    "3": 8,
+    "other": 101
+   },
+   "direct_contrast_groups": 2,
+   "draws": 15,
+   "latent_indices": [
+    8,
+    11,
+    12
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 13,
+   "reward_sum": 69.5,
+   "semantic_contrast_groups": 13,
+   "valid_completions": 120,
+   "zero_variance_groups": 2
+  },
+  "fork_join|bound_var|code_first|q2_composite": {
+   "c2_eligible_completions": 25,
+   "c2_optimal_completions": 2,
+   "code_worker_selections": {
+    "2": 36,
+    "3": 69,
+    "other": 15
+   },
+   "direct_contrast_groups": 2,
+   "draws": 15,
+   "latent_indices": [
+    7,
+    20,
+    26
+   ],
+   "model_acc_denominator": 120,
+   "model_acc_numerator": 36.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 61.0,
+   "semantic_contrast_groups": 2,
+   "valid_completions": 120,
+   "zero_variance_groups": 13
+  },
+  "fork_join|bound_var|lookup_first|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 5,
+    "3": 3,
+    "other": 32
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 20.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "fork_join|bound_var|lookup_first|bridge": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 2,
+    "3": 0,
+    "other": 158
+   },
+   "direct_contrast_groups": 0,
+   "draws": 20,
+   "latent_indices": [
+    21,
+    22,
+    24,
+    27
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 80.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 160,
+   "zero_variance_groups": 20
+  },
+  "fork_join|bound_var|lookup_first|q2_composite": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 40
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    14
+   ],
+   "model_acc_denominator": 40,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 20.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "fork_join|goal_first|code_first|goal_first_control": {
+   "c2_eligible_completions": 2,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 3,
+    "3": 35,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    2
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 20.0,
+   "semantic_contrast_groups": 2,
+   "valid_completions": 38,
+   "zero_variance_groups": 2
+  },
+  "fork_join|goal_first|code_first|q2_composite": {
+   "c2_eligible_completions": 117,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 30,
+    "3": 346,
+    "other": 4
+   },
+   "direct_contrast_groups": 0,
+   "draws": 50,
+   "latent_indices": [
+    7,
+    9,
+    11,
+    15,
+    16,
+    17,
+    19,
+    23,
+    25,
+    29
+   ],
+   "model_acc_denominator": 400,
+   "model_acc_numerator": 30.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 190.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 380,
+   "zero_variance_groups": 43
+  },
+  "fork_join|goal_first|lookup_first|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 1,
+    "3": 0,
+    "other": 39
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 20.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "fork_join|goal_first|lookup_first|bridge": {
+   "c2_eligible_completions": 3,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 3,
+    "3": 0,
+    "other": 157
+   },
+   "direct_contrast_groups": 0,
+   "draws": 20,
+   "latent_indices": [
+    21,
+    22,
+    24,
+    27
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 3,
+   "reward_sum": 81.5,
+   "semantic_contrast_groups": 3,
+   "valid_completions": 160,
+   "zero_variance_groups": 17
+  },
+  "fork_join|goal_first|lookup_first|goal_first_control": {
+   "c2_eligible_completions": 8,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 9,
+    "3": 0,
+    "other": 191
+   },
+   "direct_contrast_groups": 0,
+   "draws": 25,
+   "latent_indices": [
+    3,
+    4,
+    6,
+    10,
+    13
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 104.0,
+   "semantic_contrast_groups": 7,
+   "valid_completions": 200,
+   "zero_variance_groups": 18
+  },
+  "fork_join|goal_first|lookup_first|q2_composite": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 160
+   },
+   "direct_contrast_groups": 0,
+   "draws": 20,
+   "latent_indices": [
+    8,
+    12,
+    18,
+    28
+   ],
+   "model_acc_denominator": 160,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 80.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 160,
+   "zero_variance_groups": 20
+  },
+  "fork_join|resource_first|lookup_first|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 11,
+    "3": 3,
+    "other": 26
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 20.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "fork_join|resource_first|lookup_first|bridge": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 160
+   },
+   "direct_contrast_groups": 0,
+   "draws": 20,
+   "latent_indices": [
+    21,
+    22,
+    24,
+    27
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 80.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 160,
+   "zero_variance_groups": 20
+  },
+  "lookup_atomic|bound_var|constant|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 40.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "lookup_atomic|goal_first|constant|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 40.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "lookup_atomic|resource_first|constant|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 40.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "lookup_math|bound_var|plus|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 40.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "lookup_math|goal_first|plus|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 40.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "lookup_math|resource_first|plus|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 40.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "math_atomic|bound_var|T1|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 20.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "math_atomic|bound_var|T1|bridge": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 10,
+   "latent_indices": [
+    5,
+    8
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 40.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 80,
+   "zero_variance_groups": 10
+  },
+  "math_atomic|bound_var|T2|bridge": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 20,
+   "latent_indices": [
+    1,
+    3,
+    7,
+    10
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 80.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 160,
+   "zero_variance_groups": 20
+  },
+  "math_atomic|bound_var|T3|bridge": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 20,
+   "latent_indices": [
+    2,
+    4,
+    6,
+    9
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 80.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 160,
+   "zero_variance_groups": 20
+  },
+  "math_atomic|goal_first|T1|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 20.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "math_atomic|goal_first|T1|bridge": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 10,
+   "latent_indices": [
+    5,
+    8
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 40.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 80,
+   "zero_variance_groups": 10
+  },
+  "math_atomic|goal_first|T2|bridge": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 20,
+   "latent_indices": [
+    1,
+    3,
+    7,
+    10
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 80.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 160,
+   "zero_variance_groups": 20
+  },
+  "math_atomic|goal_first|T3|bridge": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 20,
+   "latent_indices": [
+    2,
+    4,
+    6,
+    9
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 80.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 160,
+   "zero_variance_groups": 20
+  },
+  "math_atomic|resource_first|T1|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 20.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "math_atomic|resource_first|T1|bridge": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 10,
+   "latent_indices": [
+    5,
+    8
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 40.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 80,
+   "zero_variance_groups": 10
+  },
+  "math_atomic|resource_first|T2|bridge": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 20,
+   "latent_indices": [
+    1,
+    3,
+    7,
+    10
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 80.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 160,
+   "zero_variance_groups": 20
+  },
+  "math_atomic|resource_first|T3|bridge": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 0,
+    "3": 0,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 20,
+   "latent_indices": [
+    2,
+    4,
+    6,
+    9
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 80.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 160,
+   "zero_variance_groups": 20
+  },
+  "math_code|bound_var|constant|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 1,
+    "3": 39,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 20.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "math_code|bound_var|constant|bridge": {
+   "c2_eligible_completions": 1,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 8,
+    "3": 109,
+    "other": 282
+   },
+   "direct_contrast_groups": 0,
+   "draws": 50,
+   "latent_indices": [
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    18,
+    19,
+    20,
+    21
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 1,
+   "reward_sum": 200.0,
+   "semantic_contrast_groups": 1,
+   "valid_completions": 399,
+   "zero_variance_groups": 48
+  },
+  "math_code|goal_first|constant|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 26,
+    "3": 13,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 19.5,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 39,
+   "zero_variance_groups": 4
+  },
+  "math_code|goal_first|constant|bridge": {
+   "c2_eligible_completions": 3,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 21,
+    "3": 112,
+    "other": 266
+   },
+   "direct_contrast_groups": 0,
+   "draws": 50,
+   "latent_indices": [
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    18,
+    19,
+    20,
+    21
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 3,
+   "reward_sum": 201.0,
+   "semantic_contrast_groups": 3,
+   "valid_completions": 399,
+   "zero_variance_groups": 46
+  },
+  "math_code|goal_first|constant|goal_first_control": {
+   "c2_eligible_completions": 5,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 18,
+    "3": 52,
+    "other": 167
+   },
+   "direct_contrast_groups": 0,
+   "draws": 30,
+   "latent_indices": [
+    1,
+    4,
+    5,
+    6,
+    8,
+    9
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 121.0,
+   "semantic_contrast_groups": 4,
+   "valid_completions": 237,
+   "zero_variance_groups": 25
+  },
+  "math_code|goal_first|constant|q2_composite": {
+   "c2_eligible_completions": 19,
+   "c2_optimal_completions": 2,
+   "code_worker_selections": {
+    "2": 61,
+    "3": 115,
+    "other": 380
+   },
+   "direct_contrast_groups": 2,
+   "draws": 70,
+   "latent_indices": [
+    7,
+    10,
+    17,
+    24,
+    25,
+    26,
+    37
+   ],
+   "model_acc_denominator": 560,
+   "model_acc_numerator": 115.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 279.0,
+   "semantic_contrast_groups": 2,
+   "valid_completions": 556,
+   "zero_variance_groups": 64
+  },
+  "math_code|resource_first|constant|anchor": {
+   "c2_eligible_completions": 0,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 4,
+    "3": 36,
+    "other": 0
+   },
+   "direct_contrast_groups": 0,
+   "draws": 5,
+   "latent_indices": [
+    0
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 0,
+   "reward_sum": 20.0,
+   "semantic_contrast_groups": 0,
+   "valid_completions": 40,
+   "zero_variance_groups": 5
+  },
+  "math_code|resource_first|constant|bridge": {
+   "c2_eligible_completions": 4,
+   "c2_optimal_completions": 0,
+   "code_worker_selections": {
+    "2": 13,
+    "3": 324,
+    "other": 63
+   },
+   "direct_contrast_groups": 0,
+   "draws": 50,
+   "latent_indices": [
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    18,
+    19,
+    20,
+    21
+   ],
+   "model_acc_denominator": 0,
+   "model_acc_numerator": 0.0,
+   "q1_counted_groups": 3,
+   "reward_sum": 202.0,
+   "semantic_contrast_groups": 3,
+   "valid_completions": 400,
+   "zero_variance_groups": 47
+  }
+ },
+ "zero_variance_fraction": 0.8777,
+ "zero_variance_groups": 689
+}

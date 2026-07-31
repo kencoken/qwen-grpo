@@ -478,3 +478,63 @@ chains the previous entry's hash. Never edit a recorded entry.
  "terminal_status": "complete"
 }
 ```
+
+## entry 14 — standalone_evaluation
+
+```json
+{
+ "budget_allocated_gpu_hours": 1.25,
+ "cohort_selection": "outcome_conditioned",
+ "entry_sha256": "2314cfddcd7a1af4bc6fb680df7f47069bd416fa8775d653072c89d7f7955335",
+ "freeze": {
+  "attested_environment_sha256": "372f958f5e5aa30805222d338f2e90d665cf8188a7c2ac8d559d231b3f53cd42",
+  "config_sha256": "69f73a5811922bea3ef6d04a891817bec13e30729b1741f4500f2f1f2bb02d59",
+  "environment_manifest_sha256": "ad1c89f16d385153c171b42cd5044d28efd4f2c9b84ed29337054258fd39dbfe",
+  "freeze_sha256": "c90560ddecc271a41affc13cc0b4c0598b0178063c05d301a45ceb5def7052f1",
+  "identity_manifest_sha256": "6fa701a29cbb7ae3de53d9f0ba8c22bdf8989fda6efa833febcade3a608daac8",
+  "mixture_record_sha256": "0100df2bbb13447aa394d31ab87eb0dab1e0660e830186eee99028e30432bc01",
+  "session_preflight_sha256": "4a2a1e3f6e268372ac31db37e5b2943f2dc58bb0b2452167836d8c4466630bec"
+ },
+ "kind": "standalone_evaluation",
+ "motivating_evidence": "274_f frozen mixture (signed); 269_s \u00a77 option 1",
+ "outcome_informed": true,
+ "parent": "b88eba021ddc42b9d0aa2ba4abc95c04347cc450f2ea7a7e749edacf691033fd",
+ "previous_entry_sha256": "b88eba021ddc42b9d0aa2ba4abc95c04347cc450f2ea7a7e749edacf691033fd",
+ "question": "Unit C: at checkpoint zero on the frozen Unit-B schedule, is the preregistered Q1 reward-varying exposure present in all four critical cells, and does each scheduled Q2 direction show cold-start marginal support for its intended specialist?"
+}
+```
+
+## entry 15 — closeout
+
+```json
+{
+ "budget_allocated_gpu_hours": 0.0,
+ "budget_consumed_gpu_hours": 0.9768,
+ "closes_entry_sha256": "2314cfddcd7a1af4bc6fb680df7f47069bd416fa8775d653072c89d7f7955335",
+ "entry_sha256": "9f4661a84e601299951f17370eb22d9aa52f970a717b80844684240c8c550996",
+ "freeze": {
+  "exposure_report_file_sha256": "3e708f673f4d732c2bcf885c266aac44d7731f74f61b5173d4b0f0ba056ea449",
+  "freeze_sha256": "c90560ddecc271a41affc13cc0b4c0598b0178063c05d301a45ceb5def7052f1",
+  "sample_record_file_sha256": "7f52e420869a369b8d9c24801d3cfac018766a7014d29ae8673c42aeefdd44f7",
+  "terminal_artifact_hashes": {
+   "actions.jsonl": "146d80dfe65f0bccee9524b646b61207ca6e2f861c35bb8c4dc0f0f3f5156b1a",
+   "checkpoint_final_hashes.json": "cd4818390a1dac57b5b7435037e96aead2228e5863888bf7ec2dbe4ade0f1c7f",
+   "checkpoint_zero_hashes.json": "cd4818390a1dac57b5b7435037e96aead2228e5863888bf7ec2dbe4ade0f1c7f",
+   "environment_manifest.json": "e4cb639b8c17fd3f58fe23e328642f533de9852ee8e1b2dd5b3c80695e5af892",
+   "exposure_report.json": "3e708f673f4d732c2bcf885c266aac44d7731f74f61b5173d4b0f0ba056ea449",
+   "identity_manifest.json": "a0515b05f672bd9863a8e2eedf427162eb314920ce37f71185b15f3cb60e135d",
+   "sample_record.json": "7f52e420869a369b8d9c24801d3cfac018766a7014d29ae8673c42aeefdd44f7",
+   "schedule.json": "ca5d93f69c449fab09c9120f239040a017e377c204982354bf689dd9ae9aaae4",
+   "session_preflight.json": "5d6c668ca24ef6cc16026a9a65ca6fceb7bda2b2634002a7cd5842b53c28629a"
+  }
+ },
+ "kind": "closeout",
+ "motivating_evidence": "Unit-C sample complete",
+ "outcome_informed": true,
+ "outcome_pointer": "runs/routing-dev/unit-c-v1/exposure_report.json",
+ "parent": "2314cfddcd7a1af4bc6fb680df7f47069bd416fa8775d653072c89d7f7955335",
+ "previous_entry_sha256": "2314cfddcd7a1af4bc6fb680df7f47069bd416fa8775d653072c89d7f7955335",
+ "question": "Unit C: at checkpoint zero on the frozen Unit-B schedule, is the preregistered Q1 reward-varying exposure present in all four critical cells, and does each scheduled Q2 direction show cold-start marginal support for its intended specialist?",
+ "terminal_status": "complete"
+}
+```

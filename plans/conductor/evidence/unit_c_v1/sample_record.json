@@ -1,0 +1,42 @@
+{
+ "attested_environment_sha256": "372f958f5e5aa30805222d338f2e90d665cf8188a7c2ac8d559d231b3f53cd42",
+ "checkpoint_zero_adapter_sha256": "ffc07ad9acc0f4e55e734c24819cc434947f94d1759a8edfbe3920e531975f20",
+ "config_sha256": "69f73a5811922bea3ef6d04a891817bec13e30729b1741f4500f2f1f2bb02d59",
+ "counters": {
+  "consumed_groups": 785,
+  "generated_groups": 785,
+  "optimizer_updates": 785,
+  "sampled_completions": 6280
+ },
+ "environment_manifest_sha256": "ad1c89f16d385153c171b42cd5044d28efd4f2c9b84ed29337054258fd39dbfe",
+ "execution_telemetry": {
+  "deadline_seconds": 4500.0,
+  "group_accounting": {
+   "consumed_groups": 785,
+   "generated_groups": 785,
+   "optimizer_updates": 785,
+   "sampled_completions": 6280
+  },
+  "live_worker_calls": 0,
+  "peak_reserved_vram_mib": 6456,
+  "session_preflight": {
+   "floor_mib": 20000,
+   "free_mib": 23687,
+   "total_mib": 24082
+  },
+  "surface_reward_lookups": 6247,
+  "wall_seconds": 3515.6,
+  "worker_cache": "not-applicable: rewards derive from the locked payoff surface; no worker executes during the sample"
+ },
+ "final_adapter_sha256": "ffc07ad9acc0f4e55e734c24819cc434947f94d1759a8edfbe3920e531975f20",
+ "freeze_sha256": "c90560ddecc271a41affc13cc0b4c0598b0178063c05d301a45ceb5def7052f1",
+ "identity_manifest_sha256": "6fa701a29cbb7ae3de53d9f0ba8c22bdf8989fda6efa833febcade3a608daac8",
+ "mixture_record_sha256": "0100df2bbb13447aa394d31ab87eb0dab1e0660e830186eee99028e30432bc01",
+ "session_preflight": {
+  "floor_mib": 20000,
+  "free_mib": 23687,
+  "total_mib": 24082
+ },
+ "session_preflight_sha256": "4a2a1e3f6e268372ac31db37e5b2943f2dc58bb0b2452167836d8c4466630bec",
+ "tranche": "routing-dev-unit-c-exposure-v1"
+}
