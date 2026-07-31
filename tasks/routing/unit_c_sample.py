@@ -105,16 +105,45 @@ UNIT_C_CONFIG: dict[str, Any] = {
     # 273_s caution: conservative stop-bound; expected ~0.944 GPU-h
     "ceiling_gpu_hours": 1.25,
     "run_root": "runs/routing-dev/unit-c-v1",
+    # 276_s B2, decided EXPLICITLY (reviewer option a): Q2 is
+    # authorized by a MEASURABLE cold-start support gate, not by
+    # schedule delivery (delivery is a verifier invariant, not
+    # empirical validation). The gate tests MARGINAL SPECIALIST
+    # SUPPORT — both Code workers must actually be sampled at the
+    # Code node among q2-composite valid completions — which CAN
+    # fail on a completed run and makes the signed Q2-fail ->
+    # maximum-Q1-only branch reachable. Ckpt-0 C2-eligibility stays
+    # a REPORTED starting condition (zero permitted, 269_s §5); the
+    # direct-specialist control is excluded from the gate.
+    "q2_cold_start_gate": {
+        "min_completions_selecting_each_specialist": 8,
+        "population": "q2_composite valid completions only",
+    },
     # the preregistered decision rule: outcomes select the P0 scope
     # ONLY (plus measured rates as P0-freeze inputs)
     "decision_rule": {
-        "q1_pass_all_cells": "Q1 authorized",
         "q1_fail_any_cell": "stop-and-review (no P0 launch)",
-        "q2": ("authorized as the hierarchical-unlocking experiment "
-               "iff the schedule delivered exactly; ckpt-0 "
-               "C2-eligibility is the recorded starting condition, "
-               "zero permitted"),
+        "q1_pass_and_q2_gate_pass":
+            "Q1 + Q2 hierarchical-unlocking authorized",
+        "q1_pass_and_q2_gate_fail":
+            "maximum permissible scope Q1-only (269_s matrix)",
         "mixture_change": "a NEW B/C iteration with new identities",
+    },
+    # 276_s B3: the DETERMINISTIC sizing mapping, frozen now — the
+    # P0 freeze EXECUTES it (no free choice left): epochs =
+    # ceil(target / min over critical cells of measured Q1-counted
+    # groups per epoch); groups = epochs x 157; admissibility of
+    # groups x beta-smoke seconds-per-group against the envelope is
+    # checked at the P0 freeze, and a budget cap must be DISCLOSED
+    # as a scope shortfall, never silently absorbed.
+    "p0_sizing_rule": {
+        "target_q1_counted_groups_per_critical_cell": 100,
+        "epochs_formula": ("ceil(target / min_cell_q1_counted_"
+                           "per_epoch_measured)"),
+        "groups_per_epoch": 157,
+        "wall_rate_source": "beta=1e-3 timing smoke",
+        "budget_check": "at the P0 freeze against the envelope; "
+                        "caps disclosed as scope shortfall",
     },
     "lineage": {
         "parent_entry_sha256":
@@ -283,10 +312,25 @@ def q1_counted(cell: str, rewards: list, assignments: list) -> bool:
     return has_r1_fc and has_half_lower
 
 
+def _code_node_index(cell: str) -> int | None:
+    from tasks.conductor.stage1 import NODE_FAMILIES
+    families = NODE_FAMILIES[cell]
+    nodes = sorted(families)
+    for i, node in enumerate(nodes):
+        if families[node] == "code":
+            return i
+    return None
+
+
 def build_exposure_report(run_root: str | Path) -> dict[str, Any]:
     """The preregistered evaluation, rebuilt entirely from persisted
     trace rows against the locked surface, the frozen mixture, and
-    the frozen selection disclosure."""
+    the frozen selection disclosure. 276_s repairs: Q2 statistics are
+    computed on the q2_composite population ONLY (per-direction
+    blocks; the direct-specialist control is separate); Q2
+    authorization comes from the MEASURABLE cold-start marginal-
+    support gate, never schedule delivery; the registered
+    cell x renderer x subtype strata carry raw denominators."""
     from .probe_run import groups_from_trace
     run_root = Path(run_root)
     loaded = load_locked_extension()
@@ -296,18 +340,34 @@ def build_exposure_report(run_root: str | Path) -> dict[str, Any]:
     disclosure = selection["public_factor_disclosure"]
     classes = mixture["class_assignment"]
     trace_rows = read_trace(run_root / "actions.jsonl")
-    # authenticated group reconstruction (probe rev3 boundary; the
-    # comparator flows through the extension-aware ScaleLift entry)
     groups = groups_from_trace(trace_rows, loaded, comparator)
 
+    config = UNIT_C_CONFIG
     per_class: dict[str, int] = {}
     q1_by_cell: dict[str, dict[str, Any]] = {
         cell: {"counted_groups": 0, "latents": set(),
                "renderers": set(), "bridge_draws": 0}
         for cell in CRITICAL_CELLS}
-    q2_draws = {"math_code|w3_favoured": 0, "fork_join|w2_favoured": 0}
-    c2_eligible_completions = 0
+    # 276_s B1: per-direction Q2 blocks over q2_composite rows ONLY
+    q2_blocks: dict[str, dict[str, Any]] = {
+        "math_code|w3_favoured": None, "fork_join|w2_favoured": None}
+    for key in q2_blocks:
+        q2_blocks[key] = {
+            "draws": 0, "latents": set(),
+            "valid_completions": 0, "c2_eligible_completions": 0,
+            "c2_optimal_completions": 0,
+            "model_acc_numerator": 0.0, "model_acc_denominator": 0,
+            "code_worker_selections": {"2": 0, "3": 0, "other": 0},
+            "reward_sum": 0.0, "direct_contrast_groups": 0,
+            "semantic_contrast_groups": 0,
+        }
+    control_block = {"draws": 0, "c2_eligible_completions": 0,
+                     "reward_sum": 0.0}
+    anchor_block: dict[str, dict[str, Any]] = {}
+    q2_specialist_marginals = {"2": 0, "3": 0}
+    strata: dict[str, dict[str, Any]] = {}
     zero_variance = 0
+
     for row, group in zip(trace_rows, groups):
         oid = row["observation_id"]
         cls = classes.get(oid)
@@ -315,25 +375,94 @@ def build_exposure_report(run_root: str | Path) -> dict[str, Any]:
             raise InfrastructureError(
                 f"{oid}: scheduled row is not in the frozen mixture")
         per_class[cls] = per_class.get(cls, 0) + 1
-        cell = disclosure[oid]["cell_id"]
-        rewards = [r for r in row["rewards"]]
-        if len(set(rewards)) <= 1:
+        info = disclosure[oid]
+        cell = info["cell_id"]
+        rewards = list(row["rewards"])
+        is_zero_variance = len(set(rewards)) <= 1
+        if is_zero_variance:
             zero_variance += 1
+        counted = (cls == "bridge" and cell in CRITICAL_CELLS
+                   and q1_counted(cell, row["rewards"],
+                                  row["assignments"]))
+        # the registered cell x renderer x subtype strata with raw
+        # denominators (276_s B3; the 274_f supersession's reporting
+        # obligation)
+        stratum_key = (f"{cell}|{info['renderer_id']}"
+                       f"|{info['subtype']}|{cls}")
+        stratum = strata.setdefault(stratum_key, {
+            "draws": 0, "valid_completions": 0, "reward_sum": 0.0,
+            "zero_variance_groups": 0, "q1_counted_groups": 0,
+            "code_worker_selections": {"2": 0, "3": 0, "other": 0}})
+        stratum["draws"] += 1
+        stratum["zero_variance_groups"] += 1 if is_zero_variance else 0
+        stratum["q1_counted_groups"] += 1 if counted else 0
+        code_index = _code_node_index(cell)
+        for assignment in row["assignments"]:
+            if assignment is None:
+                continue
+            stratum["valid_completions"] += 1
+            if code_index is not None:
+                worker = assignment[code_index]
+                bucket = str(worker) if worker in (2, 3) else "other"
+                stratum["code_worker_selections"][bucket] += 1
+        stratum["reward_sum"] = round(
+            stratum["reward_sum"] + sum(rewards), 4)
+
         if cls == "bridge" and cell in CRITICAL_CELLS:
             entry = q1_by_cell[cell]
             entry["bridge_draws"] += 1
-            if q1_counted(cell, row["rewards"], row["assignments"]):
+            if counted:
                 entry["counted_groups"] += 1
-                entry["latents"].add(disclosure[oid]["latent_index"])
-                entry["renderers"].add(disclosure[oid]["renderer_id"])
-        if cls == "q2_composite":
-            key = f"{cell}|{disclosure[oid]['direction']}"
-            if key in q2_draws:
-                q2_draws[key] += 1
-        if group["c2_eligible"] is not None:
-            c2_eligible_completions += group["c2_eligible"]
+                entry["latents"].add(info["latent_index"])
+                entry["renderers"].add(info["renderer_id"])
+        elif cls == "q2_composite":
+            key = f"{cell}|{info['direction']}"
+            block = q2_blocks.get(key)
+            if block is None:
+                raise InfrastructureError(
+                    f"{oid}: q2_composite row outside the scheduled "
+                    f"directions ({key})")
+            block["draws"] += 1
+            block["latents"].add(info["latent_index"])
+            block["reward_sum"] = round(
+                block["reward_sum"] + sum(rewards), 4)
+            block["direct_contrast_groups"] += \
+                1 if group["direct_contrast"] else 0
+            block["semantic_contrast_groups"] += \
+                1 if group["semantic_contrast"] else 0
+            block["c2_eligible_completions"] += group["c2_eligible"]
+            if group["c2_optimal"] is not None:
+                block["c2_optimal_completions"] += group["c2_optimal"]
+            if group["model_acc"] is not None:
+                num, den = group["model_acc"]
+                block["model_acc_numerator"] = round(
+                    block["model_acc_numerator"] + num, 4)
+                block["model_acc_denominator"] += den
+            for assignment in row["assignments"]:
+                if assignment is None:
+                    continue
+                block["valid_completions"] += 1
+                worker = assignment[code_index]
+                bucket = str(worker) if worker in (2, 3) else "other"
+                block["code_worker_selections"][bucket] += 1
+                if worker in (2, 3):
+                    q2_specialist_marginals[str(worker)] += 1
+        elif cls == "direct_specialist_control":
+            control_block["draws"] += 1
+            control_block["c2_eligible_completions"] += \
+                group["c2_eligible"]
+            control_block["reward_sum"] = round(
+                control_block["reward_sum"] + sum(rewards), 4)
+        elif cls == "anchor":
+            entry = anchor_block.setdefault(cell, {
+                "draws": 0, "reward_sum": 0.0,
+                "zero_variance_groups": 0})
+            entry["draws"] += 1
+            entry["reward_sum"] = round(
+                entry["reward_sum"] + sum(rewards), 4)
+            entry["zero_variance_groups"] += \
+                1 if is_zero_variance else 0
 
-    config = UNIT_C_CONFIG
     criterion_src = MIXTURE_CONFIG["q1_gate_criterion"]
     q1_gate: dict[str, Any] = {}
     q1_pass = True
@@ -352,11 +481,36 @@ def build_exposure_report(run_root: str | Path) -> dict[str, Any]:
             "renderers_observed": sorted(entry["renderers"]),
             "pass": cell_pass,
         }
+    # measured Q1 rates: the frozen p0_sizing_rule inputs
+    q1_counted_per_epoch = {
+        cell: round(q1_gate[cell]["counted_groups"]
+                    / config["epochs"], 4)
+        for cell in CRITICAL_CELLS}
+    # 276_s B2: the MEASURABLE cold-start gate
+    gate_floor = config["q2_cold_start_gate"][
+        "min_completions_selecting_each_specialist"]
+    q2_gate_pass = all(
+        q2_specialist_marginals[w] >= gate_floor for w in ("2", "3"))
+    for key, block in q2_blocks.items():
+        block["latents"] = sorted(block["latents"])
     expected_q2 = {
         "math_code|w3_favoured": 14 * config["epochs"],
         "fork_join|w2_favoured": 18 * config["epochs"],
     }
-    schedule_delivered = q2_draws == expected_q2
+    delivered = {key: q2_blocks[key]["draws"] for key in expected_q2}
+    if delivered != expected_q2:
+        raise InfrastructureError(
+            f"q2 composite draws {delivered} != the frozen schedule "
+            f"{expected_q2} — the verifier invariant failed")
+    if q1_pass and q2_gate_pass:
+        decision = ("Q1 + Q2 hierarchical-unlocking authorized "
+                    "(cold-start marginal-support gate passed)")
+    elif q1_pass:
+        decision = ("maximum permissible scope Q1-only — the "
+                    "cold-start marginal-support gate failed "
+                    "(269_s matrix)")
+    else:
+        decision = "Q1 gate failed — stop-and-review (no P0 launch)"
     report = {
         "design": {
             "config_sha256": CONFIG_SHA256,
@@ -369,23 +523,30 @@ def build_exposure_report(run_root: str | Path) -> dict[str, Any]:
         "per_class_draws": dict(sorted(per_class.items())),
         "q1_gate": q1_gate,
         "q1_gate_pass_all_cells": q1_pass,
-        "q2_composite_draws": q2_draws,
-        "q2_schedule_delivered_exactly": schedule_delivered,
-        "ckpt0_c2_eligible_completions": c2_eligible_completions,
-        "c2_note": ("ckpt-0 C2 eligibility is the recorded Q2 "
-                    "STARTING CONDITION; zero is permitted and is "
-                    "never a direct-C2-exposure claim (269_s §5)"),
+        "q1_counted_per_epoch_measured": q1_counted_per_epoch,
+        "p0_sizing_rule": dict(config["p0_sizing_rule"]),
+        # 276_s B1: q2_composite population ONLY, per direction
+        "q2_blocks": q2_blocks,
+        "q2_specialist_marginals_valid_completions":
+            q2_specialist_marginals,
+        "q2_cold_start_gate": {
+            "floor": gate_floor, "pass": q2_gate_pass},
+        "direct_specialist_control": control_block,
+        "c2_note": ("ckpt-0 C2 eligibility on the q2_composite "
+                    "population is the recorded Q2 STARTING "
+                    "CONDITION; zero is permitted and is never a "
+                    "direct-C2-exposure claim (269_s §5)"),
+        "anchor_stability": {
+            cell: dict(entry) for cell, entry in
+            sorted(anchor_block.items())},
+        "strata": {key: dict(value) for key, value in
+                   sorted(strata.items())},
         "zero_variance_groups": zero_variance,
         "zero_variance_fraction": round(
             zero_variance / len(groups), 4),
         "projected_zero_variance_fraction":
             mixture["projections"]["expected_zero_variance_fraction"],
-        "preregistered_decision": (
-            ("Q1 authorized; Q2 authorized as the hierarchical-"
-             "unlocking experiment" if schedule_delivered else
-             "schedule NOT delivered exactly — stop-and-review")
-            if q1_pass else
-            "Q1 gate failed — stop-and-review (no P0 launch)"),
+        "preregistered_decision": decision,
     }
     return report
 

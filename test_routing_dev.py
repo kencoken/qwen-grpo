@@ -3202,7 +3202,8 @@ def test_unit_c_schedule_and_identity(unit_c_fixture):
     assert comparator["reselected"] is False
 
 
-def _unit_c_synthetic_archive(fx, run_root, sabotage_cell=None):
+def _unit_c_synthetic_archive(fx, run_root, sabotage_cell=None,
+                              q2_specialists=True):
     """A full synthetic 785-row archive: bridge groups carry the Q1
     event (except `sabotage_cell`), everything else is a uniform
     valid group; rewards authenticate against the locked surface."""
@@ -3227,8 +3228,16 @@ def _unit_c_synthetic_archive(fx, run_root, sabotage_cell=None):
 
     plan_cache = {}
 
-    def group_plan(oid, cell, positions, num_steps, want_q1):
-        key = (oid, want_q1)
+    def code_idx(cell):
+        fams = NODE_FAMILIES[cell]
+        nodes = sorted(fams)
+        for i, node in enumerate(nodes):
+            if fams[node] == "code":
+                return i
+        return None
+
+    def group_plan(oid, cell, positions, num_steps, mode):
+        key = (oid, mode)
         if key in plan_cache:
             return plan_cache[key]
         candidates = []
@@ -3241,12 +3250,17 @@ def _unit_c_synthetic_archive(fx, run_root, sabotage_cell=None):
                 continue
             candidates.append((list(action), list(semantic), payoff,
                                fc(cell, semantic)))
-        if want_q1:
+        if mode == "q1":
             r1 = next(c for c in candidates
                       if c[2] == 1.0 and c[3] == 1.0)
             half = next(c for c in candidates
                         if c[2] == 0.5 and c[3] < 1.0)
             plan = [r1] * 4 + [half] * 4
+        elif mode == "specialists":
+            idx = code_idx(cell)
+            w2 = next(c for c in candidates if c[1][idx] == 2)
+            w3 = next(c for c in candidates if c[1][idx] == 3)
+            plan = [w2] * 4 + [w3] * 4
         else:
             first = candidates[0]
             plan = [first] * 8
@@ -3258,11 +3272,17 @@ def _unit_c_synthetic_archive(fx, run_root, sabotage_cell=None):
         oid = row["observation_id"]
         cell = disclosure[oid]["cell_id"]
         positions = json.loads(row["positions"])
-        want_q1 = (classes.get(oid) == "bridge"
-                   and cell in unit_c_sample.CRITICAL_CELLS
-                   and cell != sabotage_cell)
+        cls = classes.get(oid)
+        if cls == "bridge" and cell in unit_c_sample.CRITICAL_CELLS \
+                and cell != sabotage_cell:
+            mode = "q1"
+        elif cls in ("q2_composite", "direct_specialist_control") \
+                and q2_specialists:
+            mode = "specialists"
+        else:
+            mode = "uniform"
         plan = group_plan(oid, cell, positions, row["num_steps"],
-                          want_q1)
+                          mode)
         lines.append(json.dumps({
             "global_group_index": i, "observation_id": oid,
             "completions": [json.dumps({"worker_ids": a})
@@ -3286,11 +3306,50 @@ def test_unit_c_exposure_report_and_verifier(unit_c_fixture,
     for cell, gate in report["q1_gate"].items():
         assert gate["pass"] is True
         assert len(gate["distinct_latents"]) >= 2
-    assert report["q2_composite_draws"] == {
-        "math_code|w3_favoured": 70, "fork_join|w2_favoured": 90}
-    assert report["q2_schedule_delivered_exactly"] is True
-    assert "Q1 authorized" in report["preregistered_decision"]
+    # 276_s B1: per-direction Q2 blocks over q2_composite ONLY
+    assert report["q2_blocks"]["math_code|w3_favoured"]["draws"] == 70
+    assert report["q2_blocks"]["fork_join|w2_favoured"]["draws"] == 90
+    for block in report["q2_blocks"].values():
+        assert block["code_worker_selections"]["2"] >= 8
+        assert block["code_worker_selections"]["3"] >= 8
+    # 276_s B2: the measurable cold-start gate authorizes Q2
+    assert report["q2_cold_start_gate"]["pass"] is True
+    assert report["preregistered_decision"].startswith(
+        "Q1 + Q2 hierarchical-unlocking authorized")
     assert report["per_class_draws"]["bridge"] == 84 * 5
+    # 276_s B3: the registered strata carry raw denominators; the
+    # sizing inputs and frozen rule are in the report
+    assert any(k.count("|") == 3 for k in report["strata"])
+    sample_stratum = next(iter(report["strata"].values()))
+    assert {"draws", "valid_completions", "zero_variance_groups",
+            "q1_counted_groups",
+            "code_worker_selections"} <= set(sample_stratum)
+    assert report["anchor_stability"]
+    assert set(report["q1_counted_per_epoch_measured"]) == set(
+        unit_c_sample.CRITICAL_CELLS)
+    assert report["p0_sizing_rule"][
+        "target_q1_counted_groups_per_critical_cell"] == 100
+
+    # 276_s B1 regression: non-Q2 eligibility positive while the Q2
+    # population's eligibility is ZERO — and the cold-start gate
+    # fails, reaching the signed Q1-only branch (276_s B2)
+    fail_root = tmp_path / "unit-c-q2fail"
+    _unit_c_synthetic_archive(fx, fail_root, q2_specialists=False)
+    fail_report = unit_c_sample.build_exposure_report(fail_root)
+    q2_eligible = sum(
+        block["c2_eligible_completions"]
+        for block in fail_report["q2_blocks"].values())
+    assert q2_eligible == 0
+    # bridge rows DO carry eligible completions (fc incl. the Code
+    # specialist) — the old population bug would have reported them
+    bridge_eligible_completions = sum(
+        s["code_worker_selections"]["2"]
+        + s["code_worker_selections"]["3"]
+        for key, s in fail_report["strata"].items()
+        if key.endswith("|bridge"))
+    assert bridge_eligible_completions > 0
+    assert fail_report["q2_cold_start_gate"]["pass"] is False
+    assert "Q1-only" in fail_report["preregistered_decision"]
 
     # the failure branch: a silent math_code bridge cell stops
     sab_root = tmp_path / "unit-c-sab"
@@ -3371,7 +3430,8 @@ def test_unit_c_exposure_report_and_verifier(unit_c_fixture,
         run_root, identity["manifest_sha256"],
         record["attested_environment_sha256"])
     assert result["verdict"] == "PASS"
-    assert "Q1 authorized" in result["decision"]
+    assert result["decision"].startswith(
+        "Q1 + Q2 hierarchical-unlocking authorized")
     # anchors refuse substitution
     with pytest.raises(InfrastructureError, match="REVIEWED"):
         unit_c_sample.verify_unit_c_run(
