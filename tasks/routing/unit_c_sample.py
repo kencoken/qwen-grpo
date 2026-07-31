@@ -105,6 +105,13 @@ UNIT_C_CONFIG: dict[str, Any] = {
                               "effective parameter updates; exact "
                               "checkpoint-zero adapter equality"),
     "full_determinism": True,
+    # 280_s P2: the COMPLETE validated adapter key set — both
+    # persisted maps must carry exactly these 504 LoRA keys
+    "lora_key_set": {
+        "count": 504,
+        "sorted_keys_sha256":
+            "e44ecb9caf0be396aaaceae6802dbaab9209677103ba263c89ca9a7ea65f6215",
+    },
     "min_free_vram_mib": 20000,
     # 273_s caution: conservative stop-bound; expected ~0.944 GPU-h
     "ceiling_gpu_hours": 1.25,
@@ -160,17 +167,31 @@ UNIT_C_CONFIG: dict[str, Any] = {
                        "157 (exact integer arithmetic)"),
         "groups_per_epoch": 157,
         "operational_ceiling_hours": 10.0,
-        "cap_policy": ("if the derived size exceeds the 10-hour "
-                       "operational ceiling at the beta-smoke wall "
-                       "rate: run the exact WHOLE-EPOCH floor of the "
-                       "ceiling, with the predefined scope-shortfall "
-                       "interpretation — expected counted groups per "
-                       "cell = capped_epochs x measured rate, "
-                       "DISCLOSED, claims sized accordingly; if the "
-                       "whole-epoch floor is ZERO epochs: stop for a "
-                       "reviewed scope amendment"),
-        "wall_rate_source": "beta=1e-3 timing smoke (seconds/group "
-                            "ONLY; branch semantics frozen here)",
+        # 280_s P1: the ceiling INCLUDES everything the charter
+        # charges to it — the cap can never allocate all ten hours
+        # to rollout generation
+        "cap_formula": {
+            "available_generation_seconds": (
+                "operational_ceiling_seconds - "
+                "cumulative_consumed_seconds - "
+                "measured_finalization_reserve_seconds - "
+                "frozen_non_rollout_overhead_seconds"),
+            "capped_epochs": ("floor(available_generation_seconds / "
+                              "measured_whole_epoch_seconds)"),
+            "if_capped_epochs_leq_zero":
+                "stop for a reviewed scope amendment",
+            "capped_semantics": (
+                "explicitly UNDER-TARGET: claims are based on "
+                "achieved projected/observed exposure (capped_epochs "
+                "x measured rate, DISCLOSED), never the nominal "
+                "100-group target"),
+            "inputs_from_smokes": [
+                "measured_whole_epoch_seconds",
+                "measured_finalization_reserve_seconds"],
+        },
+        "wall_rate_source": "beta=1e-3 timing smoke (numerical "
+                            "inputs ONLY; formula and branch "
+                            "semantics frozen here)",
     },
     "lineage": {
         "parent_entry_sha256":
@@ -343,8 +364,8 @@ def q1_counted(cell: str, rewards: list, assignments: list) -> bool:
 def derive_p0_size(counted_by_cell: Mapping[str, int]
                    ) -> dict[str, Any]:
     """278_s P1: the mechanical integer sizing derivation. The beta
-    smoke later supplies seconds-per-group ONLY — the branch
-    semantics live in the frozen cap_policy."""
+    smoke later supplies numerical inputs ONLY — the branch
+    semantics live in the frozen cap_formula."""
     rule = UNIT_C_CONFIG["p0_sizing_rule"]
     target = rule["target_q1_counted_groups_per_critical_cell"]
     epochs = UNIT_C_CONFIG["epochs"]
@@ -365,7 +386,36 @@ def derive_p0_size(counted_by_cell: Mapping[str, int]
         "derived_groups": derived_groups,
         "operational_ceiling_hours":
             rule["operational_ceiling_hours"],
-        "cap_policy": rule["cap_policy"],
+        "cap_formula": dict(rule["cap_formula"]),
+    }
+
+
+def derive_p0_cap(*, cumulative_consumed_seconds: float,
+                  measured_finalization_reserve_seconds: float,
+                  frozen_non_rollout_overhead_seconds: float,
+                  measured_whole_epoch_seconds: float
+                  ) -> dict[str, Any]:
+    """280_s P1: the frozen cap formula, executable. The numerical
+    inputs arrive from later smokes; the formula and the branch
+    semantics live here and cannot move."""
+    import math as _math
+    rule = UNIT_C_CONFIG["p0_sizing_rule"]
+    if measured_whole_epoch_seconds <= 0:
+        raise InfrastructureError(
+            "measured whole-epoch duration must be positive")
+    available = (rule["operational_ceiling_hours"] * 3600.0
+                 - cumulative_consumed_seconds
+                 - measured_finalization_reserve_seconds
+                 - frozen_non_rollout_overhead_seconds)
+    capped_epochs = int(_math.floor(
+        available / measured_whole_epoch_seconds)) \
+        if available > 0 else 0
+    return {
+        "available_generation_seconds": round(available, 1),
+        "capped_epochs": max(capped_epochs, 0),
+        "stop_for_reviewed_amendment": capped_epochs <= 0,
+        "capped_semantics":
+            rule["cap_formula"]["capped_semantics"],
     }
 
 
@@ -783,14 +833,22 @@ def verify_unit_c_run(run_root: str | Path,
         (run_root / "checkpoint_zero_hashes.json").read_text("utf-8"))
     final_map = json.loads(
         (run_root / "checkpoint_final_hashes.json").read_text("utf-8"))
-    # 278_s smaller item: {} == {} cannot satisfy the gate — the
-    # maps must be non-empty and hold LoRA parameter keys
+    # 278_s + 280_s P2: both maps must carry EXACTLY the validated
+    # 504-key LoRA set — a partial or foreign key set has no
+    # substrate for the zero-mutation claim
+    key_set = UNIT_C_CONFIG["lora_key_set"]
     for label, mapping in (("zero", zero_map), ("final", final_map)):
         if not mapping or any("lora" not in key for key in mapping):
             raise InfrastructureError(
                 f"{label} adapter map is empty or holds non-LoRA "
                 "keys — the zero-mutation gate has no substrate "
                 "(278_s)")
+        if len(mapping) != key_set["count"] \
+                or content_sha256(sorted(mapping)) != \
+                key_set["sorted_keys_sha256"]:
+            raise InfrastructureError(
+                f"{label} adapter map keys are not the validated "
+                f"{key_set['count']}-key LoRA set (280_s P2)")
     if zero_map != final_map:
         raise InfrastructureError(
             "zero-mutation gate FAILS on the persisted maps")

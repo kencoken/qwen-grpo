@@ -3393,6 +3393,32 @@ def test_unit_c_exposure_report_and_verifier(unit_c_fixture,
     assert derived["derivable"] is True
     assert derived["derived_epochs"] >= 1
     assert derived["operational_ceiling_hours"] == 10.0
+    # 280_s P1: the frozen cap formula is executable and its
+    # semantics are fixed — the ceiling is NOT all rollout
+    cap = unit_c_sample.derive_p0_cap(
+        cumulative_consumed_seconds=1800.0,
+        measured_finalization_reserve_seconds=2400.0,
+        frozen_non_rollout_overhead_seconds=600.0,
+        measured_whole_epoch_seconds=600.0)
+    assert cap["available_generation_seconds"] == 31200.0
+    assert cap["capped_epochs"] == 52
+    assert cap["stop_for_reviewed_amendment"] is False
+    exhausted = unit_c_sample.derive_p0_cap(
+        cumulative_consumed_seconds=35000.0,
+        measured_finalization_reserve_seconds=2000.0,
+        frozen_non_rollout_overhead_seconds=0.0,
+        measured_whole_epoch_seconds=600.0)
+    assert exhausted["capped_epochs"] == 0
+    assert exhausted["stop_for_reviewed_amendment"] is True
+    assert "UNDER-TARGET" in cap["capped_semantics"]
+    # the frozen key-set binding matches the validated construction
+    key_set = unit_c_sample.UNIT_C_CONFIG["lora_key_set"]
+    real_keys = sorted(json.loads(Path(
+        "plans/conductor/evidence/grouped_probe_v1/"
+        "checkpoint_zero_hashes.json").read_text("utf-8")))
+    assert len(real_keys) == key_set["count"] == 504
+    assert charter.content_sha256(real_keys) == \
+        key_set["sorted_keys_sha256"]
 
     # 278_s smaller item: a truncated archive cannot produce a
     # report at all
@@ -3425,7 +3451,10 @@ def test_unit_c_exposure_report_and_verifier(unit_c_fixture,
     preflight = {"free_mib": config["min_free_vram_mib"] + 79,
                  "total_mib": 24564,
                  "floor_mib": config["min_free_vram_mib"]}
-    adapter_map = {"lora_A.default.weight": "aa" * 32}
+    real_keys = sorted(json.loads(Path(
+        "plans/conductor/evidence/grouped_probe_v1/"
+        "checkpoint_zero_hashes.json").read_text("utf-8")))
+    adapter_map = {key: "aa" * 32 for key in real_keys}
     total = config["total_groups"]
     group_size = config["grpo"]["group_size"]
     counters = {"generated_groups": total, "consumed_groups": total,
@@ -3503,13 +3532,38 @@ def test_unit_c_exposure_report_and_verifier(unit_c_fixture,
         unit_c_sample.verify_unit_c_run(
             run_root, identity["manifest_sha256"],
             record["attested_environment_sha256"])
+    # 280_s P2: a one-key lora map is NOT the validated 504-key set
+    partial = {"base_model.model.lora_A.default.weight": "aa" * 32}
+    partial_digests = dict(
+        record,
+        checkpoint_zero_adapter_sha256=charter.content_sha256(
+            partial),
+        final_adapter_sha256=charter.content_sha256(partial))
+    for path_ in (zero_path, final_path):
+        path_.write_text(json.dumps(partial, indent=1,
+                                    sort_keys=True) + "\n",
+                         encoding="utf-8")
+    (run_root / "sample_record.json").write_text(
+        json.dumps(partial_digests, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="504-key"):
+        unit_c_sample.verify_unit_c_run(
+            run_root, identity["manifest_sha256"],
+            record["attested_environment_sha256"])
+    (run_root / "sample_record.json").write_text(
+        json.dumps(record, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
     zero_path.write_text(good_zero, encoding="utf-8")
     final_path.write_text(good_final_, encoding="utf-8")
 
-    # a final-map mismatch refuses on the persisted maps
+    # a final-map mismatch refuses on the persisted maps — the
+    # FULL validated key set with one mutated value, so the tamper
+    # reaches the zero-mutation comparison itself
     good = final_path.read_text("utf-8")
+    mutated_map = dict(adapter_map)
+    mutated_map[real_keys[0]] = "bb" * 32
     final_path.write_text(json.dumps(
-        {"lora_A.default.weight": "bb" * 32}, indent=1,
+        mutated_map, indent=1,
         sort_keys=True) + "\n", encoding="utf-8")
     with pytest.raises(InfrastructureError,
                        match="zero-mutation gate FAILS"):
