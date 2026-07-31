@@ -2973,10 +2973,38 @@ def test_p0_mixture_is_the_269s_schedule(p0_mixture_fixture):
     # constraints + disclosures
     assert proj["p_w3_given_goal_first"] <= 0.5
     assert proj["p_w3_given_goal_first_payoff_distinct"] > 0.5
-    # 271_s B2: the frozen positive Q1 criterion passes prospectively
-    # in EVERY critical cell at the recommended Unit-C size
+    # 271_s B2 + 273_s: the statistic IS the frozen criterion —
+    # latent-block occupancy (>=2 counted from >=2 DISTINCT latents),
+    # exact figures asserted
+    assert proj["q1"]["fork_join"][
+        "prospective_pass_probability"] == 0.9826
+    assert proj["q1"]["math_atomic"][
+        "prospective_pass_probability"] == 0.9085
+    assert proj["q1"]["math_code"][
+        "prospective_pass_probability"] == 0.9085
     for cell, q in proj["q1"].items():
         assert q["prospective_pass_probability"] >= 0.9, cell
+        # independent recomputation of the block-occupancy statistic
+        latents = p0_mixture.MIXTURE_CONFIG["quotas"][
+            "bridge_latents"][cell]
+        p = q["p_group_q1_counted_ckpt0"]
+        draws_per_latent = 3 * 5
+        occupied = 1.0 - (1.0 - p) ** draws_per_latent
+        expect = 1.0 - (1.0 - occupied) ** latents \
+            - latents * occupied * (1.0 - occupied) ** (latents - 1)
+        assert q["prospective_pass_probability"] == \
+            pytest.approx(expect, abs=5e-4)
+        # 273_s: renderer representation superseded — occupancy is
+        # DISCLOSED, not gated
+        assert "renderer_two_strata_occupancy_disclosed" in q
+    assert p0_mixture.MIXTURE_CONFIG["q1_gate_criterion"][
+        "renderer_representation"]["superseded"] is True
+    # 273_s wording: bounded imbalance is DISCLOSED with the
+    # fixed-worker payoffs, and the Q2-only goal_first conditional
+    # is exactly 0.5
+    assert proj["constant_worker_payoffs_on_composite_rows"] == {
+        "always_w2": 0.78125, "always_w3": 0.71875}
+    assert proj["p_w3_given_goal_first_q2_composite_only"] == 0.5
     # 271_s B4: true Q1 rate for code_atomic is 32/72
     assert proj["q1"]["code_atomic"][
         "p_group_q1_counted_ckpt0"] == pytest.approx(32 / 72, abs=1e-4)
@@ -3075,6 +3103,10 @@ def test_p0_mixture_verifier_and_bindings(p0_mixture_fixture,
     with pytest.raises(InfrastructureError, match="mutated after "
                        "import"):
         p0_mixture.build_mixture(fx["loaded"], fx["selection"])
+    # 273_s smaller item: the freeze mirrors the guard
+    with pytest.raises(InfrastructureError, match="mutated after "
+                       "import"):
+        p0_mixture.tranche_freeze()
     monkeypatch.undo()
     # constraint logic itself: rebind BOTH config and its hash so the
     # guard passes, then the Q2 minimum refuses

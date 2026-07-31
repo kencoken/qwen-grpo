@@ -6,8 +6,10 @@ LOCKED extension surface and the FROZEN Unit-A selection record:
 
 - the former Q3-oriented Direction class is formally SUPERSEDED by
   Q2 COMPOSITE EXPOSURE (269_s §6): `math_code -> w3` and
-  `fork_join -> w2` composite rows, balanced so mixture imbalance
-  cannot reward a constant-worker policy; the `fork_join -> w2`
+  `fork_join -> w2` composite rows with BOUNDED imbalance — the
+  fixed-worker payoffs on the composite rows are computed and
+  DISCLOSED (273_s: 18:14 rows still give always-w2 a bounded edge;
+  the balance limits, not eliminates, it); the `fork_join -> w2`
   renderer allocation is an EXPLICIT per-renderer quota (271_s B1);
 - the five `code_atomic -> w3` rows are a DIRECT-SPECIALIST CONTROL
   class (271_s B4): no upstream unlocking step exists, so they are
@@ -121,6 +123,24 @@ MIXTURE_CONFIG: dict[str, Any] = {
         "min_distinct_latents_among_counted": 2,
         "recommended_unit_c_epochs": 5,
         "min_prospective_pass_probability": 0.9,
+        # 273_s blocking decision, resolved by EXPLICIT supersession
+        # (never an implicit disappearance): the inherited >=2
+        # renderer-strata requirement was Q3-deconfounding machinery;
+        # the Q1 estimand (family routing) is renderer-independent,
+        # every bridge latent enters with the COMPLETE renderer
+        # crossing (structural equal-draw balance), and
+        # renderer-stratified reporting is retained (269_s §5) so a
+        # persistently silent stratum is reportable evidence. Gating
+        # on per-renderer counted events would force either a budget
+        # breach (6 epochs > the 1.0 GPU-h ceiling) or Bridge
+        # over-weighting against 269_s §6; expected >=2-strata
+        # occupancy at the math cells (~0.85) is DISCLOSED in the
+        # projections.
+        "renderer_representation": {
+            "superseded": True,
+            "replaced_by": "structural renderer crossing + "
+                           "stratified reporting",
+        },
     },
     "screened_latents": {"fork_join": [42]},  # diagnostic, never counted
     "shuffle_seed": 20260731,
@@ -141,7 +161,12 @@ _CLASS_PRECEDENCE = ("q2_composite", "direct_specialist_control",
 def tranche_freeze() -> dict[str, Any]:
     """Unit B is CPU-only (no GPU budget, no ledger launch); its
     freeze is the self-hashed design record consumed by the Unit-C
-    freeze."""
+    freeze. Mirrors the live-config guard (273_s smaller item): a
+    mutated config cannot produce a noncanonical freeze."""
+    if content_sha256(MIXTURE_CONFIG) != CONFIG_SHA256:
+        raise InfrastructureError(
+            "MIXTURE_CONFIG was mutated after import — refusing to "
+            "freeze a noncanonical config (273_s)")
     body = {
         "kind": "p0_mixture",
         "question": ("Unit B: the ONE fixed P0 training schedule — "
@@ -304,6 +329,17 @@ def _binomial_at_least(n: int, p: float, k: int) -> float:
     below = sum(math.comb(n, i) * (p ** i) * ((1 - p) ** (n - i))
                 for i in range(k))
     return 1.0 - below
+
+
+def _block_occupancy_at_least(blocks: int, draws_per_block: int,
+                              p: float, k: int) -> float:
+    """273_s: the probability that at least `k` of `blocks`
+    independent latent blocks (each `draws_per_block` IID
+    Bernoulli(p) group draws) contain >=1 counted group — the
+    EXACT event the frozen criterion states (>=2 counted groups
+    from >=2 DISTINCT latents == >=2 occupied latent blocks)."""
+    q = 1.0 - (1.0 - p) ** draws_per_block
+    return _binomial_at_least(blocks, q, k)
 
 
 # --- the mixture builder -------------------------------------------------------
@@ -497,8 +533,8 @@ def build_mixture(loaded: Mapping[str, Any],
     if ratio > limits["max_direction_row_ratio"]:
         raise InfrastructureError(
             f"Q2 direction row ratio {ratio:.2f} exceeds the frozen "
-            f"{limits['max_direction_row_ratio']} — mixture imbalance "
-            "could reward a constant-worker policy (269_s)")
+            f"{limits['max_direction_row_ratio']} — the bounded "
+            "imbalance limit (269_s; 273_s wording)")
     goal_first_rows = [oid for oid in rows
                        if disclosure[oid]["renderer_id"] == "goal_first"]
     w3_goal_first = sum(
@@ -521,6 +557,33 @@ def build_mixture(loaded: Mapping[str, Any],
         sum(1 for oid in distinct_gf
             if disclosure[oid]["direction"] == "w3_favoured")
         / len(distinct_gf)) if distinct_gf else 0.0
+    # 273_s: the Q2-COMPOSITE-ONLY goal_first conditional (excludes
+    # the direct-specialist controls)
+    q2_gf = [oid for oid in goal_first_rows
+             if assigned.get(oid) == "q2_composite"
+             and disclosure[oid]["direction"]
+             in ("w2_favoured", "w3_favoured")]
+    q2_gf_row_count = sum(multiplicity[oid] for oid in set(q2_gf))
+    q2_gf_w3_rows = sum(multiplicity[oid] for oid in set(q2_gf)
+                        if disclosure[oid]["direction"]
+                        == "w3_favoured")
+    p_w3_gf_q2 = q2_gf_w3_rows / q2_gf_row_count \
+        if q2_gf_row_count else 0.0
+    # 273_s: the fixed-worker payoffs over the composite rows — the
+    # imbalance is BOUNDED and disclosed, not eliminated
+    composite_rows = [oid for oid, cls in assigned.items()
+                      if cls == "q2_composite"
+                      for _ in range(multiplicity[oid])]
+    constant_policy = {}
+    for label, worker in (("always_w2", 2), ("always_w3", 3)):
+        total_payoff = 0.0
+        for oid in composite_rows:
+            cell = disclosure[oid]["cell_id"]
+            w2v, w3v = _code_variants(cell)
+            variant = w2v if worker == 2 else w3v
+            total_payoff += per_obs[oid][variant]
+        constant_policy[label] = round(
+            total_payoff / len(composite_rows), 5)
     for (cell, index) in screened_latents:
         for oid, row in disclosure.items():
             if row["cell_id"] == cell and row["latent_index"] == index \
@@ -537,12 +600,28 @@ def build_mixture(loaded: Mapping[str, Any],
     criterion = config["q1_gate_criterion"]
     epochs = criterion["recommended_unit_c_epochs"]
     q1_projection = {}
+    bridge_latent_quota = quotas["bridge_latents"]
     for cell in CRITICAL_CELLS:
         bridge_rows = sum(
             multiplicity[oid] for oid, cls in assigned.items()
             if cls == "bridge" and disclosure[oid]["cell_id"] == cell)
         p = basis[cell]["p_q1_counted"]
         draws = bridge_rows * epochs
+        latents = bridge_latent_quota[cell]
+        draws_per_latent = len(RENDERER_IDS) * epochs
+        if latents * draws_per_latent != draws:
+            raise InfrastructureError(
+                f"{cell}: bridge draws {draws} != latents x renderer "
+                "crossing x epochs — the block model does not match "
+                "the schedule")
+        # 273_s: the statistic IS the frozen criterion — >=2 counted
+        # groups from >=2 DISTINCT latents (latent-block occupancy),
+        # enforced UNROUNDED
+        pass_probability = _block_occupancy_at_least(
+            latents, draws_per_latent, p,
+            criterion["min_distinct_latents_among_counted"])
+        renderer_occupancy = _block_occupancy_at_least(
+            len(RENDERER_IDS), latents * epochs, p, 2)
         q1_projection[cell] = {
             "bridge_rows_per_epoch": bridge_rows,
             "p_group_q1_counted_ckpt0": round(p, 4),
@@ -550,18 +629,20 @@ def build_mixture(loaded: Mapping[str, Any],
                 bridge_rows * p, 2),
             "unit_c_draws_at_recommended_epochs": draws,
             "prospective_pass_probability": round(
-                _binomial_at_least(
-                    draws, p,
-                    criterion["min_counted_groups_per_cell"]), 4),
+                pass_probability, 4),
+            # DISCLOSED, not gated (the supersession in the frozen
+            # criterion): expected >=2 renderer-strata occupancy
+            "renderer_two_strata_occupancy_disclosed": round(
+                renderer_occupancy, 4),
         }
-        if q1_projection[cell]["prospective_pass_probability"] < \
+        if pass_probability < \
                 criterion["min_prospective_pass_probability"]:
             raise InfrastructureError(
                 f"{cell}: prospective Q1 gate pass probability "
-                f"{q1_projection[cell]['prospective_pass_probability']}"
-                f" < the frozen "
+                f"{pass_probability!r} < the frozen "
                 f"{criterion['min_prospective_pass_probability']} — "
-                "rebalance Bridge mass or Unit-C size (271_s B2)")
+                "rebalance Bridge mass or Unit-C size (271_s B2, "
+                "273_s block-occupancy statistic)")
     zero_variance_expected = round(sum(
         multiplicity[oid]
         * basis[disclosure[oid]["cell_id"]]["p_zero_variance"]
@@ -581,6 +662,11 @@ def build_mixture(loaded: Mapping[str, Any],
         "p_w3_given_goal_first": round(p_w3_gf, 4),
         "p_w3_given_goal_first_payoff_distinct": round(
             p_w3_gf_distinct, 4),
+        "p_w3_given_goal_first_q2_composite_only": round(
+            p_w3_gf_q2, 4),
+        # 273_s: BOUNDED imbalance, disclosed — a constant-worker
+        # policy retains a small edge on the composite rows
+        "constant_worker_payoffs_on_composite_rows": constant_policy,
         "expected_zero_variance_fraction": zero_variance_expected,
         "direct_specialist_control_note": (
             "the code_atomic w3 rows are a DIRECT-SPECIALIST CONTROL "
