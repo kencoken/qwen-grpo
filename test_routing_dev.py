@@ -25,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import extension_run, ledger, p0_mixture, support_run, telemetry
+from tasks.routing import extension_run, ledger, p0_mixture, support_run, telemetry, unit_c_sample
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -3119,3 +3119,288 @@ def test_p0_mixture_verifier_and_bindings(p0_mixture_fixture,
     with pytest.raises(InfrastructureError, match="under the frozen "
                        "minimum"):
         p0_mixture.build_mixture(fx["loaded"], fx["selection"])
+
+
+# --- Unit C: the exact-schedule zero-update exposure sample --------------------
+
+PRISTINE_UNIT_C_CONFIG = copy.deepcopy(unit_c_sample.UNIT_C_CONFIG)
+
+
+def test_unit_c_freeze_binds_the_frozen_candidate():
+    config = PRISTINE_UNIT_C_CONFIG
+    assert config["mixture_record_sha256"].startswith("0100df2b")
+    assert config["mixture_config_sha256"].startswith("92f933e8")
+    assert config["extension_surface_lock_sha256"].startswith(
+        "ccb1c3e2")
+    assert config["epochs"] == 5
+    assert config["epoch_rows"] == 157
+    assert config["total_groups"] == 785
+    assert config["ceiling_gpu_hours"] == 1.25
+    assert config["grpo"]["seed"] == 20260801
+    assert config["grpo"]["learning_rate"] == 0.0
+    assert config["grpo"]["beta"] == 0.0
+    assert config["lineage"]["parent_entry_sha256"].startswith(
+        "b88eba02")
+    assert "785 real trainer optimizer-step calls" in \
+        config["zero_update_mechanism"]
+    # the construction literals are EXACTLY the Step-5-validated ones
+    probe = probe_run.PROBE_CONFIG
+    assert config["model_id"] == probe["model_id"]
+    assert config["revision"] == probe["revision"]
+    assert config["lora"] == probe["lora"]
+    assert config["quantization"] == probe["quantization"]
+    for key, value in probe["grpo"].items():
+        if key != "seed":
+            assert config["grpo"][key] == value, key
+    assert unit_c_sample.CONFIG_SHA256 == \
+        charter.content_sha256(config)
+
+
+@pytest.fixture(scope="module")
+def unit_c_fixture(tmp_path_factory):
+    """The restored extension surface + frozen mixture, with the
+    Unit-C config pinned to the replica (config sha rebound so the
+    freeze/verify guards stay internally consistent)."""
+    mp = pytest.MonkeyPatch()
+    for key in ("original_surface_lock_sha256", "original_prefix_k",
+                "prefix_k", "search_cap", "run_root",
+                "original_c_fixed_path", "namespace",
+                "original_surface_dir"):
+        mp.setitem(extension_run.EXTENSION_CONFIG, key,
+                   PRISTINE_EXT_CONFIG[key])
+    replica = tmp_path_factory.mktemp("unit-c") / "surface"
+    support_run.restore_surface_evidence(
+        "plans/conductor/evidence/support_extension_v1/surface",
+        replica)
+    mp.setitem(unit_c_sample.UNIT_C_CONFIG, "extension_surface_dir",
+               str(replica))
+    mp.setattr(unit_c_sample, "CONFIG_SHA256", charter.content_sha256(
+        unit_c_sample.UNIT_C_CONFIG))
+    loaded = unit_c_sample.load_locked_extension()
+    mixture = unit_c_sample.frozen_mixture(loaded)
+    yield {"loaded": loaded, "mixture": mixture}
+    mp.undo()
+
+
+def test_unit_c_schedule_and_identity(unit_c_fixture):
+    fx = unit_c_fixture
+    rows = unit_c_sample.unit_c_schedule(fx["loaded"], fx["mixture"])
+    assert len(rows) == 785
+    epoch = fx["mixture"]["schedule_rows"]
+    ids = [r["observation_id"] for r in rows]
+    assert ids == epoch * 5          # five identical frozen passes
+    manifest = unit_c_sample.static_identity_manifest(
+        fx["loaded"], fx["mixture"])
+    body = {k: v for k, v in manifest.items()
+            if k != "manifest_sha256"}
+    assert manifest["manifest_sha256"] == charter.content_sha256(body)
+    assert manifest["mixture_record_sha256"] == \
+        fx["mixture"]["record_sha256"]
+    # the comparator loader authenticates the frozen Unit-A record
+    comparator = unit_c_sample.load_extension_comparator()
+    assert comparator["c_fixed_dev"] == 2
+    assert comparator["reselected"] is False
+
+
+def _unit_c_synthetic_archive(fx, run_root, sabotage_cell=None):
+    """A full synthetic 785-row archive: bridge groups carry the Q1
+    event (except `sabotage_cell`), everything else is a uniform
+    valid group; rewards authenticate against the locked surface."""
+    from tasks.conductor import program
+    from tasks.conductor.grpo_task import positional_to_semantic
+    from tasks.conductor.profiles import DEFAULT_PROFILE
+    from tasks.conductor.stage1 import NODE_FAMILIES, WORKER_FAMILIES
+
+    loaded, mixture = fx["loaded"], fx["mixture"]
+    surface = loaded["surface"]
+    selection = p0_mixture.load_frozen_selection()
+    disclosure = selection["public_factor_disclosure"]
+    classes = mixture["class_assignment"]
+    rows = unit_c_sample.unit_c_schedule(loaded, mixture)
+    run_root.mkdir(parents=True, exist_ok=True)
+
+    def fc(cell, assignment):
+        fams = NODE_FAMILIES[cell]
+        nodes = sorted(fams)
+        return sum(1 for n, w in zip(nodes, assignment)
+                   if WORKER_FAMILIES.get(w) == fams[n]) / len(nodes)
+
+    plan_cache = {}
+
+    def group_plan(oid, cell, positions, num_steps, want_q1):
+        key = (oid, want_q1)
+        if key in plan_cache:
+            return plan_cache[key]
+        candidates = []
+        import itertools
+        for action in itertools.product(range(4), repeat=num_steps):
+            semantic = tuple(positional_to_semantic(
+                list(action), positions))
+            payoff = surface.get((oid, semantic))
+            if payoff is None:
+                continue
+            candidates.append((list(action), list(semantic), payoff,
+                               fc(cell, semantic)))
+        if want_q1:
+            r1 = next(c for c in candidates
+                      if c[2] == 1.0 and c[3] == 1.0)
+            half = next(c for c in candidates
+                        if c[2] == 0.5 and c[3] < 1.0)
+            plan = [r1] * 4 + [half] * 4
+        else:
+            first = candidates[0]
+            plan = [first] * 8
+        plan_cache[key] = plan
+        return plan
+
+    lines = []
+    for i, row in enumerate(rows):
+        oid = row["observation_id"]
+        cell = disclosure[oid]["cell_id"]
+        positions = json.loads(row["positions"])
+        want_q1 = (classes.get(oid) == "bridge"
+                   and cell in unit_c_sample.CRITICAL_CELLS
+                   and cell != sabotage_cell)
+        plan = group_plan(oid, cell, positions, row["num_steps"],
+                          want_q1)
+        lines.append(json.dumps({
+            "global_group_index": i, "observation_id": oid,
+            "completions": [json.dumps({"worker_ids": a})
+                            for a, _, _, _ in plan],
+            "actions": [a for a, _, _, _ in plan],
+            "assignments": [s for _, s, _, _ in plan],
+            "rewards": [p for _, _, p, _ in plan]}))
+    (run_root / "actions.jsonl").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8")
+    return rows
+
+
+def test_unit_c_exposure_report_and_verifier(unit_c_fixture,
+                                             tmp_path, monkeypatch):
+    fx = unit_c_fixture
+    run_root = tmp_path / "unit-c"
+    rows = _unit_c_synthetic_archive(fx, run_root)
+    report = unit_c_sample.build_exposure_report(run_root)
+    # every critical cell passes the frozen block-occupancy gate
+    assert report["q1_gate_pass_all_cells"] is True
+    for cell, gate in report["q1_gate"].items():
+        assert gate["pass"] is True
+        assert len(gate["distinct_latents"]) >= 2
+    assert report["q2_composite_draws"] == {
+        "math_code|w3_favoured": 70, "fork_join|w2_favoured": 90}
+    assert report["q2_schedule_delivered_exactly"] is True
+    assert "Q1 authorized" in report["preregistered_decision"]
+    assert report["per_class_draws"]["bridge"] == 84 * 5
+
+    # the failure branch: a silent math_code bridge cell stops
+    sab_root = tmp_path / "unit-c-sab"
+    _unit_c_synthetic_archive(fx, sab_root,
+                              sabotage_cell="math_code")
+    sab_report = unit_c_sample.build_exposure_report(sab_root)
+    assert sab_report["q1_gate"]["math_code"]["pass"] is False
+    assert sab_report["q1_gate_pass_all_cells"] is False
+    assert "stop-and-review" in sab_report["preregistered_decision"]
+
+    # the anchored verifier over a complete archive
+    env = json.loads(Path(
+        "plans/conductor/evidence/resume_validation_v4/"
+        "environment_manifest.json").read_text("utf-8"))
+    identity = unit_c_sample.static_identity_manifest(
+        fx["loaded"], fx["mixture"])
+    config = unit_c_sample.UNIT_C_CONFIG
+    preflight = {"free_mib": config["min_free_vram_mib"] + 79,
+                 "total_mib": 24564,
+                 "floor_mib": config["min_free_vram_mib"]}
+    adapter_map = {"lora_A.default.weight": "aa" * 32}
+    total = config["total_groups"]
+    group_size = config["grpo"]["group_size"]
+    counters = {"generated_groups": total, "consumed_groups": total,
+                "optimizer_updates": total,
+                "sampled_completions": total * group_size}
+    trace_rows = resume_validation.read_trace(
+        run_root / "actions.jsonl")
+    valid = sum(1 for row in trace_rows for a in row["actions"]
+                if a is not None)
+    for name, payload in (
+            ("environment_manifest.json", env),
+            ("identity_manifest.json", identity),
+            ("session_preflight.json", preflight),
+            ("schedule.json",
+             [r["observation_id"] for r in rows]),
+            ("checkpoint_zero_hashes.json", adapter_map),
+            ("checkpoint_final_hashes.json", adapter_map)):
+        (run_root / name).write_text(
+            json.dumps(payload, indent=1, sort_keys=True) + "\n",
+            encoding="utf-8")
+    record = {
+        "tranche": config["tranche"],
+        "freeze_sha256":
+            unit_c_sample.tranche_freeze()["freeze_sha256"],
+        "config_sha256": unit_c_sample.CONFIG_SHA256,
+        "identity_manifest_sha256": identity["manifest_sha256"],
+        "environment_manifest_sha256":
+            dev_support.validate_env_self_hash(env),
+        "attested_environment_sha256":
+            resume_validation.attested_environment_sha256(env),
+        "session_preflight": preflight,
+        "session_preflight_sha256":
+            charter.content_sha256(preflight),
+        "checkpoint_zero_adapter_sha256":
+            charter.content_sha256(adapter_map),
+        "final_adapter_sha256": charter.content_sha256(adapter_map),
+        "counters": counters,
+        "mixture_record_sha256": fx["mixture"]["record_sha256"],
+        "execution_telemetry": {
+            "group_accounting": counters,
+            "surface_reward_lookups": valid,
+            "live_worker_calls": 0,
+            "worker_cache": "not-applicable",
+            "wall_seconds": 1.0,
+            "deadline_seconds":
+                config["ceiling_gpu_hours"] * 3600.0,
+            "peak_reserved_vram_mib": 0,
+            "session_preflight": preflight,
+        },
+    }
+    for name, payload in (("exposure_report.json", report),
+                          ("sample_record.json", record)):
+        (run_root / name).write_text(
+            json.dumps(payload, indent=1, sort_keys=True) + "\n",
+            encoding="utf-8")
+    result = unit_c_sample.verify_unit_c_run(
+        run_root, identity["manifest_sha256"],
+        record["attested_environment_sha256"])
+    assert result["verdict"] == "PASS"
+    assert "Q1 authorized" in result["decision"]
+    # anchors refuse substitution
+    with pytest.raises(InfrastructureError, match="REVIEWED"):
+        unit_c_sample.verify_unit_c_run(
+            run_root, "ab" * 32,
+            record["attested_environment_sha256"])
+    # a final-map mismatch refuses on the persisted maps
+    final_path = run_root / "checkpoint_final_hashes.json"
+    good = final_path.read_text("utf-8")
+    final_path.write_text(json.dumps(
+        {"lora_A.default.weight": "bb" * 32}, indent=1,
+        sort_keys=True) + "\n", encoding="utf-8")
+    with pytest.raises(InfrastructureError,
+                       match="zero-mutation gate FAILS"):
+        unit_c_sample.verify_unit_c_run(
+            run_root, identity["manifest_sha256"],
+            record["attested_environment_sha256"])
+    final_path.write_text(good, encoding="utf-8")
+    # a tampered schedule refuses against the frozen mixture
+    schedule_path = run_root / "schedule.json"
+    good_schedule = schedule_path.read_text("utf-8")
+    swapped = json.loads(good_schedule)
+    swapped[0], swapped[1] = swapped[1], swapped[0]
+    schedule_path.write_text(json.dumps(swapped, indent=1) + "\n",
+                             encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="frozen mixture"):
+        unit_c_sample.verify_unit_c_run(
+            run_root, identity["manifest_sha256"],
+            record["attested_environment_sha256"])
+    schedule_path.write_text(good_schedule, encoding="utf-8")
+    assert unit_c_sample.verify_unit_c_run(
+        run_root, identity["manifest_sha256"],
+        record["attested_environment_sha256"])["verdict"] == "PASS"
