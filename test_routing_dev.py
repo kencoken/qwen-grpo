@@ -25,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import extension_run, ledger, support_run, telemetry
+from tasks.routing import extension_run, ledger, p0_mixture, support_run, telemetry
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -2911,3 +2911,101 @@ def test_extension_cli_is_hash_bound(extension_fixture):
     with pytest.raises(InfrastructureError, match="no ledger entry"):
         extension_run.main(["verify",
                             "--closeout-entry-sha256", "ab" * 32])
+
+
+# --- Unit B: the P0 mixture (269_s scope) --------------------------------------
+
+@pytest.fixture(scope="module")
+def p0_mixture_fixture(tmp_path_factory):
+    """The REAL committed extension surface + frozen selection, via
+    the production restore path — clean-clone valid. The extension
+    fixture's module-scoped config patch may still be active in
+    full-suite order, so the PRISTINE values are pinned here."""
+    mp = pytest.MonkeyPatch()
+    for key in ("original_surface_lock_sha256", "original_prefix_k",
+                "prefix_k", "search_cap", "run_root",
+                "original_c_fixed_path", "namespace",
+                "original_surface_dir"):
+        mp.setitem(extension_run.EXTENSION_CONFIG, key,
+                   PRISTINE_EXT_CONFIG[key])
+    replica = tmp_path_factory.mktemp("mixture") / "surface"
+    support_run.restore_surface_evidence(
+        "plans/conductor/evidence/support_extension_v1/surface",
+        replica)
+    loaded = dev_support.load_dev_surface(
+        replica, expected_lock_sha256=p0_mixture.MIXTURE_CONFIG[
+            "extension_surface_lock_sha256"])
+    selection = p0_mixture.load_frozen_selection()
+    mixture = p0_mixture.build_mixture(loaded, selection)
+    yield {"loaded": loaded, "selection": selection,
+           "mixture": mixture}
+    mp.undo()
+
+
+def test_p0_mixture_is_the_269s_schedule(p0_mixture_fixture):
+    fx = p0_mixture_fixture
+    mixture = fx["mixture"]
+    proj = mixture["projections"]
+    assert proj["epoch_rows"] == 139
+    assert proj["class_rows"] == {"q2_composite": 37, "anchor": 18,
+                                  "goal_first_control": 18,
+                                  "bridge": 66}
+    # Q2-aligned constraints hold (the explicit supersession of the
+    # Q3 renderer-balance gate)
+    exposure = proj["q2_exposure_rows_per_epoch"]
+    assert exposure == {"w2_favoured": 18, "w3_favoured": 19}
+    assert proj["p_w3_given_goal_first"] <= 0.5
+    # latent 42 is screened everywhere (269_s §6 item 6)
+    disclosure = fx["selection"]["public_factor_disclosure"]
+    for oid in mixture["class_assignment"]:
+        row = disclosure[oid]
+        assert not (row["cell_id"] == "fork_join"
+                    and row["latent_index"] == 42)
+    # lookups never Bridge; anchor is the identity subset
+    for oid, cls in mixture["class_assignment"].items():
+        if disclosure[oid]["cell_id"] in ("lookup_atomic",
+                                          "lookup_math"):
+            assert cls == "anchor"
+        if cls == "anchor":
+            assert disclosure[oid]["latent_index"] == 0
+    # bridge rows are never payoff-distinct (260_f)
+    for oid, cls in mixture["class_assignment"].items():
+        if cls == "bridge":
+            assert disclosure[oid]["direction"] in ("tied", "no_pair")
+    # schedule = multiset of assigned rows under the frozen shuffle
+    assert sorted(mixture["schedule_rows"]) == sorted(
+        oid for oid, m in mixture["multiplicities"].items()
+        for _ in range(m))
+    # projections carry the Q1 tension for the C freeze to gate on
+    assert mixture["projections"]["q1"]["math_code"][
+        "expected_q1_counted_groups_per_epoch"] < 1.0
+    p0_mixture.verify_mixture(fx["loaded"], fx["selection"], mixture)
+
+
+def test_p0_mixture_verifier_and_bindings(p0_mixture_fixture,
+                                          tmp_path, monkeypatch):
+    fx = p0_mixture_fixture
+    # a curated schedule refuses even when rehashed
+    tampered = copy.deepcopy(fx["mixture"])
+    tampered["schedule_rows"] = tampered["schedule_rows"][:-1]
+    body = {k: v for k, v in tampered.items() if k != "record_sha256"}
+    tampered["record_sha256"] = charter.content_sha256(body)
+    with pytest.raises(InfrastructureError, match="rederive"):
+        p0_mixture.verify_mixture(fx["loaded"], fx["selection"],
+                                  tampered)
+    # tampered frozen-selection bytes refuse at the loader
+    bad = tmp_path / "selection.json"
+    record = dict(fx["selection"])
+    record["eligible_common_cells_q3"] = ["fork_join"]
+    bad.write_text(json.dumps(record), encoding="utf-8")
+    monkeypatch.setitem(p0_mixture.MIXTURE_CONFIG,
+                        "selection_evidence_path", str(bad))
+    with pytest.raises(InfrastructureError, match="not the frozen"):
+        p0_mixture.load_frozen_selection()
+    # a violated Q2 minimum refuses at build time
+    monkeypatch.setitem(
+        p0_mixture.MIXTURE_CONFIG["quotas"], "q2_w2_fork_join",
+        {"rows": 5})
+    with pytest.raises(InfrastructureError, match="under the frozen "
+                       "minimum"):
+        p0_mixture.build_mixture(fx["loaded"], fx["selection"])
