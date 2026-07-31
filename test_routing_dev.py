@@ -2946,40 +2946,94 @@ def test_p0_mixture_is_the_269s_schedule(p0_mixture_fixture):
     fx = p0_mixture_fixture
     mixture = fx["mixture"]
     proj = mixture["projections"]
-    assert proj["epoch_rows"] == 139
-    assert proj["class_rows"] == {"q2_composite": 37, "anchor": 18,
+    assert proj["epoch_rows"] == 157
+    assert proj["class_rows"] == {"q2_composite": 32,
+                                  "direct_specialist_control": 5,
+                                  "anchor": 18,
                                   "goal_first_control": 18,
-                                  "bridge": 66}
-    # Q2-aligned constraints hold (the explicit supersession of the
-    # Q3 renderer-balance gate)
-    exposure = proj["q2_exposure_rows_per_epoch"]
-    assert exposure == {"w2_favoured": 18, "w3_favoured": 19}
-    assert proj["p_w3_given_goal_first"] <= 0.5
-    # latent 42 is screened everywhere (269_s §6 item 6)
+                                  "bridge": 84}
+    # 271_s B1: the fork_join w2 renderer allocation is the EXPLICIT
+    # frozen quota — 4 bound_var + 14 goal_first
     disclosure = fx["selection"]["public_factor_disclosure"]
-    for oid in mixture["class_assignment"]:
+    fj_strata = {}
+    for oid, cls in mixture["class_assignment"].items():
+        if cls == "q2_composite" \
+                and disclosure[oid]["cell_id"] == "fork_join":
+            renderer = disclosure[oid]["renderer_id"]
+            fj_strata[renderer] = fj_strata.get(renderer, 0) + 1
+    assert fj_strata == {"bound_var": 4, "goal_first": 14}
+    # 271_s B4: composite-only balance excludes the direct-specialist
+    # control; code_atomic w3 rows are that control class
+    exposure = proj["q2_exposure_rows_per_epoch"]
+    assert exposure == {"w2_favoured": 18, "w3_favoured": 14}
+    for oid, cls in mixture["class_assignment"].items():
+        if disclosure[oid]["cell_id"] == "code_atomic" \
+                and disclosure[oid]["direction"] == "w3_favoured":
+            assert cls == "direct_specialist_control"
+    # constraints + disclosures
+    assert proj["p_w3_given_goal_first"] <= 0.5
+    assert proj["p_w3_given_goal_first_payoff_distinct"] > 0.5
+    # 271_s B2: the frozen positive Q1 criterion passes prospectively
+    # in EVERY critical cell at the recommended Unit-C size
+    for cell, q in proj["q1"].items():
+        assert q["prospective_pass_probability"] >= 0.9, cell
+    # 271_s B4: true Q1 rate for code_atomic is 32/72
+    assert proj["q1"]["code_atomic"][
+        "p_group_q1_counted_ckpt0"] == pytest.approx(32 / 72, abs=1e-4)
+    # latent 42 screened; lookups anchor-only; anchor identity;
+    # bridge never payoff-distinct
+    for oid, cls in mixture["class_assignment"].items():
         row = disclosure[oid]
         assert not (row["cell_id"] == "fork_join"
                     and row["latent_index"] == 42)
-    # lookups never Bridge; anchor is the identity subset
-    for oid, cls in mixture["class_assignment"].items():
-        if disclosure[oid]["cell_id"] in ("lookup_atomic",
-                                          "lookup_math"):
+        if row["cell_id"] in ("lookup_atomic", "lookup_math"):
             assert cls == "anchor"
         if cls == "anchor":
-            assert disclosure[oid]["latent_index"] == 0
-    # bridge rows are never payoff-distinct (260_f)
-    for oid, cls in mixture["class_assignment"].items():
+            assert row["latent_index"] == 0
         if cls == "bridge":
-            assert disclosure[oid]["direction"] in ("tied", "no_pair")
-    # schedule = multiset of assigned rows under the frozen shuffle
+            assert row["direction"] in ("tied", "no_pair")
     assert sorted(mixture["schedule_rows"]) == sorted(
         oid for oid, m in mixture["multiplicities"].items()
         for _ in range(m))
-    # projections carry the Q1 tension for the C freeze to gate on
-    assert mixture["projections"]["q1"]["math_code"][
-        "expected_q1_counted_groups_per_epoch"] < 1.0
     p0_mixture.verify_mixture(fx["loaded"], fx["selection"], mixture)
+
+
+def test_p0_mixture_q1_rates_rederive_from_archive(p0_mixture_fixture,
+                                                   tmp_path,
+                                                   monkeypatch):
+    """271_s B4: the frozen q1_counted_rates literals rederive from
+    the committed probe archive under the registered definition."""
+    replica = tmp_path / "surface"
+    support_run.restore_surface_evidence(
+        "plans/conductor/evidence/routing_dev_support_v1/surface",
+        replica)
+    original = dev_support.load_dev_surface(
+        replica,
+        expected_lock_sha256=extension_run.PRISTINE_ORIGINAL_LOCK
+        if hasattr(extension_run, "PRISTINE_ORIGINAL_LOCK")
+        else PRISTINE_EXT_CONFIG["original_surface_lock_sha256"])
+    rates = p0_mixture.q1_counted_rates_from_archive(original)
+    assert rates == p0_mixture.MIXTURE_CONFIG["q1_counted_rates"]
+
+
+def test_p0_mixture_bridge_predicate_registered_condition():
+    """271_s smaller item: the reward-0.5 route must have STRICTLY
+    LOWER family correctness."""
+    from tasks.conductor.stage1 import NODE_FAMILIES, WORKER_FAMILIES
+    fams = sorted(NODE_FAMILIES["math_atomic"])
+    (fc_worker,) = [w for w, f in WORKER_FAMILIES.items()
+                    if f == NODE_FAMILIES["math_atomic"][fams[0]]]
+    wrong = next(w for w in range(4) if w != fc_worker
+                 and WORKER_FAMILIES.get(w)
+                 != NODE_FAMILIES["math_atomic"][fams[0]])
+    # 0.5 only on the family-correct route: NOT bridge-eligible
+    assert not p0_mixture.bridge_eligible(
+        "math_atomic", {(fc_worker,): 1.0, (wrong,): 1.0})
+    assert not p0_mixture.bridge_eligible(
+        "math_atomic", {(fc_worker,): 0.5, (wrong,): 0.0})
+    # reward-1 family-correct + 0.5 on a lower-fc route: eligible
+    assert p0_mixture.bridge_eligible(
+        "math_atomic", {(fc_worker,): 1.0, (wrong,): 0.5})
 
 
 def test_p0_mixture_verifier_and_bindings(p0_mixture_fixture,
@@ -2993,19 +3047,43 @@ def test_p0_mixture_verifier_and_bindings(p0_mixture_fixture,
     with pytest.raises(InfrastructureError, match="rederive"):
         p0_mixture.verify_mixture(fx["loaded"], fx["selection"],
                                   tampered)
+    # 271_s B3: a modified selection RETAINING the frozen pointer
+    # refuses at the CONSUMING boundary (body rehash)
+    forged = copy.deepcopy(fx["selection"])
+    forged["eligible_common_cells_q3"] = ["fork_join"]
+    with pytest.raises(InfrastructureError, match="does not rehash"):
+        p0_mixture.build_mixture(fx["loaded"], forged)
+    # a selection with a DIFFERENT (self-consistent) hash refuses at
+    # the expected-record check
+    body = {k: v for k, v in forged.items() if k != "record_sha256"}
+    forged["record_sha256"] = charter.content_sha256(body)
+    with pytest.raises(InfrastructureError, match="not the frozen"):
+        p0_mixture.build_mixture(fx["loaded"], forged)
     # tampered frozen-selection bytes refuse at the loader
     bad = tmp_path / "selection.json"
-    record = dict(fx["selection"])
-    record["eligible_common_cells_q3"] = ["fork_join"]
-    bad.write_text(json.dumps(record), encoding="utf-8")
+    bad.write_text(json.dumps(forged), encoding="utf-8")
     monkeypatch.setitem(p0_mixture.MIXTURE_CONFIG,
                         "selection_evidence_path", str(bad))
     with pytest.raises(InfrastructureError, match="not the frozen"):
         p0_mixture.load_frozen_selection()
-    # a violated Q2 minimum refuses at build time
+    monkeypatch.undo()
+    # 271_s B3: the LIVE-CONFIG guard — a mutated config cannot ride
+    # under the import-time frozen hash
     monkeypatch.setitem(
         p0_mixture.MIXTURE_CONFIG["quotas"], "q2_w2_fork_join",
-        {"rows": 5})
+        {"bound_var": 0, "goal_first": 5})
+    with pytest.raises(InfrastructureError, match="mutated after "
+                       "import"):
+        p0_mixture.build_mixture(fx["loaded"], fx["selection"])
+    monkeypatch.undo()
+    # constraint logic itself: rebind BOTH config and its hash so the
+    # guard passes, then the Q2 minimum refuses
+    mutated = copy.deepcopy(p0_mixture.MIXTURE_CONFIG)
+    mutated["quotas"]["q2_w2_fork_join"] = {"bound_var": 0,
+                                            "goal_first": 5}
+    monkeypatch.setattr(p0_mixture, "MIXTURE_CONFIG", mutated)
+    monkeypatch.setattr(p0_mixture, "CONFIG_SHA256",
+                        charter.content_sha256(mutated))
     with pytest.raises(InfrastructureError, match="under the frozen "
                        "minimum"):
         p0_mixture.build_mixture(fx["loaded"], fx["selection"])

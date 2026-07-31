@@ -1,41 +1,46 @@
 """Unit B — the P0 training mixture (269_s-scoped: Q1 + hierarchical
-Q2; formal Q3 unavailable).
+Q2; formal Q3 unavailable). REV2 (271_s repairs).
 
 Builds the ONE fixed, exact integer per-epoch schedule from the
 LOCKED extension surface and the FROZEN Unit-A selection record:
 
 - the former Q3-oriented Direction class is formally SUPERSEDED by
-  Q2 COMPOSITE EXPOSURE (269_s §6): the owned direction rows give
-  both scheduled downstream choices (`math_code -> w3`,
-  `fork_join -> w2`) group-level exposure balanced so that mixture
-  imbalance cannot reward an always-w2 or always-w3 policy;
+  Q2 COMPOSITE EXPOSURE (269_s §6): `math_code -> w3` and
+  `fork_join -> w2` composite rows, balanced so mixture imbalance
+  cannot reward a constant-worker policy; the `fork_join -> w2`
+  renderer allocation is an EXPLICIT per-renderer quota (271_s B1);
+- the five `code_atomic -> w3` rows are a DIRECT-SPECIALIST CONTROL
+  class (271_s B4): no upstream unlocking step exists, so they are
+  excluded from every Q2 gate and balance computation; their
+  transfer confound is preregistered in the record;
 - matched `goal_first` CONTROLS (tied rows) keep `goal_first` from
-  globally implying worker 3, while the actual worker-3 advantage
-  remains disclosed as renderer-confounded;
-- BRIDGE (Q1) rows are quota-selected under the 260_f predicate
-  (Code-bearing rows REQUIRE tied reward-1 w2/w3 variants;
-  payoff-distinct rows can never be Bridge), math-heavy because the
-  `math_atomic` family-routing basin is Q2's step-1 prerequisite;
-- ANCHOR is the fixed identity subset (latent 0, all six cells, all
-  renderers; lookups carry ZERO Bridge quota) for
-  forgetting/stability visibility;
-- fork_join latent 42 (the renderer-reversal diagnostic) is
-  SCREENED everywhere at multiplicity zero, never counted;
-- the old complete-schedule direction-by-renderer balance gate
-  (Q3-designed) is EXPLICITLY REPLACED by the Q2-aligned constraints
-  below (269_s §6 item — a reviewed supersession, not a silent
-  relaxation);
-- prospective GROUP-LEVEL PROJECTIONS (Q1-counted exposure,
-  zero-variance fractions, per-direction Q2 exposure) derive from
-  the committed Step-6 probe's checkpoint-zero per-cell rates —
-  a disclosed transport assumption, no new GPU spend — so the
-  Unit-C freeze can preregister its gates against them (269_s §7
-  option 1: projections choose the candidate BEFORE the C run).
+  globally implying worker 3; the reward-relevant conditional (over
+  payoff-distinct rows only) is disclosed alongside the diluted one;
+- BRIDGE (Q1) rows are quota-selected under the REGISTERED
+  predicate — an accessible reward-1.0 family-correct route AND a
+  reward-0.5 assignment of STRICTLY LOWER family correctness
+  (271_s smaller item); Code-bearing rows additionally require tied
+  reward-1 w2/w3 variants; payoff-distinct rows can never be
+  Bridge; `math_atomic` and `math_code` are mass-heavy so the Q1
+  gate has adequate prospective pass probability (271_s B2);
+- ANCHOR is the fixed identity subset; fork_join latent 42 is
+  SCREENED everywhere; lookups carry ZERO Bridge quota;
+- the old direction-by-renderer balance gate is EXPLICITLY REPLACED
+  by the Q2-aligned constraints (269_s §6);
+- the Q1 projections use the TRUE Q1-counted rates (271_s B4) —
+  rederived from the committed probe archive, frozen as literals,
+  and test-verified against the archive — and the freeze carries a
+  MEANINGFUL POSITIVE exposure criterion with per-cell prospective
+  pass probabilities at the recommended Unit-C size (271_s B2);
+- the consuming boundary AUTHENTICATES the supplied selection
+  (expected record hash + body rehash) and guards against live
+  config mutation (271_s B3).
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import random
 from collections.abc import Mapping
 from pathlib import Path
@@ -56,10 +61,8 @@ LOOKUP_CELLS = ("lookup_atomic", "lookup_math")
 
 MIXTURE_CONFIG: dict[str, Any] = {
     "tranche": "routing-dev-p0-mixture-v1",
-    # scope per 269_s sign-off: Q1 family routing + Q2 hierarchical
-    # unlocking and coarse, cell-correlated downstream model choice;
-    # formal Q3 and renderer-independent expertise routing OUT OF
-    # SCOPE for this P0
+    # scope per 269_s sign-off: formal Q3 and renderer-independent
+    # expertise routing OUT OF SCOPE for this P0
     "objectives": ("q1_family_routing", "q2_hierarchical_unlocking"),
     "extension_surface_lock_sha256":
         "ccb1c3e2db2422a82919292144c0bdecc21d2cc89cb7a3a2c69bec17a2ce6d1b",
@@ -69,47 +72,70 @@ MIXTURE_CONFIG: dict[str, Any] = {
         "plans/conductor/evidence/support_extension_v1/selection.json",
     "selection_file_sha256":
         "e0bbb75d61aa0405c86a9a69a0e68957d5db995a389d1b34f353fe1dce546724",
-    # projection basis: the committed Step-6 probe report (ckpt-0
-    # per-cell rates on the ORIGINAL support — transport to new rows
-    # is a disclosed assumption)
+    # projection basis: TRUE Q1-counted rates (271_s B4 — semantic
+    # variation additionally requiring lower family correctness on
+    # the 0.5 route), rederived from the committed probe archive and
+    # frozen here as exact fractions; the archive files are
+    # sha-bound and a regression re-derives these numbers
+    "q1_counted_rates": {"code_atomic": [32, 72],
+                         "fork_join": [8, 72],
+                         "math_atomic": [2, 72],
+                         "math_code": [2, 72]},
     "projection_basis_path":
         "plans/conductor/evidence/grouped_probe_v1/probe_report.json",
     "projection_basis_file_sha256":
         "3a001c99de1ccf15e3c6a828949ca3f285ee784c0ed1a0880358b73c742df35e",
+    "q1_rates_evidence_path":
+        "plans/conductor/evidence/grouped_probe_v1/actions.jsonl",
+    "q1_rates_evidence_file_sha256":
+        "44172e55ba4ae711bd526b6d48bca3ec40b258c70db9862eff0193586c1c4356",
     # per-epoch integer quotas (rows; one row = one G=8 group draw)
     "quotas": {
         # Q2 composite exposure (supersedes the Direction class)
         "q2_w3_math_code": {"observations": 7, "multiplicity": 2},
-        "q2_w3_code_atomic": {"observations": 5, "multiplicity": 1},
-        "q2_w2_fork_join": {"rows": 18},   # 4 bound_var + 14 goal_first, ascending
+        # 271_s B1: EXPLICIT per-renderer quota, bound_var priority
+        "q2_w2_fork_join": {"bound_var": 4, "goal_first": 14},
+        # 271_s B4: direct-specialist control, NOT Q2
+        "direct_specialist_control_code_atomic":
+            {"observations": 5, "multiplicity": 1},
         # matched goal_first controls: tied rows, per Code cell
         "goal_first_controls_per_code_cell": 6,
-        # Bridge (Q1): latents per cell x all 3 renderers
+        # Bridge (Q1): latents per cell x all 3 renderers; math cells
+        # mass-heavy for prospective Q1 pass probability (271_s B2)
         "bridge_latents": {"code_atomic": 4, "fork_join": 4,
-                           "math_atomic": 10, "math_code": 4},
+                           "math_atomic": 10, "math_code": 10},
         # Anchor: the fixed identity subset
         "anchor_latents": [0],
     },
     # Q2-aligned constraints (EXPLICIT supersession of the Q3
-    # renderer-balance gate)
+    # renderer-balance gate); balance is COMPOSITE-ONLY (271_s B4)
     "constraints": {
         "max_direction_row_ratio": 1.5,
         "max_p_w3_given_goal_first": 0.5,
         "min_q2_rows_per_direction": 12,
     },
-    "screened_latents": {"fork_join": [42]},   # diagnostic, never counted
+    # 271_s B2: the frozen MEANINGFUL POSITIVE Q1 exposure criterion
+    # and the prospective sizing it must pass at
+    "q1_gate_criterion": {
+        "min_counted_groups_per_cell": 2,
+        "min_distinct_latents_among_counted": 2,
+        "recommended_unit_c_epochs": 5,
+        "min_prospective_pass_probability": 0.9,
+    },
+    "screened_latents": {"fork_join": [42]},  # diagnostic, never counted
     "shuffle_seed": 20260731,
     "lineage": {
         "parent_entry_sha256":
             "b88eba021ddc42b9d0aa2ba4abc95c04347cc450f2ea7a7e749edacf691033fd",
         "outcome_informed": True,
-        "motivating_evidence": "269_s §6 required Unit-B revision",
+        "motivating_evidence": "269_s §6 required Unit-B revision; "
+                               "271_s repairs",
     },
 }
 CONFIG_SHA256 = content_sha256(MIXTURE_CONFIG)
 
-_CLASS_PRECEDENCE = ("q2_composite", "anchor", "goal_first_control",
-                     "bridge")
+_CLASS_PRECEDENCE = ("q2_composite", "direct_specialist_control",
+                     "anchor", "goal_first_control", "bridge")
 
 
 def tranche_freeze() -> dict[str, Any]:
@@ -123,7 +149,8 @@ def tranche_freeze() -> dict[str, Any]:
                      "exposure in all four critical cells and "
                      "balanced downstream Q2 opportunities, under "
                      "the 269_s scope?"),
-        "motivation": "269_s §6; 260_f signed design as amended",
+        "motivation": "269_s §6; 260_f signed design as amended; "
+                      "271_s repairs",
         "config": MIXTURE_CONFIG,
         "budget_gpu_hours": 0.0,
     }
@@ -131,6 +158,21 @@ def tranche_freeze() -> dict[str, Any]:
 
 
 # --- frozen inputs -------------------------------------------------------------
+
+def validate_frozen_selection(record: Mapping[str, Any]) -> None:
+    """271_s B3: the AUTHENTICATION boundary every consumer runs —
+    expected record hash from the frozen config AND body rehash. A
+    modified selection retaining the frozen pointer refuses here."""
+    if not isinstance(record, Mapping) or record.get(
+            "record_sha256") != MIXTURE_CONFIG[
+            "selection_record_sha256"]:
+        raise InfrastructureError(
+            "selection record is not the frozen Unit-A selection")
+    body = {k: v for k, v in record.items() if k != "record_sha256"}
+    if content_sha256(body) != record["record_sha256"]:
+        raise InfrastructureError(
+            "selection record does not rehash (271_s B3)")
+
 
 def load_frozen_selection() -> dict[str, Any]:
     config = MIXTURE_CONFIG
@@ -140,21 +182,16 @@ def load_frozen_selection() -> dict[str, Any]:
         raise InfrastructureError(
             "selection evidence bytes are not the frozen ones")
     record = json.loads(raw.decode("utf-8"))
-    if record.get("record_sha256") != \
-            config["selection_record_sha256"]:
-        raise InfrastructureError(
-            "selection record is not the frozen Unit-A selection")
-    body = {k: v for k, v in record.items() if k != "record_sha256"}
-    if content_sha256(body) != record["record_sha256"]:
-        raise InfrastructureError("selection record does not rehash")
+    validate_frozen_selection(record)
     return record
 
 
 def load_projection_basis() -> dict[str, dict[str, float]]:
-    """Per-cell checkpoint-zero rates from the committed Step-6 probe
-    report: P(group semantically reward-varying) and P(group
-    zero-variance). Measured on the ORIGINAL support; transport to
-    extension rows is a DISCLOSED assumption."""
+    """Per-cell checkpoint-zero rates: TRUE Q1-counted rates from the
+    frozen literals (271_s B4; archive-rederived by regression) and
+    zero-variance rates from the committed probe report. Measured on
+    the ORIGINAL support; transport to extension rows is a DISCLOSED
+    assumption."""
     config = MIXTURE_CONFIG
     raw = Path(config["projection_basis_path"]).read_bytes()
     if hashlib.sha256(raw).hexdigest() != \
@@ -164,24 +201,58 @@ def load_projection_basis() -> dict[str, dict[str, float]]:
     report = json.loads(raw.decode("utf-8"))
     basis = {}
     for cell, stats in report["by_cell"].items():
-        semantic = stats["semantic_contrast"]
         zero_var = stats["zero_variance"]["any"]
-        basis[cell] = {
-            "p_semantic_varying":
-                semantic["count"] / semantic["denominator"],
-            "p_zero_variance":
-                zero_var["count"] / zero_var["denominator"],
-        }
+        entry = {"p_zero_variance":
+                 zero_var["count"] / zero_var["denominator"]}
+        if cell in CRITICAL_CELLS:
+            num, den = config["q1_counted_rates"][cell]
+            entry["p_q1_counted"] = num / den
+        basis[cell] = entry
     return basis
 
 
-# --- the bridge predicate (260_f §1, rev4 wording) -----------------------------
+def q1_counted_rates_from_archive(loaded_original: Mapping[str, Any]
+                                  ) -> dict[str, list[int]]:
+    """Rederive the frozen `q1_counted_rates` from the committed
+    probe trace: a group counts for Q1 iff it contains a reward-1.0
+    FULLY family-correct completion AND a reward-0.5 completion of
+    STRICTLY LOWER family correctness (271_s B4)."""
+    config = MIXTURE_CONFIG
+    raw = Path(config["q1_rates_evidence_path"]).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != \
+            config["q1_rates_evidence_file_sha256"]:
+        raise InfrastructureError(
+            "probe trace bytes are not the frozen archive")
+    meta = {obs["observation_id"]: obs
+            for obs in loaded_original["observations"]}
+    counted: dict[str, int] = {}
+    total: dict[str, int] = {}
+    for line in raw.decode("utf-8").splitlines():
+        row = json.loads(line)
+        cell = meta[row["observation_id"]]["cell_id"]
+        total[cell] = total.get(cell, 0) + 1
+        has_r1_fc = any(
+            r == 1.0 and a is not None
+            and _fc_fraction(cell, tuple(a)) == 1.0
+            for r, a in zip(row["rewards"], row["assignments"]))
+        has_half_lower = any(
+            r == 0.5 and a is not None
+            and _fc_fraction(cell, tuple(a)) < 1.0
+            for r, a in zip(row["rewards"], row["assignments"]))
+        if has_r1_fc and has_half_lower:
+            counted[cell] = counted.get(cell, 0) + 1
+    return {cell: [counted.get(cell, 0), total[cell]]
+            for cell in CRITICAL_CELLS}
 
-def _family_correct(cell: str, assignment: tuple[int, ...]) -> bool:
+
+# --- the bridge predicate (260_f §1 + 271_s registered condition) ---------------
+
+def _fc_fraction(cell: str, assignment: tuple[int, ...]) -> float:
     families = NODE_FAMILIES[cell]
     nodes = sorted(families)
-    return all(WORKER_FAMILIES.get(w) == families[n]
-               for n, w in zip(nodes, assignment))
+    correct = sum(1 for n, w in zip(nodes, assignment)
+                  if WORKER_FAMILIES.get(w) == families[n])
+    return correct / len(nodes)
 
 
 def _code_variants(cell: str) -> tuple[tuple[int, ...],
@@ -208,13 +279,17 @@ def _code_variants(cell: str) -> tuple[tuple[int, ...],
 
 def bridge_eligible(cell: str,
                     rows: Mapping[tuple[int, ...], float]) -> bool:
-    """260_f: an accessible reward-1.0 family-correct route AND a
-    reward-0.5 assignment; Code-bearing rows additionally REQUIRE
-    tied reward-1 w2/w3 variants (no 'where available')."""
-    has_r1_fc = any(p == 1.0 and _family_correct(cell, a)
+    """The REGISTERED Q1 bridge predicate: an accessible reward-1.0
+    fully family-correct route AND a reward-0.5 assignment of
+    STRICTLY LOWER family correctness (271_s smaller item — the
+    lower-family-correctness condition is enforced, not assumed);
+    Code-bearing rows additionally REQUIRE tied reward-1 w2/w3
+    variants (260_f, no 'where available')."""
+    has_r1_fc = any(p == 1.0 and _fc_fraction(cell, a) == 1.0
                     for a, p in rows.items())
-    has_half = any(p == 0.5 for p in rows.values())
-    if not (has_r1_fc and has_half):
+    has_half_lower = any(p == 0.5 and _fc_fraction(cell, a) < 1.0
+                         for a, p in rows.items())
+    if not (has_r1_fc and has_half_lower):
         return False
     variants = _code_variants(cell)
     if variants is not None:
@@ -224,21 +299,39 @@ def bridge_eligible(cell: str,
     return True
 
 
+def _binomial_at_least(n: int, p: float, k: int) -> float:
+    """P(X >= k) for X ~ Binomial(n, p), exact."""
+    below = sum(math.comb(n, i) * (p ** i) * ((1 - p) ** (n - i))
+                for i in range(k))
+    return 1.0 - below
+
+
 # --- the mixture builder -------------------------------------------------------
 
 def build_mixture(loaded: Mapping[str, Any],
                   selection: Mapping[str, Any]) -> dict[str, Any]:
-    """The ONE fixed per-epoch schedule: deterministic class
-    assignment under the frozen precedence, exact integer
-    multiplicities, frozen shuffle, Q2-aligned constraint refusals,
-    and prospective projections."""
+    """The ONE fixed per-epoch schedule: authenticated inputs,
+    deterministic class assignment under the frozen precedence, exact
+    integer multiplicities with exact-quota refusals, frozen shuffle,
+    Q2-aligned constraint refusals, and prospective projections
+    (true-Q1 rates, gate pass probabilities at the recommended
+    Unit-C size)."""
     config = MIXTURE_CONFIG
+    # 271_s B3: live-config guard — a mutated config cannot ride
+    # under the import-time frozen hash
+    if content_sha256(config) != CONFIG_SHA256:
+        raise InfrastructureError(
+            "MIXTURE_CONFIG was mutated after import — the live "
+            "config no longer matches the frozen CONFIG_SHA256 "
+            "(271_s B3)")
     quotas = config["quotas"]
     lock = loaded.get("lock", {})
     if lock.get("lock_sha256") != \
             config["extension_surface_lock_sha256"]:
         raise InfrastructureError(
             "mixture must build on the frozen extension lock")
+    # 271_s B3: the consuming boundary authenticates the selection
+    validate_frozen_selection(selection)
     if selection.get("extension_surface_lock_sha256") != \
             lock["lock_sha256"]:
         raise InfrastructureError(
@@ -273,41 +366,61 @@ def build_mixture(loaded: Mapping[str, Any],
         assigned[oid] = cls
         multiplicity[oid] = mult
 
-    # 1. Q2 composite (precedence first)
     owned: dict[str, list[str]] = {}
     for source in ("direction_buckets", "screened_surplus"):
         for bucket, members in selection[source].items():
             for member in members:
                 owned.setdefault(bucket, []).extend(
                     member["observation_ids"])
-    for oid in sorted(owned.get("math_code|w3_favoured", [])):
-        if not is_screened(oid):
-            take(oid, "q2_composite",
-                 quotas["q2_w3_math_code"]["multiplicity"])
-    for oid in sorted(owned.get("code_atomic|w3_favoured", [])):
-        if not is_screened(oid):
-            take(oid, "q2_composite",
-                 quotas["q2_w3_code_atomic"]["multiplicity"])
+
+    # 1. Q2 composite (precedence first) — exact quotas enforced
+    mc_pool = [oid for oid in sorted(
+        owned.get("math_code|w3_favoured", [])) if not is_screened(oid)]
+    if len(mc_pool) != quotas["q2_w3_math_code"]["observations"]:
+        raise InfrastructureError(
+            f"math_code w3 pool {len(mc_pool)} != the frozen quota "
+            f"{quotas['q2_w3_math_code']['observations']} (271_s)")
+    for oid in mc_pool:
+        take(oid, "q2_composite",
+             quotas["q2_w3_math_code"]["multiplicity"])
+    # 271_s B1: fork_join w2 rows by EXPLICIT per-renderer quota,
+    # ascending latent index within each renderer stratum
     fj_pool = [oid for oid in owned.get("fork_join|w2_favoured", [])
                if not is_screened(oid)]
-    # ascending (renderer order within latent): bound_var rows first
-    # in frozen renderer order, then by latent index
-    fj_sorted = sorted(
-        fj_pool, key=lambda o: (RENDERER_IDS.index(
-            disclosure[o]["renderer_id"]),
-            disclosure[o]["latent_index"]))
-    for oid in fj_sorted[:quotas["q2_w2_fork_join"]["rows"]]:
-        take(oid, "q2_composite", 1)
+    for renderer, want in quotas["q2_w2_fork_join"].items():
+        stratum = sorted(
+            (oid for oid in fj_pool
+             if disclosure[oid]["renderer_id"] == renderer),
+            key=lambda o: disclosure[o]["latent_index"])
+        if len(stratum) < want:
+            raise InfrastructureError(
+                f"fork_join w2 {renderer} pool {len(stratum)} cannot "
+                f"fill the frozen quota {want} (271_s B1)")
+        for oid in stratum[:want]:
+            take(oid, "q2_composite", 1)
 
-    # 2. Anchor: the fixed identity subset
+    # 2. Direct-specialist control (271_s B4): code_atomic w3 rows —
+    # no upstream unlocking step; excluded from every Q2 gate; the
+    # transfer confound is preregistered below
+    ca_pool = [oid for oid in sorted(
+        owned.get("code_atomic|w3_favoured", []))
+        if not is_screened(oid)]
+    ca_quota = quotas["direct_specialist_control_code_atomic"]
+    if len(ca_pool) != ca_quota["observations"]:
+        raise InfrastructureError(
+            f"code_atomic w3 pool {len(ca_pool)} != the frozen quota "
+            f"{ca_quota['observations']} (271_s)")
+    for oid in ca_pool:
+        take(oid, "direct_specialist_control", ca_quota["multiplicity"])
+
+    # 3. Anchor: the fixed identity subset
     for oid in sorted(meta):
         row = disclosure[oid]
         if row["latent_index"] in quotas["anchor_latents"] \
                 and oid not in assigned and not is_screened(oid):
             take(oid, "anchor", 1)
 
-    # 3. Matched goal_first controls: tied goal_first Code rows,
-    # ascending latent index
+    # 4. Matched goal_first controls — exact quota, underfill refuses
     per_cell_controls = quotas["goal_first_controls_per_code_cell"]
     for cell in ("code_atomic", "fork_join", "math_code"):
         pool = sorted(
@@ -317,12 +430,14 @@ def build_mixture(loaded: Mapping[str, Any],
              and row["direction"] == "tied"
              and oid not in assigned and not is_screened(oid)),
             key=lambda o: disclosure[o]["latent_index"])
+        if len(pool) < per_cell_controls:
+            raise InfrastructureError(
+                f"{cell}: goal_first control pool {len(pool)} cannot "
+                f"fill the frozen quota {per_cell_controls} (271_s)")
         for oid in pool[:per_cell_controls]:
             take(oid, "goal_first_control", 1)
 
-    # 4. Bridge: quota-selected latents whose COMPLETE renderer
-    # crossing is bridge-eligible and unconsumed; payoff-distinct
-    # rows can never be Bridge (260_f)
+    # 5. Bridge: quota-selected complete-renderer-crossed latents
     for cell, n_latents in quotas["bridge_latents"].items():
         if cell in LOOKUP_CELLS:
             raise InfrastructureError(
@@ -343,9 +458,8 @@ def build_mixture(loaded: Mapping[str, Any],
             if any(oid in assigned or is_screened(oid)
                    for oid in oids):
                 continue
-            if any(disclosure[oid]["direction"] != "tied"
-                   and disclosure[oid]["direction"] != "no_pair"
-                   for oid in oids):
+            if any(disclosure[oid]["direction"] not in
+                   ("tied", "no_pair") for oid in oids):
                 continue   # payoff-distinct rows never Bridge
             if not all(bridge_eligible(cell, per_obs[oid])
                        for oid in oids):
@@ -358,7 +472,6 @@ def build_mixture(loaded: Mapping[str, Any],
                 f"{cell}: only {chosen} bridge latents available for "
                 f"the frozen quota {n_latents}")
 
-    # everything else: screened at zero multiplicity (disclosed)
     screened = sorted(set(meta) - set(assigned))
 
     # --- the exact integer schedule + frozen shuffle -------------------
@@ -368,7 +481,7 @@ def build_mixture(loaded: Mapping[str, Any],
     rng = random.Random(config["shuffle_seed"])
     rng.shuffle(rows)
 
-    # --- Q2-aligned constraints (refusals) -----------------------------
+    # --- Q2-aligned constraints (COMPOSITE-ONLY balance; refusals) -----
     limits = config["constraints"]
     w3_rows = sum(multiplicity[oid] for oid, cls in assigned.items()
                   if cls == "q2_composite"
@@ -398,6 +511,16 @@ def build_mixture(loaded: Mapping[str, Any],
             f"P(w3-favoured | goal_first) = {p_w3_gf:.3f} exceeds "
             f"{limits['max_p_w3_given_goal_first']} — goal_first must "
             "not imply worker 3 (269_s §6 item 5)")
+    # 271_s smaller item: the REWARD-RELEVANT conditional — over
+    # payoff-distinct goal_first rows only (tied rows cannot penalize
+    # a worker-3 shortcut)
+    distinct_gf = [oid for oid in goal_first_rows
+                   if disclosure[oid]["direction"]
+                   in ("w2_favoured", "w3_favoured")]
+    p_w3_gf_distinct = (
+        sum(1 for oid in distinct_gf
+            if disclosure[oid]["direction"] == "w3_favoured")
+        / len(distinct_gf)) if distinct_gf else 0.0
     for (cell, index) in screened_latents:
         for oid, row in disclosure.items():
             if row["cell_id"] == cell and row["latent_index"] == index \
@@ -406,38 +529,65 @@ def build_mixture(loaded: Mapping[str, Any],
                     f"diagnostic latent {cell}:{index} entered the "
                     "schedule (269_s §6 item 6)")
 
-    # --- prospective projections (group-level, ckpt-0 basis) -----------
+    # --- prospective projections (true-Q1 rates; gate probabilities) ---
     basis = load_projection_basis()
     class_rows: dict[str, int] = {}
     for oid, cls in assigned.items():
         class_rows[cls] = class_rows.get(cls, 0) + multiplicity[oid]
+    criterion = config["q1_gate_criterion"]
+    epochs = criterion["recommended_unit_c_epochs"]
     q1_projection = {}
     for cell in CRITICAL_CELLS:
         bridge_rows = sum(
             multiplicity[oid] for oid, cls in assigned.items()
             if cls == "bridge" and disclosure[oid]["cell_id"] == cell)
+        p = basis[cell]["p_q1_counted"]
+        draws = bridge_rows * epochs
         q1_projection[cell] = {
             "bridge_rows_per_epoch": bridge_rows,
-            "p_group_semantic_varying_ckpt0":
-                basis[cell]["p_semantic_varying"],
+            "p_group_q1_counted_ckpt0": round(p, 4),
             "expected_q1_counted_groups_per_epoch": round(
-                bridge_rows * basis[cell]["p_semantic_varying"], 2),
+                bridge_rows * p, 2),
+            "unit_c_draws_at_recommended_epochs": draws,
+            "prospective_pass_probability": round(
+                _binomial_at_least(
+                    draws, p,
+                    criterion["min_counted_groups_per_cell"]), 4),
         }
+        if q1_projection[cell]["prospective_pass_probability"] < \
+                criterion["min_prospective_pass_probability"]:
+            raise InfrastructureError(
+                f"{cell}: prospective Q1 gate pass probability "
+                f"{q1_projection[cell]['prospective_pass_probability']}"
+                f" < the frozen "
+                f"{criterion['min_prospective_pass_probability']} — "
+                "rebalance Bridge mass or Unit-C size (271_s B2)")
     zero_variance_expected = round(sum(
         multiplicity[oid]
         * basis[disclosure[oid]["cell_id"]]["p_zero_variance"]
         for oid in assigned) / len(rows), 4)
     projections = {
-        "basis": ("Step-6 probe ckpt-0 per-cell rates on the ORIGINAL "
-                  "support; transport to extension rows is a disclosed "
-                  "assumption"),
+        "basis": ("TRUE Q1-counted ckpt-0 per-cell rates (271_s B4), "
+                  "frozen literals rederived from the committed probe "
+                  "archive; zero-variance rates from the probe "
+                  "report; transport to extension rows is a "
+                  "disclosed assumption"),
         "epoch_rows": len(rows),
         "class_rows": class_rows,
         "q1": q1_projection,
+        "q1_gate_criterion": dict(criterion),
         "q2_exposure_rows_per_epoch": {"w2_favoured": w2_rows,
                                        "w3_favoured": w3_rows},
         "p_w3_given_goal_first": round(p_w3_gf, 4),
+        "p_w3_given_goal_first_payoff_distinct": round(
+            p_w3_gf_distinct, 4),
         "expected_zero_variance_fraction": zero_variance_expected,
+        "direct_specialist_control_note": (
+            "the code_atomic w3 rows are a DIRECT-SPECIALIST CONTROL "
+            "(271_s B4): no upstream unlocking step; excluded from "
+            "every Q2 gate and balance; their transfer confound "
+            "(atomic-row learning transferring to composites) is "
+            "preregistered and reported separately"),
         "q2_c2_eligibility_note": (
             "measured ckpt-0 C2 eligibility on w3-favoured composites "
             "is 0/64 (Step-6 probe) — the Q2 STARTING CONDITION; "
@@ -470,7 +620,7 @@ def verify_mixture(loaded: Mapping[str, Any],
                    selection: Mapping[str, Any],
                    record: Mapping[str, Any]) -> None:
     """The mixture verifier: rehash + byte-exact rederivation from
-    the locked surface and frozen selection."""
+    the locked surface and the AUTHENTICATED frozen selection."""
     body = {k: v for k, v in record.items() if k != "record_sha256"}
     if content_sha256(body) != record.get("record_sha256"):
         raise InfrastructureError("mixture record does not rehash")
