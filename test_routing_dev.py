@@ -3203,7 +3203,7 @@ def test_unit_c_schedule_and_identity(unit_c_fixture):
 
 
 def _unit_c_synthetic_archive(fx, run_root, sabotage_cell=None,
-                              q2_specialists=True):
+                              q2_specialists=True, crossed=False):
     """A full synthetic 785-row archive: bridge groups carry the Q1
     event (except `sabotage_cell`), everything else is a uniform
     valid group; rewards authenticate against the locked surface."""
@@ -3261,6 +3261,14 @@ def _unit_c_synthetic_archive(fx, run_root, sabotage_cell=None,
             w2 = next(c for c in candidates if c[1][idx] == 2)
             w3 = next(c for c in candidates if c[1][idx] == 3)
             plan = [w2] * 4 + [w3] * 4
+        elif mode == "crossed_w2":
+            idx = code_idx(cell)
+            w2 = next(c for c in candidates if c[1][idx] == 2)
+            plan = [w2] * 8
+        elif mode == "crossed_w3":
+            idx = code_idx(cell)
+            w3 = next(c for c in candidates if c[1][idx] == 3)
+            plan = [w3] * 8
         else:
             first = candidates[0]
             plan = [first] * 8
@@ -3276,6 +3284,11 @@ def _unit_c_synthetic_archive(fx, run_root, sabotage_cell=None,
         if cls == "bridge" and cell in unit_c_sample.CRITICAL_CELLS \
                 and cell != sabotage_cell:
             mode = "q1"
+        elif cls == "q2_composite" and crossed:
+            # 278_s P1 reproduction: every math_code->w3 row selects
+            # worker 2; every fork_join->w2 row selects worker 3
+            mode = "crossed_w2" if cell == "math_code" \
+                else "crossed_w3"
         elif cls in ("q2_composite", "direct_specialist_control") \
                 and q2_specialists:
             mode = "specialists"
@@ -3350,6 +3363,48 @@ def test_unit_c_exposure_report_and_verifier(unit_c_fixture,
     assert bridge_eligible_completions > 0
     assert fail_report["q2_cold_start_gate"]["pass"] is False
     assert "Q1-only" in fail_report["preregistered_decision"]
+
+    # 278_s P1 reproduction: CROSSED-WRONG selections — massive
+    # global marginals in both workers, zero on-target — must FAIL
+    crossed_root = tmp_path / "unit-c-crossed"
+    _unit_c_synthetic_archive(fx, crossed_root, crossed=True)
+    crossed_report = unit_c_sample.build_exposure_report(crossed_root)
+    marginals = crossed_report[
+        "q2_specialist_marginals_valid_completions_diagnostic"]
+    assert marginals["2"] >= 8 and marginals["3"] >= 8
+    gate = crossed_report["q2_cold_start_gate"]
+    assert gate["pass"] is False
+    for detail in gate["per_direction"].values():
+        assert detail["target_selections"] == 0
+        assert detail["pass"] is False
+    assert "Q1-only" in crossed_report["preregistered_decision"]
+
+    # 278_s P1: the mechanical sizing derivation (exact integers)
+    sizing = unit_c_sample.derive_p0_size(
+        {"code_atomic": 100, "fork_join": 20,
+         "math_atomic": 10, "math_code": 4})
+    assert sizing["derived_epochs"] == 125        # ceil(500/4)
+    assert sizing["derived_groups"] == 125 * 157
+    assert sizing["min_cell"] == "math_code"
+    assert unit_c_sample.derive_p0_size(
+        {"code_atomic": 1, "fork_join": 1,
+         "math_atomic": 1, "math_code": 0})["derivable"] is False
+    derived = report["p0_size_derived"]
+    assert derived["derivable"] is True
+    assert derived["derived_epochs"] >= 1
+    assert derived["operational_ceiling_hours"] == 10.0
+
+    # 278_s smaller item: a truncated archive cannot produce a
+    # report at all
+    truncated_root = tmp_path / "unit-c-truncated"
+    truncated_root.mkdir()
+    lines = (run_root / "actions.jsonl").read_text(
+        "utf-8").splitlines()
+    (truncated_root / "actions.jsonl").write_text(
+        "\n".join(lines[:580]) + "\n", encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="frozen "
+                       "785-row schedule"):
+        unit_c_sample.build_exposure_report(truncated_root)
 
     # the failure branch: a silent math_code bridge cell stops
     sab_root = tmp_path / "unit-c-sab"
@@ -3437,8 +3492,21 @@ def test_unit_c_exposure_report_and_verifier(unit_c_fixture,
         unit_c_sample.verify_unit_c_run(
             run_root, "ab" * 32,
             record["attested_environment_sha256"])
-    # a final-map mismatch refuses on the persisted maps
+    # 278_s smaller item: {} == {} cannot satisfy zero-mutation
+    zero_path = run_root / "checkpoint_zero_hashes.json"
     final_path = run_root / "checkpoint_final_hashes.json"
+    good_zero = zero_path.read_text("utf-8")
+    good_final_ = final_path.read_text("utf-8")
+    for path_ in (zero_path, final_path):
+        path_.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="no substrate"):
+        unit_c_sample.verify_unit_c_run(
+            run_root, identity["manifest_sha256"],
+            record["attested_environment_sha256"])
+    zero_path.write_text(good_zero, encoding="utf-8")
+    final_path.write_text(good_final_, encoding="utf-8")
+
+    # a final-map mismatch refuses on the persisted maps
     good = final_path.read_text("utf-8")
     final_path.write_text(json.dumps(
         {"lora_A.default.weight": "bb" * 32}, indent=1,

@@ -19,12 +19,16 @@ Preregistered evaluation (mechanical, no in-place redesign):
   >=2 distinct latents. Any cell failing => stop-and-review (260_f
   disposition matrix as amended); renderer occupancy is REPORTED,
   not gated (274_f supersession).
-- **Q2 exposure** is schedule-delivery + reporting: both scheduled
-  composite directions must have delivered their exact draws
-  (70 `math_code->w3`, 90 `fork_join->w2` at 5 epochs); observed
-  ckpt-0 C2-eligible completions are REPORTED — zero is the
-  recorded Q2 STARTING CONDITION (269_s §5), never a failure and
-  never a direct-C2-exposure claim.
+- **Q2 authorization** comes from the MEASURABLE cold-start
+  marginal-support gate, PER DIRECTION on the intended target
+  worker (>=8 valid q2-composite completions selecting worker 3 on
+  `math_code->w3` rows across >=2 latents, and worker 2 on
+  `fork_join->w2` rows likewise); crossed-wrong selections cannot
+  authorize. Exact schedule delivery (70 + 90 composite draws) is a
+  VERIFIER INVARIANT, never authorization. Observed ckpt-0
+  C2-eligible completions on the q2 population are REPORTED — zero
+  is the recorded Q2 STARTING CONDITION (269_s §5), never a failure
+  and never a direct-C2-exposure claim.
 - Zero-variance fractions, per-class exposure, anchor coverage, and
   renderer/subtype-stratified yields are reported against the
   Unit-B projections.
@@ -115,9 +119,17 @@ UNIT_C_CONFIG: dict[str, Any] = {
     # maximum-Q1-only branch reachable. Ckpt-0 C2-eligibility stays
     # a REPORTED starting condition (zero permitted, 269_s §5); the
     # direct-specialist control is excluded from the gate.
+    # 278_s P1: the gate is PER DIRECTION on the INTENDED target
+    # worker — crossed-wrong selections cannot authorize
     "q2_cold_start_gate": {
-        "min_completions_selecting_each_specialist": 8,
-        "population": "q2_composite valid completions only",
+        "per_direction": {
+            "math_code|w3_favoured": {"target_worker": 3},
+            "fork_join|w2_favoured": {"target_worker": 2},
+        },
+        "min_target_selections": 8,
+        "min_distinct_latents": 2,
+        "population": "q2_composite valid completions only; global "
+                      "marginals and contrasts stay diagnostics",
     },
     # the preregistered decision rule: outcomes select the P0 scope
     # ONLY (plus measured rates as P0-freeze inputs)
@@ -136,14 +148,29 @@ UNIT_C_CONFIG: dict[str, Any] = {
     # groups x beta-smoke seconds-per-group against the envelope is
     # checked at the P0 freeze, and a budget cap must be DISCLOSED
     # as a scope shortfall, never silently absorbed.
+    # 278_s P1: the FULLY MECHANICAL sizing derivation — integer
+    # arithmetic, derived values persisted in the report, and the
+    # over-budget consequence frozen NOW (the beta smoke supplies
+    # only seconds-per-group; it cannot change branch semantics)
     "p0_sizing_rule": {
         "target_q1_counted_groups_per_critical_cell": 100,
-        "epochs_formula": ("ceil(target / min_cell_q1_counted_"
-                           "per_epoch_measured)"),
+        "derivation": ("derived_epochs = ceil(target * unit_c_epochs "
+                       "/ min over critical cells of counted "
+                       "groups); derived_groups = derived_epochs * "
+                       "157 (exact integer arithmetic)"),
         "groups_per_epoch": 157,
-        "wall_rate_source": "beta=1e-3 timing smoke",
-        "budget_check": "at the P0 freeze against the envelope; "
-                        "caps disclosed as scope shortfall",
+        "operational_ceiling_hours": 10.0,
+        "cap_policy": ("if the derived size exceeds the 10-hour "
+                       "operational ceiling at the beta-smoke wall "
+                       "rate: run the exact WHOLE-EPOCH floor of the "
+                       "ceiling, with the predefined scope-shortfall "
+                       "interpretation — expected counted groups per "
+                       "cell = capped_epochs x measured rate, "
+                       "DISCLOSED, claims sized accordingly; if the "
+                       "whole-epoch floor is ZERO epochs: stop for a "
+                       "reviewed scope amendment"),
+        "wall_rate_source": "beta=1e-3 timing smoke (seconds/group "
+                            "ONLY; branch semantics frozen here)",
     },
     "lineage": {
         "parent_entry_sha256":
@@ -162,11 +189,12 @@ def tranche_freeze() -> dict[str, Any]:
             "UNIT_C_CONFIG was mutated after import")
     return lightweight_freeze({
         "kind": "unit_c_exposure_sample",
-        "question": ("Unit C: does the frozen Unit-B schedule "
-                     "deliver, at checkpoint zero, the preregistered "
-                     "Q1 reward-varying exposure in all four critical "
-                     "cells and the exact scheduled Q2 composite "
-                     "draws?"),
+        "question": ("Unit C: at checkpoint zero on the frozen "
+                     "Unit-B schedule, is the preregistered Q1 "
+                     "reward-varying exposure present in all four "
+                     "critical cells, and does each scheduled Q2 "
+                     "direction show cold-start marginal support for "
+                     "its intended specialist?"),
         "motivation": "269_s §7 option 1; 274_f frozen candidate",
         "config": UNIT_C_CONFIG,
         "budget_gpu_hours": UNIT_C_CONFIG["ceiling_gpu_hours"],
@@ -312,6 +340,35 @@ def q1_counted(cell: str, rewards: list, assignments: list) -> bool:
     return has_r1_fc and has_half_lower
 
 
+def derive_p0_size(counted_by_cell: Mapping[str, int]
+                   ) -> dict[str, Any]:
+    """278_s P1: the mechanical integer sizing derivation. The beta
+    smoke later supplies seconds-per-group ONLY — the branch
+    semantics live in the frozen cap_policy."""
+    rule = UNIT_C_CONFIG["p0_sizing_rule"]
+    target = rule["target_q1_counted_groups_per_critical_cell"]
+    epochs = UNIT_C_CONFIG["epochs"]
+    minimum = min(counted_by_cell[cell] for cell in CRITICAL_CELLS)
+    if minimum <= 0:
+        return {"derivable": False,
+                "reason": "a critical cell has zero counted groups "
+                          "— the Q1 gate has already stopped the run"}
+    derived_epochs = -(-(target * epochs) // minimum)   # exact ceil
+    derived_groups = derived_epochs * rule["groups_per_epoch"]
+    return {
+        "derivable": True,
+        "min_counted_groups": minimum,
+        "min_cell": min(
+            (cell for cell in CRITICAL_CELLS),
+            key=lambda c: counted_by_cell[c]),
+        "derived_epochs": derived_epochs,
+        "derived_groups": derived_groups,
+        "operational_ceiling_hours":
+            rule["operational_ceiling_hours"],
+        "cap_policy": rule["cap_policy"],
+    }
+
+
 def _code_node_index(cell: str) -> int | None:
     from tasks.conductor.stage1 import NODE_FAMILIES
     families = NODE_FAMILIES[cell]
@@ -340,9 +397,19 @@ def build_exposure_report(run_root: str | Path) -> dict[str, Any]:
     disclosure = selection["public_factor_disclosure"]
     classes = mixture["class_assignment"]
     trace_rows = read_trace(run_root / "actions.jsonl")
-    groups = groups_from_trace(trace_rows, loaded, comparator)
-
     config = UNIT_C_CONFIG
+    # 278_s smaller item: the REPORT ITSELF requires the exact
+    # frozen 785-row schedule — a truncated archive cannot produce
+    # an authorization report
+    expected_schedule = list(mixture["schedule_rows"]) \
+        * config["epochs"]
+    if [row["observation_id"] for row in trace_rows] != \
+            expected_schedule:
+        raise InfrastructureError(
+            f"trace rows ({len(trace_rows)}) are not the exact "
+            f"frozen {len(expected_schedule)}-row schedule — no "
+            "report from a partial archive (278_s)")
+    groups = groups_from_trace(trace_rows, loaded, comparator)
     per_class: dict[str, int] = {}
     q1_by_cell: dict[str, dict[str, Any]] = {
         cell: {"counted_groups": 0, "latents": set(),
@@ -363,6 +430,9 @@ def build_exposure_report(run_root: str | Path) -> dict[str, Any]:
         }
     control_block = {"draws": 0, "c2_eligible_completions": 0,
                      "reward_sum": 0.0}
+    q2_gate_state = {key: {"selections": 0, "latents": set()}
+                     for key in config["q2_cold_start_gate"][
+                         "per_direction"]}
     anchor_block: dict[str, dict[str, Any]] = {}
     q2_specialist_marginals = {"2": 0, "3": 0}
     strata: dict[str, dict[str, Any]] = {}
@@ -392,10 +462,35 @@ def build_exposure_report(run_root: str | Path) -> dict[str, Any]:
         stratum = strata.setdefault(stratum_key, {
             "draws": 0, "valid_completions": 0, "reward_sum": 0.0,
             "zero_variance_groups": 0, "q1_counted_groups": 0,
-            "code_worker_selections": {"2": 0, "3": 0, "other": 0}})
+            "code_worker_selections": {"2": 0, "3": 0, "other": 0},
+            # 278_s smaller item: stratified C2/ModelAcc/contrasts
+            # + latent identity, so the registered shortcut controls
+            # are directly executable
+            "c2_eligible_completions": 0,
+            "c2_optimal_completions": 0,
+            "model_acc_numerator": 0.0,
+            "model_acc_denominator": 0,
+            "direct_contrast_groups": 0,
+            "semantic_contrast_groups": 0,
+            "latent_indices": []})
         stratum["draws"] += 1
         stratum["zero_variance_groups"] += 1 if is_zero_variance else 0
         stratum["q1_counted_groups"] += 1 if counted else 0
+        if info["latent_index"] not in stratum["latent_indices"]:
+            stratum["latent_indices"] = sorted(
+                stratum["latent_indices"] + [info["latent_index"]])
+        stratum["c2_eligible_completions"] += group["c2_eligible"]
+        if group["c2_optimal"] is not None:
+            stratum["c2_optimal_completions"] += group["c2_optimal"]
+        if group["model_acc"] is not None:
+            num, den = group["model_acc"]
+            stratum["model_acc_numerator"] = round(
+                stratum["model_acc_numerator"] + num, 4)
+            stratum["model_acc_denominator"] += den
+        stratum["direct_contrast_groups"] += \
+            1 if group["direct_contrast"] else 0
+        stratum["semantic_contrast_groups"] += \
+            1 if group["semantic_contrast"] else 0
         code_index = _code_node_index(cell)
         for assignment in row["assignments"]:
             if assignment is None:
@@ -438,6 +533,8 @@ def build_exposure_report(run_root: str | Path) -> dict[str, Any]:
                 block["model_acc_numerator"] = round(
                     block["model_acc_numerator"] + num, 4)
                 block["model_acc_denominator"] += den
+            gate_spec = config["q2_cold_start_gate"][
+                "per_direction"].get(key)
             for assignment in row["assignments"]:
                 if assignment is None:
                     continue
@@ -447,6 +544,13 @@ def build_exposure_report(run_root: str | Path) -> dict[str, Any]:
                 block["code_worker_selections"][bucket] += 1
                 if worker in (2, 3):
                     q2_specialist_marginals[str(worker)] += 1
+                # 278_s P1: the gate counts only the INTENDED target
+                # worker for THIS direction
+                if gate_spec is not None \
+                        and worker == gate_spec["target_worker"]:
+                    gate_hits = q2_gate_state[key]
+                    gate_hits["selections"] += 1
+                    gate_hits["latents"].add(info["latent_index"])
         elif cls == "direct_specialist_control":
             control_block["draws"] += 1
             control_block["c2_eligible_completions"] += \
@@ -486,11 +590,24 @@ def build_exposure_report(run_root: str | Path) -> dict[str, Any]:
         cell: round(q1_gate[cell]["counted_groups"]
                     / config["epochs"], 4)
         for cell in CRITICAL_CELLS}
-    # 276_s B2: the MEASURABLE cold-start gate
-    gate_floor = config["q2_cold_start_gate"][
-        "min_completions_selecting_each_specialist"]
-    q2_gate_pass = all(
-        q2_specialist_marginals[w] >= gate_floor for w in ("2", "3"))
+    # 276_s B2 as repaired by 278_s P1: the MEASURABLE cold-start
+    # gate, PER DIRECTION on the intended target worker
+    gate_config = config["q2_cold_start_gate"]
+    q2_gate_detail = {}
+    q2_gate_pass = True
+    for key, spec in gate_config["per_direction"].items():
+        state = q2_gate_state[key]
+        direction_pass = (
+            state["selections"] >= gate_config["min_target_selections"]
+            and len(state["latents"])
+            >= gate_config["min_distinct_latents"])
+        q2_gate_pass = q2_gate_pass and direction_pass
+        q2_gate_detail[key] = {
+            "target_worker": spec["target_worker"],
+            "target_selections": state["selections"],
+            "distinct_latents": sorted(state["latents"]),
+            "pass": direction_pass,
+        }
     for key, block in q2_blocks.items():
         block["latents"] = sorted(block["latents"])
     expected_q2 = {
@@ -525,12 +642,21 @@ def build_exposure_report(run_root: str | Path) -> dict[str, Any]:
         "q1_gate_pass_all_cells": q1_pass,
         "q1_counted_per_epoch_measured": q1_counted_per_epoch,
         "p0_sizing_rule": dict(config["p0_sizing_rule"]),
+        # 278_s P1: the mechanically DERIVED size, persisted
+        "p0_size_derived": derive_p0_size(
+            {cell: q1_gate[cell]["counted_groups"]
+             for cell in CRITICAL_CELLS}),
         # 276_s B1: q2_composite population ONLY, per direction
         "q2_blocks": q2_blocks,
-        "q2_specialist_marginals_valid_completions":
+        "q2_specialist_marginals_valid_completions_diagnostic":
             q2_specialist_marginals,
         "q2_cold_start_gate": {
-            "floor": gate_floor, "pass": q2_gate_pass},
+            "min_target_selections":
+                gate_config["min_target_selections"],
+            "min_distinct_latents":
+                gate_config["min_distinct_latents"],
+            "per_direction": q2_gate_detail,
+            "pass": q2_gate_pass},
         "direct_specialist_control": control_block,
         "c2_note": ("ckpt-0 C2 eligibility on the q2_composite "
                     "population is the recorded Q2 STARTING "
@@ -657,6 +783,14 @@ def verify_unit_c_run(run_root: str | Path,
         (run_root / "checkpoint_zero_hashes.json").read_text("utf-8"))
     final_map = json.loads(
         (run_root / "checkpoint_final_hashes.json").read_text("utf-8"))
+    # 278_s smaller item: {} == {} cannot satisfy the gate — the
+    # maps must be non-empty and hold LoRA parameter keys
+    for label, mapping in (("zero", zero_map), ("final", final_map)):
+        if not mapping or any("lora" not in key for key in mapping):
+            raise InfrastructureError(
+                f"{label} adapter map is empty or holds non-LoRA "
+                "keys — the zero-mutation gate has no substrate "
+                "(278_s)")
     if zero_map != final_map:
         raise InfrastructureError(
             "zero-mutation gate FAILS on the persisted maps")
