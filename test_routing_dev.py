@@ -25,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import extension_run, ledger, p0_mixture, support_run, telemetry, unit_c_sample
+from tasks.routing import extension_run, ledger, p0_mixture, p0_mixture_v2, support_run, telemetry, unit_c_sample
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -3586,3 +3586,195 @@ def test_unit_c_exposure_report_and_verifier(unit_c_fixture,
     assert unit_c_sample.verify_unit_c_run(
         run_root, identity["manifest_sha256"],
         record["attested_environment_sha256"])["verdict"] == "PASS"
+
+
+# --- Unit B2: the versioned mixture (290_f signed plan) ------------------------
+
+def test_b2_freeze_v1_untouched_and_c1_hard_gate(monkeypatch):
+    """288_s §1: the V1 path is byte-untouched (its frozen identities
+    stand) and the committed C1 archive reverifies through it — the
+    HARD GATE, here running at the B2 freeze. Pristine values are
+    computed from the import-time captures so earlier module-scoped
+    fixtures cannot leak into the gate."""
+    assert charter.content_sha256(PRISTINE_UNIT_C_CONFIG) == (
+        "69f73a5811922bea3ef6d04a891817bec13e30729b1741f4500f2f1f2bb"
+        "02d59")
+    assert p0_mixture.CONFIG_SHA256 == (
+        "92f933e84d6c1c83f258437da30e352a79da7c3e01df87d3ffdf9f7ddc"
+        "386bf8")
+    # run the gate under the PRISTINE V1 config regardless of test
+    # order (other fixtures patch the live globals module-scoped)
+    monkeypatch.setattr(unit_c_sample, "UNIT_C_CONFIG",
+                        copy.deepcopy(PRISTINE_UNIT_C_CONFIG))
+    monkeypatch.setattr(unit_c_sample, "CONFIG_SHA256",
+                        charter.content_sha256(
+                            PRISTINE_UNIT_C_CONFIG))
+    result = p0_mixture_v2.reverify_c1_archive()
+    assert result["verdict"] == "PASS"
+    assert "stop-and-review" in result["decision"]
+    # B2 config literals
+    config = p0_mixture_v2.MIXTURE_V2_CONFIG
+    assert config["quotas"]["bridge_latents"] == {
+        "code_atomic": 2, "fork_join": 13, "math_code": 13,
+        "math_atomic": 0}
+    assert config["p0_sizing_rule"]["sizing_cells"] == [
+        "code_atomic", "fork_join", "math_code"]
+    assert config["prospective_probability_refusal"][
+        "superseded"] is True
+    assert config["lineage"]["parent_entry_sha256"].startswith(
+        "9f4661a8")
+    assert p0_mixture_v2.CONFIG_V2_SHA256 == charter.content_sha256(
+        config)
+    # the heuristic rates rederive from the sha-bound C1 archive
+    assert p0_mixture_v2.c1_rates_rederived() == {
+        "code_atomic": [32, 60], "fork_join": [3, 60],
+        "math_code": [7, 150]}
+
+
+@pytest.fixture(scope="module")
+def b2_fixture(tmp_path_factory):
+    mp = pytest.MonkeyPatch()
+    for key in ("original_surface_lock_sha256", "original_prefix_k",
+                "prefix_k", "search_cap", "run_root",
+                "original_c_fixed_path", "namespace",
+                "original_surface_dir"):
+        mp.setitem(extension_run.EXTENSION_CONFIG, key,
+                   PRISTINE_EXT_CONFIG[key])
+    replica = tmp_path_factory.mktemp("b2") / "surface"
+    support_run.restore_surface_evidence(
+        "plans/conductor/evidence/support_extension_v1/surface",
+        replica)
+    loaded = dev_support.load_dev_surface(
+        replica, expected_lock_sha256=p0_mixture_v2.MIXTURE_V2_CONFIG[
+            "extension_surface_lock_sha256"])
+    selection = p0_mixture_v2.load_frozen_selection_v2()
+    mixture = p0_mixture_v2.build_mixture_v2(loaded, selection)
+    yield {"loaded": loaded, "selection": selection,
+           "mixture": mixture}
+    mp.undo()
+
+
+def test_b2_mixture_is_the_290f_schedule(b2_fixture):
+    fx = b2_fixture
+    m = fx["mixture"]
+    disclosure = fx["selection"]["public_factor_disclosure"]
+    assert len(m["schedule_rows"]) == 157
+    class_rows = {}
+    bridge_cells = {}
+    bridge_latents = {}
+    for oid, cls in m["class_assignment"].items():
+        mult = m["multiplicities"][oid]
+        class_rows[cls] = class_rows.get(cls, 0) + mult
+        if cls == "bridge":
+            cell = disclosure[oid]["cell_id"]
+            bridge_cells[cell] = bridge_cells.get(cell, 0) + mult
+            bridge_latents.setdefault(cell, set()).add(
+                disclosure[oid]["latent_index"])
+    assert class_rows == {"q2_composite": 32,
+                          "direct_specialist_control": 5,
+                          "anchor": 18, "goal_first_control": 18,
+                          "bridge": 84}
+    # the 283_s reallocation: 6/39/39, sentinel ZERO
+    assert bridge_cells == {"code_atomic": 6, "fork_join": 39,
+                            "math_code": 39}
+    assert {cell: len(v) for cell, v in bridge_latents.items()} == {
+        "code_atomic": 2, "fork_join": 13, "math_code": 13}
+    # the sentinel: math_atomic present ONLY as its anchor rows
+    sentinel = m["sentinel"]
+    assert sentinel["cell"] == "math_atomic"
+    assert sentinel["training_exposed"] is True
+    assert sentinel["rows_per_epoch"] == 3
+    for oid in sentinel["observation_ids"]:
+        assert disclosure[oid]["latent_index"] == 0
+        assert m["class_assignment"][oid] == "anchor"
+    assert set(sentinel["excluded_from"]) == {
+        "direct_q1_gate", "sizing_minimum", "authorization",
+        "headline_q1"}
+    # heuristics disclosed (never gated): the 288_s figures
+    per_cell = m["heuristic_projections"]["per_cell"]
+    assert per_cell["code_atomic"]["heuristic_counted_per_epoch"] \
+        == 3.2
+    assert per_cell["fork_join"]["heuristic_counted_per_epoch"] \
+        == 1.95
+    assert per_cell["math_code"]["heuristic_counted_per_epoch"] \
+        == 1.82
+    assert "NOT" in m["heuristic_projections"]["basis"]
+    # Q2/controls/anchor unchanged from the V1 candidate
+    assert m["q2_exposure_rows_per_epoch"] == {"w2_favoured": 18,
+                                               "w3_favoured": 14}
+    p0_mixture_v2.verify_mixture_v2(fx["loaded"], fx["selection"], m)
+    tampered = copy.deepcopy(m)
+    tampered["schedule_rows"] = tampered["schedule_rows"][:-1]
+    body = {k: v for k, v in tampered.items() if k != "record_sha256"}
+    tampered["record_sha256"] = charter.content_sha256(body)
+    with pytest.raises(InfrastructureError, match="rederive"):
+        p0_mixture_v2.verify_mixture_v2(fx["loaded"], fx["selection"],
+                                        tampered)
+
+
+def test_b2_sentinel_block_is_executable(b2_fixture):
+    """288_s §5: worker-1 events are the estimand; [2]/[3] is not
+    Math unlocking; firsts are recorded."""
+    fx = b2_fixture
+    disclosure = fx["selection"]["public_factor_disclosure"]
+    classes = fx["mixture"]["class_assignment"]
+    sentinel_oid = fx["mixture"]["sentinel"]["observation_ids"][0]
+    surface = fx["loaded"]["surface"]
+    r_w0 = surface[(sentinel_oid, (0,))]
+    r_w1 = surface[(sentinel_oid, (1,))]
+    assert r_w1 == 1.0 and r_w0 == 0.5
+    all_zero = {"global_group_index": 5,
+                "observation_id": sentinel_oid,
+                "completions": ["x"] * 8,
+                "actions": [[0]] * 8, "assignments": [[0]] * 8,
+                "rewards": [r_w0] * 8}
+    block = p0_mixture_v2.sentinel_block([all_zero], disclosure,
+                                         classes)
+    assert block["groups"] == 1
+    assert block["worker1_selections"] == 0
+    assert block["reward_varying_groups"] == 0
+    assert block["first_worker1_group_index"] is None
+    # a worker-3 selection is NOT Math unlocking
+    w3_row = dict(all_zero, actions=[[3]] * 8,
+                  assignments=[[3]] * 8,
+                  rewards=[surface[(sentinel_oid, (3,))]] * 8)
+    block = p0_mixture_v2.sentinel_block([w3_row], disclosure,
+                                         classes)
+    assert block["worker1_selections"] == 0
+    # a real worker-1 unlock records counts + firsts + Q1
+    unlock = {"global_group_index": 9,
+              "observation_id": sentinel_oid,
+              "completions": ["x"] * 8,
+              "actions": [[1]] * 4 + [[0]] * 4,
+              "assignments": [[1]] * 4 + [[0]] * 4,
+              "rewards": [r_w1] * 4 + [r_w0] * 4}
+    block = p0_mixture_v2.sentinel_block([unlock], disclosure,
+                                         classes)
+    assert block["worker1_selections"] == 4
+    assert block["reward1_completions"] == 4
+    assert block["reward_varying_groups"] == 1
+    assert block["q1_counted_groups"] == 1
+    assert block["first_worker1_group_index"] == 9
+    assert block["first_q1_counted_group_index"] == 9
+
+
+def test_b2_sizing_excludes_the_sentinel():
+    sizing = p0_mixture_v2.derive_p0_size_v2(
+        {"code_atomic": 16, "fork_join": 10, "math_code": 9,
+         "math_atomic": 0}, 5)
+    assert sizing["derivable"] is True       # ma=0 no longer blocks
+    assert sizing["min_cell"] == "math_code"
+    assert sizing["derived_epochs"] == 56    # ceil(500/9)
+    assert sizing["derived_groups"] == 56 * 157
+    assert "math_atomic" not in sizing["sizing_cells"]
+    dead = p0_mixture_v2.derive_p0_size_v2(
+        {"code_atomic": 16, "fork_join": 0, "math_code": 9,
+         "math_atomic": 0}, 5)
+    assert dead["derivable"] is False
+    cap = p0_mixture_v2.derive_p0_cap_v2(
+        cumulative_consumed_seconds=1800.0,
+        measured_finalization_reserve_seconds=2400.0,
+        frozen_non_rollout_overhead_seconds=600.0,
+        measured_whole_epoch_seconds=600.0)
+    assert cap["capped_epochs"] == 52
+    assert cap["stop_for_reviewed_amendment"] is False
