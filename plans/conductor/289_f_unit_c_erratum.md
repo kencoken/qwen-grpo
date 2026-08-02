@@ -34,7 +34,8 @@ transported rate, not a calibrated p-value.
 ## E3 — Addendum (verified strengthening, from 283_s)
 
 All **1,320 of 1,320** valid `math_atomic` completions — 165 groups
-(150 Bridge + 15 Anchor), every latent, renderer, and subtype —
+(150 Bridge + 15 Anchor), every SCHEDULED `math_atomic` latent,
+renderer, and subtype —
 selected exactly `[0]`; it was the only distinct action observed.
 There is effectively no checkpoint-zero exploration of worker 1 on
 atomic Math under this prompt and sampling configuration. Added

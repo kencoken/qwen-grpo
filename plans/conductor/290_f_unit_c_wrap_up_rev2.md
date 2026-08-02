@@ -110,9 +110,11 @@ aggregates — and described as training-exposed, never held out.
 
 ## 7. Exit condition and hand-off (unchanged shape)
 
-Wrap-up complete when: 289_f stands; the B2 freeze and C2 execution
-have passed review; the C2 closeout is the ledger head; envelope
-and reserve reconciled. Then the 287_f cleanup branch begins;
+Wrap-up complete when: 289_f stands; the B2 freeze has passed
+review; **C2 is ACCEPTED when its direct-Q1 gate passes — the Q2
+outcome determines the maximum permissible scope (Q1+Q2, or
+Q1-only per the §5 matrix), not acceptance**; the C2 closeout is
+the ledger head; envelope and reserve reconciled. Then the 287_f cleanup branch begins;
 deferred to after its merge: `routing_dev_val`, cycle/`R_cycle`,
 the beta smoke, the P0 freeze (executing the amended sizing +
 unchanged cap formula), checkpoint-zero eval, and P0 with the §6
@@ -126,8 +128,10 @@ same experiment C2 authorized.
 ## 8. Budget
 
 B2 CPU-only; C2 ≈0.98–1.0 GPU-h expected against a 1.25 ceiling;
-envelope 57.8837 remaining, reserve 5.0 intact. A C2 scientific
-gate failure ends this plan at stop-and-review (the
-exploration-isolation experiment would be a NEW reviewed design);
-a C2 infrastructure abort follows the repair/relaunch protocol
-within this plan.
+envelope 57.8837 remaining, reserve 5.0 intact. A C2 direct-Q1
+gate failure ends this plan at stop-and-review. Q1 pass plus Q2
+fail COMPLETES C2 with maximum Q1-only scope, with the later P0
+freeze deciding whether launch remains worthwhile. An
+infrastructure abort follows the repair/relaunch protocol. (A
+stop-and-review outcome would make the exploration-isolation
+experiment a NEW reviewed design, outside this plan.)
