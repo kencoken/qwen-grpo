@@ -3590,7 +3590,8 @@ def test_unit_c_exposure_report_and_verifier(unit_c_fixture,
 
 # --- Unit B2: the versioned mixture (290_f signed plan) ------------------------
 
-def test_b2_freeze_v1_untouched_and_c1_hard_gate(monkeypatch):
+def test_b2_freeze_v1_untouched_and_c1_hard_gate(monkeypatch,
+                                                 tmp_path):
     """288_s §1: the V1 path is byte-untouched (its frozen identities
     stand) and the committed C1 archive reverifies through it — the
     HARD GATE, here running at the B2 freeze. Pristine values are
@@ -3625,10 +3626,10 @@ def test_b2_freeze_v1_untouched_and_c1_hard_gate(monkeypatch):
         "9f4661a8")
     assert p0_mixture_v2.CONFIG_V2_SHA256 == charter.content_sha256(
         config)
-    # 292_s B1: the AUTHORITATIVE C1-basis verifier is the only
-    # rate path (ledger head + closeout bindings + V1 archive) and
-    # the freeze boundary RUNS it (tranche_freeze succeeds only if
-    # the gate passes)
+    # 292_s B1 / 294_s: the AUTHORITATIVE C1-basis verifier is the
+    # only rate path, runs FRESH each call, and tolerates a valid
+    # later ledger suffix (the C1 closeout is a HISTORICAL entry
+    # within the chain, not required to be the head)
     assert p0_mixture_v2.verify_c1_basis() == {
         "code_atomic": [32, 60], "fork_join": [3, 60],
         "math_code": [7, 150]}
@@ -3636,6 +3637,37 @@ def test_b2_freeze_v1_untouched_and_c1_hard_gate(monkeypatch):
         p0_mixture_v2.verify_c1_basis()
     frozen = p0_mixture_v2.tranche_freeze()
     assert frozen["freeze_sha256"]
+    # 294_s regression (a): tampering AFTER an earlier successful
+    # call refuses — no cache at the mandatory boundary
+    real_verify = unit_c_sample.verify_unit_c_run
+
+    def failing_verify(*a, **k):
+        raise InfrastructureError("tampered after warm call")
+
+    monkeypatch.setattr(unit_c_sample, "verify_unit_c_run",
+                        failing_verify)
+    with pytest.raises(InfrastructureError, match="tampered after "
+                       "warm call"):
+        p0_mixture_v2.verify_c1_basis()
+    with pytest.raises(InfrastructureError, match="tampered after "
+                       "warm call"):
+        p0_mixture_v2.tranche_freeze()
+    monkeypatch.setattr(unit_c_sample, "verify_unit_c_run",
+                        real_verify)
+    # 294_s regression (b): a valid LATER ledger suffix does not
+    # break the historical-closeout check
+    import shutil as _shutil
+    ledger_copy = tmp_path / "ledger-suffix.md"
+    _shutil.copy2(ledger.LEDGER_PATH, ledger_copy)
+    head = ledger.ledger_head(ledger_copy)
+    ledger.append_ledger_entry(
+        _note(question="post-C1 bookkeeping",
+              motivating_evidence="294_s suffix regression"),
+        head, ledger_copy)
+    assert p0_mixture_v2.verify_c1_basis(
+        ledger_path=ledger_copy) == {
+        "code_atomic": [32, 60], "fork_join": [3, 60],
+        "math_code": [7, 150]}
     # 292_s B2: the pure decision function over the frozen matrix
     decide = p0_mixture_v2.decide_c2_outcome
     assert "stop-and-review" in decide(q1_pass=False, q2_pass=True)
@@ -3662,6 +3694,12 @@ def b2_fixture(tmp_path_factory):
                 "original_surface_dir"):
         mp.setitem(extension_run.EXTENSION_CONFIG, key,
                    PRISTINE_EXT_CONFIG[key])
+    # the B2 build runs the FULL C1 gate (verify_c1_basis), which
+    # needs the PRISTINE V1 config regardless of test order
+    mp.setattr(unit_c_sample, "UNIT_C_CONFIG",
+               copy.deepcopy(PRISTINE_UNIT_C_CONFIG))
+    mp.setattr(unit_c_sample, "CONFIG_SHA256",
+               charter.content_sha256(PRISTINE_UNIT_C_CONFIG))
     replica = tmp_path_factory.mktemp("b2") / "surface"
     support_run.restore_surface_evidence(
         "plans/conductor/evidence/support_extension_v1/surface",
@@ -3746,7 +3784,8 @@ def test_b2_sentinel_block_is_executable(b2_fixture):
     fx = b2_fixture
     disclosure = fx["selection"]["public_factor_disclosure"]
     classes = fx["mixture"]["class_assignment"]
-    sentinel_ids = fx["mixture"]["sentinel"]["observation_ids"]
+    record = fx["mixture"]
+    sentinel_ids = record["sentinel"]["observation_ids"]
     sentinel_oid = sentinel_ids[0]
     surface = fx["loaded"]["surface"]
     r_w0 = surface[(sentinel_oid, (0,))]
@@ -3757,7 +3796,7 @@ def test_b2_sentinel_block_is_executable(b2_fixture):
                 "completions": ["x"] * 8,
                 "actions": [[0]] * 8, "assignments": [[0]] * 8,
                 "rewards": [r_w0] * 8}
-    block = p0_mixture_v2.sentinel_block([all_zero], sentinel_ids)
+    block = p0_mixture_v2.sentinel_block([all_zero], record)
     assert block["groups"] == 1
     assert block["worker1_selections"] == 0
     assert block["reward_varying_groups"] == 0
@@ -3769,15 +3808,28 @@ def test_b2_sentinel_block_is_executable(b2_fixture):
         oid for oid, row in disclosure.items()
         if row["cell_id"] == "math_atomic"
         and oid not in sentinel_ids))
-    block = p0_mixture_v2.sentinel_block([foreign], sentinel_ids)
+    block = p0_mixture_v2.sentinel_block([foreign], record)
     assert block["groups"] == 0
-    with pytest.raises(InfrastructureError, match="empty"):
-        p0_mixture_v2.sentinel_block([all_zero], [])
+    # 294_s: the population is STRUCTURALLY bound — a rehashed
+    # record with a foreign sentinel population refuses at the pin
+    forged = copy.deepcopy(record)
+    forged["sentinel"]["observation_ids"] = sorted(
+        set(sentinel_ids) | {foreign["observation_id"]})
+    body = {k: v for k, v in forged.items() if k != "record_sha256"}
+    forged["record_sha256"] = charter.content_sha256(body)
+    with pytest.raises(InfrastructureError, match="PINNED"):
+        p0_mixture_v2.sentinel_block([all_zero], forged)
+    # a record with the pin but a tampered body refuses at the rehash
+    stolen = copy.deepcopy(forged)
+    stolen["record_sha256"] = \
+        p0_mixture_v2.EXPECTED_MIXTURE_V2_RECORD_SHA256
+    with pytest.raises(InfrastructureError, match="rehash"):
+        p0_mixture_v2.sentinel_block([all_zero], stolen)
     # a worker-3 selection is NOT Math unlocking
     w3_row = dict(all_zero, actions=[[3]] * 8,
                   assignments=[[3]] * 8,
                   rewards=[surface[(sentinel_oid, (3,))]] * 8)
-    block = p0_mixture_v2.sentinel_block([w3_row], sentinel_ids)
+    block = p0_mixture_v2.sentinel_block([w3_row], record)
     assert block["worker1_selections"] == 0
     # a real worker-1 unlock records counts + BOTH first indices
     unlock = {"global_group_index": 9,
@@ -3786,7 +3838,7 @@ def test_b2_sentinel_block_is_executable(b2_fixture):
               "actions": [[1]] * 4 + [[0]] * 4,
               "assignments": [[1]] * 4 + [[0]] * 4,
               "rewards": [r_w1] * 4 + [r_w0] * 4}
-    block = p0_mixture_v2.sentinel_block([unlock], sentinel_ids)
+    block = p0_mixture_v2.sentinel_block([unlock], record)
     assert block["worker1_selections"] == 4
     assert block["reward1_completions"] == 4
     assert block["reward_varying_groups"] == 1

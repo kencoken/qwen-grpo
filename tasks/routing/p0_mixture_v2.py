@@ -198,29 +198,35 @@ EXPECTED_MIXTURE_V2_RECORD_SHA256 = \
 EXPECTED_EPOCH_ROWS = 157
 
 
-_C1_BASIS_CACHE: dict[str, dict[str, list[int]]] = {}
-
-
-def verify_c1_basis() -> dict[str, list[int]]:
-    """292_s B1: THE authoritative C1-basis verifier — the single
-    path to the heuristic rates. Verifies the ledger chain at the
-    exact frozen head; confirms the C1 closeout binds the expected
-    report and sample-record bytes and a non-empty terminal
-    inventory; runs the untouched V1 archive verifier; only then
-    derives the rates. Memoized per process (the archive
-    verification is not free); invoked at the B2 freeze boundary
+def verify_c1_basis(ledger_path: str | Path | None = None
+                    ) -> dict[str, list[int]]:
+    """292_s B1 as repaired by 294_s: THE authoritative C1-basis
+    verifier — the single path to the heuristic rates, run FRESH on
+    every call (no caching at a mandatory boundary). Verifies the
+    ledger chain to its CURRENT head, then requires the frozen
+    `9f4661a8…` entry to be the exact HISTORICAL C1 complete
+    closeout WITHIN that valid chain (later legitimate C2 entries
+    do not break it — the launch-time head anchor is the separate
+    per-launch expected_head check); confirms the closeout binds
+    the expected report and sample-record bytes and a non-empty
+    terminal inventory; runs the untouched V1 archive verifier;
+    only then derives the rates. Invoked at the B2 freeze boundary
     and again in C2 preflight."""
+    from .ledger import LEDGER_PATH, ledger_head, verify_ledger_head
+    path = ledger_path or LEDGER_PATH
     config = MIXTURE_V2_CONFIG["c1_evidence"]
-    head = config["closeout_entry_sha256"]
-    if head in _C1_BASIS_CACHE:
-        return _C1_BASIS_CACHE[head]
-    from .ledger import verify_ledger_head
-    entries = verify_ledger_head(head)
-    closeout = entries[-1]
-    if closeout.get("entry_sha256") != head \
-            or closeout.get("terminal_status") != "complete":
+    target = config["closeout_entry_sha256"]
+    entries = verify_ledger_head(ledger_head(path), path)
+    matches = [e for e in entries
+               if e.get("entry_sha256") == target]
+    if len(matches) != 1:
         raise InfrastructureError(
-            "the frozen C1 closeout is not the verified ledger head")
+            "the frozen C1 closeout is not present exactly once in "
+            "the verified ledger chain (294_s)")
+    closeout = matches[0]
+    if closeout.get("terminal_status") != "complete":
+        raise InfrastructureError(
+            "the frozen C1 entry is not a complete closeout")
     freeze = closeout.get("freeze", {})
     if freeze.get("exposure_report_file_sha256") != \
             config["exposure_report_file_sha256"] \
@@ -254,7 +260,6 @@ def verify_c1_basis() -> dict[str, list[int]]:
         raise InfrastructureError(
             "frozen C1 rate heuristics do not rederive from the "
             "bound archive")
-    _C1_BASIS_CACHE[head] = rates
     return rates
 
 
@@ -621,22 +626,30 @@ def verify_mixture_v2(loaded: Mapping[str, Any],
 # --- the executable sentinel estimand (288_s §5 / 290_f §6) --------------------
 
 def sentinel_block(trace_rows: list[Mapping[str, Any]],
-                   sentinel_observation_ids: list[str],
+                   mixture_record: Mapping[str, Any],
                    updates_per_group: int = 1) -> dict[str, Any]:
     """The training-exposed-sentinel block: worker-1 events are the
     estimand ([2]/[3] is different but is not Math unlocking). ONE
     definition, consumed by the C2 report and every P0 checkpoint.
-    292_s: bound to the FROZEN sentinel observation ids (the
-    mixture's Anchor sentinel population — a later schedule with
-    non-Anchor math_atomic rows cannot contaminate it), and both
-    first-GROUP and first-UPDATE occurrences are persisted (one
-    group per optimizer step => update = group * updates_per_group;
-    the parameter documents the mapping for any future grouping)."""
-    members = set(sentinel_observation_ids)
+    294_s: the population is STRUCTURALLY bound — the ids derive
+    from the PINNED mixture record (record hash checked against the
+    frozen constant), never caller-selected; both first-GROUP and
+    first-UPDATE occurrences are persisted (one group per optimizer
+    step => update = group * updates_per_group)."""
+    if mixture_record.get("record_sha256") != \
+            EXPECTED_MIXTURE_V2_RECORD_SHA256:
+        raise InfrastructureError(
+            "sentinel population must derive from the PINNED "
+            "mixture record (294_s)")
+    body = {k: v for k, v in mixture_record.items()
+            if k != "record_sha256"}
+    if content_sha256(body) != mixture_record["record_sha256"]:
+        raise InfrastructureError(
+            "mixture record does not rehash (294_s)")
+    members = set(mixture_record["sentinel"]["observation_ids"])
     if not members:
         raise InfrastructureError(
-            "sentinel population is empty — bind the frozen "
-            "sentinel observation ids (292_s)")
+            "the pinned record carries an empty sentinel population")
     block = {
         "cell": SENTINEL_CELL,
         "training_exposed": True,
