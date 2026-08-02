@@ -615,6 +615,16 @@ def verify_unit_c2_run(run_root: str | Path,
         raise InfrastructureError(
             "identity manifest fields do not match the frozen "
             "configuration")
+    # 297_s: the sample record's mixture provenance must equal BOTH
+    # the frozen config and the identity manifest — a closeout-bound
+    # artifact cannot carry false provenance
+    if record.get("mixture_record_sha256") != \
+            UNIT_C2_CONFIG["mixture_record_sha256"] \
+            or record.get("mixture_record_sha256") != \
+            identity["mixture_record_sha256"]:
+        raise InfrastructureError(
+            "sample-record mixture provenance does not match the "
+            "frozen config and identity (297_s)")
     preflight = json.loads(
         (run_root / "session_preflight.json").read_text("utf-8"))
     if content_sha256(preflight) != \

@@ -4107,3 +4107,100 @@ def test_c2_report_gates_and_decision(c2_fixture, tmp_path):
     assert q1only_report["q1_gate_pass_all_cells"] is True
     assert q1only_report["q2_cold_start_gate"]["pass"] is False
     assert "Q1-only" in q1only_report["preregistered_decision"]
+
+    # --- the anchored verifier over the complete pass archive ------
+    env = json.loads(Path(
+        "plans/conductor/evidence/resume_validation_v4/"
+        "environment_manifest.json").read_text("utf-8"))
+    identity = unit_c2_sample.static_identity_manifest(
+        fx["loaded"], fx["mixture"])
+    config = unit_c2_sample.UNIT_C2_CONFIG
+    preflight = {"free_mib": config["min_free_vram_mib"] + 79,
+                 "total_mib": 24564,
+                 "floor_mib": config["min_free_vram_mib"]}
+    real_keys = sorted(json.loads(Path(
+        "plans/conductor/evidence/grouped_probe_v1/"
+        "checkpoint_zero_hashes.json").read_text("utf-8")))
+    adapter_map = {key: "aa" * 32 for key in real_keys}
+    total = config["total_groups"]
+    group_size = config["grpo"]["group_size"]
+    counters = {"generated_groups": total, "consumed_groups": total,
+                "optimizer_updates": total,
+                "sampled_completions": total * group_size}
+    trace_rows = resume_validation.read_trace(
+        pass_root / "actions.jsonl")
+    valid = sum(1 for row in trace_rows for a in row["actions"]
+                if a is not None)
+    rows = unit_c2_sample.unit_c2_schedule(fx["loaded"],
+                                           fx["mixture"])
+    for name, payload in (
+            ("environment_manifest.json", env),
+            ("identity_manifest.json", identity),
+            ("session_preflight.json", preflight),
+            ("schedule.json",
+             [r["observation_id"] for r in rows]),
+            ("checkpoint_zero_hashes.json", adapter_map),
+            ("checkpoint_final_hashes.json", adapter_map)):
+        (pass_root / name).write_text(
+            json.dumps(payload, indent=1, sort_keys=True) + "\n",
+            encoding="utf-8")
+    record = {
+        "tranche": config["tranche"],
+        "freeze_sha256":
+            unit_c2_sample.tranche_freeze()["freeze_sha256"],
+        "config_sha256": unit_c2_sample.CONFIG_SHA256,
+        "identity_manifest_sha256": identity["manifest_sha256"],
+        "environment_manifest_sha256":
+            dev_support.validate_env_self_hash(env),
+        "attested_environment_sha256":
+            resume_validation.attested_environment_sha256(env),
+        "session_preflight": preflight,
+        "session_preflight_sha256":
+            charter.content_sha256(preflight),
+        "checkpoint_zero_adapter_sha256":
+            charter.content_sha256(adapter_map),
+        "final_adapter_sha256": charter.content_sha256(adapter_map),
+        "counters": counters,
+        "mixture_record_sha256":
+            fx["mixture"]["record_sha256"],
+        "execution_telemetry": {
+            "group_accounting": counters,
+            "surface_reward_lookups": valid,
+            "live_worker_calls": 0,
+            "worker_cache": "not-applicable",
+            "wall_seconds": 1.0,
+            "deadline_seconds":
+                config["ceiling_gpu_hours"] * 3600.0,
+            "peak_reserved_vram_mib": 0,
+            "session_preflight": preflight,
+        },
+    }
+
+    def write_record(payload):
+        (pass_root / "sample_record.json").write_text(
+            json.dumps(payload, indent=1, sort_keys=True) + "\n",
+            encoding="utf-8")
+
+    (pass_root / "exposure_report.json").write_text(
+        json.dumps(report, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    write_record(record)
+    result = unit_c2_sample.verify_unit_c2_run(
+        pass_root, identity["manifest_sha256"],
+        record["attested_environment_sha256"])
+    assert result["verdict"] == "PASS"
+    assert result["decision"] == \
+        "Q1 + Q2 hierarchical-unlocking authorized"
+    # 297_s regression: a SINGLE-FIELD mixture-provenance tamper in
+    # the sample record refuses
+    forged = dict(record, mixture_record_sha256="deadbeef" * 8)
+    write_record(forged)
+    with pytest.raises(InfrastructureError, match="mixture "
+                       "provenance"):
+        unit_c2_sample.verify_unit_c2_run(
+            pass_root, identity["manifest_sha256"],
+            record["attested_environment_sha256"])
+    write_record(record)
+    assert unit_c2_sample.verify_unit_c2_run(
+        pass_root, identity["manifest_sha256"],
+        record["attested_environment_sha256"])["verdict"] == "PASS"
