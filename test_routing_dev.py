@@ -3625,10 +3625,32 @@ def test_b2_freeze_v1_untouched_and_c1_hard_gate(monkeypatch):
         "9f4661a8")
     assert p0_mixture_v2.CONFIG_V2_SHA256 == charter.content_sha256(
         config)
-    # the heuristic rates rederive from the sha-bound C1 archive
-    assert p0_mixture_v2.c1_rates_rederived() == {
+    # 292_s B1: the AUTHORITATIVE C1-basis verifier is the only
+    # rate path (ledger head + closeout bindings + V1 archive) and
+    # the freeze boundary RUNS it (tranche_freeze succeeds only if
+    # the gate passes)
+    assert p0_mixture_v2.verify_c1_basis() == {
         "code_atomic": [32, 60], "fork_join": [3, 60],
         "math_code": [7, 150]}
+    assert p0_mixture_v2.c1_rates_rederived() == \
+        p0_mixture_v2.verify_c1_basis()
+    frozen = p0_mixture_v2.tranche_freeze()
+    assert frozen["freeze_sha256"]
+    # 292_s B2: the pure decision function over the frozen matrix
+    decide = p0_mixture_v2.decide_c2_outcome
+    assert "stop-and-review" in decide(q1_pass=False, q2_pass=True)
+    assert "Q1 + Q2" in decide(q1_pass=True, q2_pass=True)
+    assert "Q1-only" in decide(q1_pass=True, q2_pass=False)
+    assert "no scientific outcome" in decide(
+        q1_pass=True, q2_pass=True, infrastructure_abort=True)
+    contract = config["outcome_contract"]
+    assert "bridge-class" in contract["q1_population"]
+    assert "direct_specialist_control" in contract["q2_population"]
+    # 292_s B3: the frozen schedule identity is mechanically pinned
+    assert p0_mixture_v2.EXPECTED_MIXTURE_V2_RECORD_SHA256 == (
+        "135a72bf4deb77048371074636d88ffebf6bd07d1c00ae349b6fcee221"
+        "975b3f")
+    assert p0_mixture_v2.EXPECTED_EPOCH_ROWS == 157
 
 
 @pytest.fixture(scope="module")
@@ -3702,12 +3724,18 @@ def test_b2_mixture_is_the_290f_schedule(b2_fixture):
     # Q2/controls/anchor unchanged from the V1 candidate
     assert m["q2_exposure_rows_per_epoch"] == {"w2_favoured": 18,
                                                "w3_favoured": 14}
+    # 292_s B3: the build IS the pinned frozen identity
+    assert m["record_sha256"] == \
+        p0_mixture_v2.EXPECTED_MIXTURE_V2_RECORD_SHA256
     p0_mixture_v2.verify_mixture_v2(fx["loaded"], fx["selection"], m)
+    # 292_s B3: a rehashed self-consistent variant refuses at the
+    # PIN before any rederivation
     tampered = copy.deepcopy(m)
     tampered["schedule_rows"] = tampered["schedule_rows"][:-1]
     body = {k: v for k, v in tampered.items() if k != "record_sha256"}
     tampered["record_sha256"] = charter.content_sha256(body)
-    with pytest.raises(InfrastructureError, match="rederive"):
+    with pytest.raises(InfrastructureError, match="frozen schedule "
+                       "identity"):
         p0_mixture_v2.verify_mixture_v2(fx["loaded"], fx["selection"],
                                         tampered)
 
@@ -3718,7 +3746,8 @@ def test_b2_sentinel_block_is_executable(b2_fixture):
     fx = b2_fixture
     disclosure = fx["selection"]["public_factor_disclosure"]
     classes = fx["mixture"]["class_assignment"]
-    sentinel_oid = fx["mixture"]["sentinel"]["observation_ids"][0]
+    sentinel_ids = fx["mixture"]["sentinel"]["observation_ids"]
+    sentinel_oid = sentinel_ids[0]
     surface = fx["loaded"]["surface"]
     r_w0 = surface[(sentinel_oid, (0,))]
     r_w1 = surface[(sentinel_oid, (1,))]
@@ -3728,34 +3757,44 @@ def test_b2_sentinel_block_is_executable(b2_fixture):
                 "completions": ["x"] * 8,
                 "actions": [[0]] * 8, "assignments": [[0]] * 8,
                 "rewards": [r_w0] * 8}
-    block = p0_mixture_v2.sentinel_block([all_zero], disclosure,
-                                         classes)
+    block = p0_mixture_v2.sentinel_block([all_zero], sentinel_ids)
     assert block["groups"] == 1
     assert block["worker1_selections"] == 0
     assert block["reward_varying_groups"] == 0
     assert block["first_worker1_group_index"] is None
+    assert block["first_worker1_update_index"] is None
+    # 292_s: a NON-SENTINEL math_atomic row cannot contaminate —
+    # bound to the frozen ids, not the cell
+    foreign = dict(all_zero, observation_id=next(
+        oid for oid, row in disclosure.items()
+        if row["cell_id"] == "math_atomic"
+        and oid not in sentinel_ids))
+    block = p0_mixture_v2.sentinel_block([foreign], sentinel_ids)
+    assert block["groups"] == 0
+    with pytest.raises(InfrastructureError, match="empty"):
+        p0_mixture_v2.sentinel_block([all_zero], [])
     # a worker-3 selection is NOT Math unlocking
     w3_row = dict(all_zero, actions=[[3]] * 8,
                   assignments=[[3]] * 8,
                   rewards=[surface[(sentinel_oid, (3,))]] * 8)
-    block = p0_mixture_v2.sentinel_block([w3_row], disclosure,
-                                         classes)
+    block = p0_mixture_v2.sentinel_block([w3_row], sentinel_ids)
     assert block["worker1_selections"] == 0
-    # a real worker-1 unlock records counts + firsts + Q1
+    # a real worker-1 unlock records counts + BOTH first indices
     unlock = {"global_group_index": 9,
               "observation_id": sentinel_oid,
               "completions": ["x"] * 8,
               "actions": [[1]] * 4 + [[0]] * 4,
               "assignments": [[1]] * 4 + [[0]] * 4,
               "rewards": [r_w1] * 4 + [r_w0] * 4}
-    block = p0_mixture_v2.sentinel_block([unlock], disclosure,
-                                         classes)
+    block = p0_mixture_v2.sentinel_block([unlock], sentinel_ids)
     assert block["worker1_selections"] == 4
     assert block["reward1_completions"] == 4
     assert block["reward_varying_groups"] == 1
     assert block["q1_counted_groups"] == 1
     assert block["first_worker1_group_index"] == 9
+    assert block["first_worker1_update_index"] == 9
     assert block["first_q1_counted_group_index"] == 9
+    assert block["first_q1_counted_update_index"] == 9
 
 
 def test_b2_sizing_excludes_the_sentinel():

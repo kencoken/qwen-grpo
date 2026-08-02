@@ -154,6 +154,30 @@ MIXTURE_V2_CONFIG: dict[str, Any] = {
                 "measured_finalization_reserve_seconds"],
         },
     },
+    # 292_s B2: the frozen outcome contract (was prose-only)
+    "outcome_contract": {
+        "q1_population": "bridge-class draws only",
+        "q1_counted_event": ("a reward-1.0 FULLY family-correct "
+                             "completion AND a reward-0.5 completion "
+                             "of STRICTLY LOWER family correctness "
+                             "in the same group"),
+        "q2_population": ("q2_composite rows only; the "
+                          "direct_specialist_control class is "
+                          "excluded from every Q2 statistic and "
+                          "gate"),
+        "decision_matrix": {
+            "q1_fail": "stop-and-review (no P0 launch)",
+            "q1_pass_q2_pass":
+                "Q1 + Q2 hierarchical-unlocking authorized",
+            "q1_pass_q2_fail": ("maximum permissible scope Q1-only; "
+                                "the P0 freeze decides whether "
+                                "launch remains worthwhile"),
+            "infrastructure_abort": (
+                "no scientific outcome; the repair/relaunch "
+                "protocol applies; does NOT consume the "
+                "no-third-scientific-iteration branch"),
+        },
+    },
     "screened_latents": {"fork_join": [42]},
     "shuffle_seed": 20260802,
     "lineage": {
@@ -165,12 +189,95 @@ MIXTURE_V2_CONFIG: dict[str, Any] = {
     },
 }
 CONFIG_V2_SHA256 = content_sha256(MIXTURE_V2_CONFIG)
+# 292_s B3: the FROZEN schedule identity — a later builder edit
+# producing a new self-consistent schedule cannot ride under the
+# unchanged config hash; set after the reviewed build, enforced in
+# build_mixture_v2 AND verify_mixture_v2.
+EXPECTED_MIXTURE_V2_RECORD_SHA256 = \
+    "135a72bf4deb77048371074636d88ffebf6bd07d1c00ae349b6fcee221975b3f"
+EXPECTED_EPOCH_ROWS = 157
+
+
+_C1_BASIS_CACHE: dict[str, dict[str, list[int]]] = {}
+
+
+def verify_c1_basis() -> dict[str, list[int]]:
+    """292_s B1: THE authoritative C1-basis verifier — the single
+    path to the heuristic rates. Verifies the ledger chain at the
+    exact frozen head; confirms the C1 closeout binds the expected
+    report and sample-record bytes and a non-empty terminal
+    inventory; runs the untouched V1 archive verifier; only then
+    derives the rates. Memoized per process (the archive
+    verification is not free); invoked at the B2 freeze boundary
+    and again in C2 preflight."""
+    config = MIXTURE_V2_CONFIG["c1_evidence"]
+    head = config["closeout_entry_sha256"]
+    if head in _C1_BASIS_CACHE:
+        return _C1_BASIS_CACHE[head]
+    from .ledger import verify_ledger_head
+    entries = verify_ledger_head(head)
+    closeout = entries[-1]
+    if closeout.get("entry_sha256") != head \
+            or closeout.get("terminal_status") != "complete":
+        raise InfrastructureError(
+            "the frozen C1 closeout is not the verified ledger head")
+    freeze = closeout.get("freeze", {})
+    if freeze.get("exposure_report_file_sha256") != \
+            config["exposure_report_file_sha256"] \
+            or freeze.get("sample_record_file_sha256") != \
+            config["sample_record_file_sha256"]:
+        raise InfrastructureError(
+            "the C1 closeout does not bind the frozen report/sample "
+            "bytes (292_s B1)")
+    if not freeze.get("terminal_artifact_hashes"):
+        raise InfrastructureError(
+            "the C1 closeout carries no terminal inventory")
+    raw = Path(config["exposure_report_path"]).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != \
+            config["exposure_report_file_sha256"]:
+        raise InfrastructureError(
+            "C1 exposure report bytes are not the closeout-bound ones")
+    record_path = Path(config["exposure_report_path"]).parent \
+        / "sample_record.json"
+    if hashlib.sha256(record_path.read_bytes()).hexdigest() != \
+            config["sample_record_file_sha256"]:
+        raise InfrastructureError(
+            "C1 sample-record bytes are not the closeout-bound ones "
+            "(292_s B1)")
+    if reverify_c1_archive()["verdict"] != "PASS":
+        raise InfrastructureError("the C1 archive did not reverify")
+    report = json.loads(raw.decode("utf-8"))
+    rates = {cell: [report["q1_gate"][cell]["counted_groups"],
+                    report["q1_gate"][cell]["bridge_draws"]]
+             for cell in DIRECT_Q1_CELLS}
+    if rates != MIXTURE_V2_CONFIG["c1_rate_heuristics"]:
+        raise InfrastructureError(
+            "frozen C1 rate heuristics do not rederive from the "
+            "bound archive")
+    _C1_BASIS_CACHE[head] = rates
+    return rates
+
+
+def decide_c2_outcome(*, q1_pass: bool, q2_pass: bool,
+                      infrastructure_abort: bool = False) -> str:
+    """292_s B2: the pure decision function over the frozen matrix."""
+    matrix = MIXTURE_V2_CONFIG["outcome_contract"]["decision_matrix"]
+    if infrastructure_abort:
+        return matrix["infrastructure_abort"]
+    if not q1_pass:
+        return matrix["q1_fail"]
+    if q2_pass:
+        return matrix["q1_pass_q2_pass"]
+    return matrix["q1_pass_q2_fail"]
 
 
 def tranche_freeze() -> dict[str, Any]:
     if content_sha256(MIXTURE_V2_CONFIG) != CONFIG_V2_SHA256:
         raise InfrastructureError(
             "MIXTURE_V2_CONFIG was mutated after import")
+    # 292_s B1: the freeze boundary RUNS the C1-basis gate — a
+    # successful freeze proves the gate ran
+    verify_c1_basis()
     body = {
         "kind": "p0_mixture_v2",
         "question": ("Unit B2: the ONE fixed P0 schedule under the "
@@ -239,23 +346,10 @@ def load_frozen_selection_v2() -> dict[str, Any]:
 
 
 def c1_rates_rederived() -> dict[str, list[int]]:
-    """288_s §2: the heuristic rates REDERIVE from the sha-bound C1
-    archive and must equal the frozen literals."""
-    config = MIXTURE_V2_CONFIG["c1_evidence"]
-    raw = Path(config["exposure_report_path"]).read_bytes()
-    if hashlib.sha256(raw).hexdigest() != \
-            config["exposure_report_file_sha256"]:
-        raise InfrastructureError(
-            "C1 exposure report bytes are not the frozen archive")
-    report = json.loads(raw.decode("utf-8"))
-    rates = {cell: [report["q1_gate"][cell]["counted_groups"],
-                    report["q1_gate"][cell]["bridge_draws"]]
-             for cell in DIRECT_Q1_CELLS}
-    if rates != MIXTURE_V2_CONFIG["c1_rate_heuristics"]:
-        raise InfrastructureError(
-            "frozen C1 rate heuristics do not rederive from the "
-            "bound archive")
-    return rates
+    """288_s §2 / 292_s B1: the ONLY rate path is the authoritative
+    C1-basis verifier (ledger head + closeout bindings + V1 archive
+    verification + rate equality)."""
+    return verify_c1_basis()
 
 
 # --- the B2 mixture builder ----------------------------------------------------
@@ -495,6 +589,14 @@ def build_mixture_v2(loaded: Mapping[str, Any],
         "p_w3_given_goal_first": round(p_w3_gf, 4),
     }
     record["record_sha256"] = content_sha256(record)
+    if len(record["schedule_rows"]) != EXPECTED_EPOCH_ROWS:
+        raise InfrastructureError(
+            f"schedule has {len(record['schedule_rows'])} rows; the "
+            f"frozen design needs {EXPECTED_EPOCH_ROWS} (292_s B3)")
+    if record["record_sha256"] != EXPECTED_MIXTURE_V2_RECORD_SHA256:
+        raise InfrastructureError(
+            "the built mixture is not the FROZEN schedule identity "
+            f"{EXPECTED_MIXTURE_V2_RECORD_SHA256[:16]}… (292_s B3)")
     return record
 
 
@@ -504,6 +606,10 @@ def verify_mixture_v2(loaded: Mapping[str, Any],
     body = {k: v for k, v in record.items() if k != "record_sha256"}
     if content_sha256(body) != record.get("record_sha256"):
         raise InfrastructureError("mixture record does not rehash")
+    if record.get("record_sha256") != \
+            EXPECTED_MIXTURE_V2_RECORD_SHA256:
+        raise InfrastructureError(
+            "record is not the frozen schedule identity (292_s B3)")
     rederived = build_mixture_v2(loaded, selection)
     if json.loads(json.dumps(rederived)) != \
             json.loads(json.dumps(dict(record))):
@@ -515,14 +621,26 @@ def verify_mixture_v2(loaded: Mapping[str, Any],
 # --- the executable sentinel estimand (288_s §5 / 290_f §6) --------------------
 
 def sentinel_block(trace_rows: list[Mapping[str, Any]],
-                   disclosure: Mapping[str, Any],
-                   classes: Mapping[str, str]) -> dict[str, Any]:
+                   sentinel_observation_ids: list[str],
+                   updates_per_group: int = 1) -> dict[str, Any]:
     """The training-exposed-sentinel block: worker-1 events are the
     estimand ([2]/[3] is different but is not Math unlocking). ONE
-    definition, consumed by the C2 report and every P0 checkpoint."""
+    definition, consumed by the C2 report and every P0 checkpoint.
+    292_s: bound to the FROZEN sentinel observation ids (the
+    mixture's Anchor sentinel population — a later schedule with
+    non-Anchor math_atomic rows cannot contaminate it), and both
+    first-GROUP and first-UPDATE occurrences are persisted (one
+    group per optimizer step => update = group * updates_per_group;
+    the parameter documents the mapping for any future grouping)."""
+    members = set(sentinel_observation_ids)
+    if not members:
+        raise InfrastructureError(
+            "sentinel population is empty — bind the frozen "
+            "sentinel observation ids (292_s)")
     block = {
         "cell": SENTINEL_CELL,
         "training_exposed": True,
+        "observation_ids": sorted(members),
         "groups": 0,
         "worker1_selections": 0,
         "worker1_completions": 0,
@@ -530,21 +648,27 @@ def sentinel_block(trace_rows: list[Mapping[str, Any]],
         "reward_varying_groups": 0,
         "q1_counted_groups": 0,
         "first_worker1_group_index": None,
+        "first_worker1_update_index": None,
         "first_reward1_group_index": None,
+        "first_reward1_update_index": None,
         "first_varying_group_index": None,
+        "first_varying_update_index": None,
         "first_q1_counted_group_index": None,
+        "first_q1_counted_update_index": None,
     }
     for row in trace_rows:
         oid = row["observation_id"]
-        if disclosure[oid]["cell_id"] != SENTINEL_CELL:
+        if oid not in members:
             continue
         index = row["global_group_index"]
+        update = index * updates_per_group
         block["groups"] += 1
         rewards = list(row["rewards"])
         if len(set(rewards)) > 1:
             block["reward_varying_groups"] += 1
             if block["first_varying_group_index"] is None:
                 block["first_varying_group_index"] = index
+                block["first_varying_update_index"] = update
         has_r1_fc = False
         has_half_lower = False
         for reward, assignment in zip(row["rewards"],
@@ -556,10 +680,12 @@ def sentinel_block(trace_rows: list[Mapping[str, Any]],
                 block["worker1_completions"] += 1
                 if block["first_worker1_group_index"] is None:
                     block["first_worker1_group_index"] = index
+                    block["first_worker1_update_index"] = update
             if reward == 1.0:
                 block["reward1_completions"] += 1
                 if block["first_reward1_group_index"] is None:
                     block["first_reward1_group_index"] = index
+                    block["first_reward1_update_index"] = update
                 if _fc_fraction(SENTINEL_CELL,
                                 tuple(assignment)) == 1.0:
                     has_r1_fc = True
@@ -570,6 +696,7 @@ def sentinel_block(trace_rows: list[Mapping[str, Any]],
             block["q1_counted_groups"] += 1
             if block["first_q1_counted_group_index"] is None:
                 block["first_q1_counted_group_index"] = index
+                block["first_q1_counted_update_index"] = update
     return block
 
 
