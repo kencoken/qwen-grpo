@@ -25,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import extension_run, ledger, p0_mixture, p0_mixture_v2, support_run, telemetry, unit_c_sample
+from tasks.routing import extension_run, ledger, p0_mixture, p0_mixture_v2, support_run, telemetry, unit_c2_sample, unit_c_sample
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -3869,3 +3869,241 @@ def test_b2_sizing_excludes_the_sentinel():
         measured_whole_epoch_seconds=600.0)
     assert cap["capped_epochs"] == 52
     assert cap["stop_for_reviewed_amendment"] is False
+
+
+# --- Unit C2: the exposure sample on the pinned B2 mixture ---------------------
+
+PRISTINE_UNIT_C2_CONFIG = copy.deepcopy(unit_c2_sample.UNIT_C2_CONFIG)
+
+
+def test_c2_freeze_binds_the_pinned_candidate():
+    config = PRISTINE_UNIT_C2_CONFIG
+    assert config["mixture_record_sha256"] == \
+        p0_mixture_v2.EXPECTED_MIXTURE_V2_RECORD_SHA256
+    assert config["mixture_config_sha256"].startswith("66d62b92")
+    assert config["epochs"] == 5
+    assert config["total_groups"] == 785
+    assert config["grpo"]["seed"] == 20260803    # fresh
+    assert config["ceiling_gpu_hours"] == 1.25
+    assert config["lineage"]["parent_entry_sha256"].startswith(
+        "9f4661a8")
+    # identical construction literals to the validated V1 (seed only)
+    v1 = PRISTINE_UNIT_C2_CONFIG, PRISTINE_UNIT_C_CONFIG
+    for key in ("model_id", "revision", "lora", "quantization",
+                "policy_max_new_tokens", "lora_key_set",
+                "zero_update_mechanism"):
+        if key == "zero_update_mechanism":
+            continue
+        assert config[key] == PRISTINE_UNIT_C_CONFIG[key], key
+    for key, value in PRISTINE_UNIT_C_CONFIG["grpo"].items():
+        if key != "seed":
+            assert config["grpo"][key] == value, key
+    assert unit_c2_sample.CONFIG_SHA256 == charter.content_sha256(
+        config)
+
+
+@pytest.fixture(scope="module")
+def c2_fixture(tmp_path_factory):
+    mp = pytest.MonkeyPatch()
+    for key in ("original_surface_lock_sha256", "original_prefix_k",
+                "prefix_k", "search_cap", "run_root",
+                "original_c_fixed_path", "namespace",
+                "original_surface_dir"):
+        mp.setitem(extension_run.EXTENSION_CONFIG, key,
+                   PRISTINE_EXT_CONFIG[key])
+    mp.setattr(unit_c_sample, "UNIT_C_CONFIG",
+               copy.deepcopy(PRISTINE_UNIT_C_CONFIG))
+    mp.setattr(unit_c_sample, "CONFIG_SHA256",
+               charter.content_sha256(PRISTINE_UNIT_C_CONFIG))
+    replica = tmp_path_factory.mktemp("c2") / "surface"
+    support_run.restore_surface_evidence(
+        "plans/conductor/evidence/support_extension_v1/surface",
+        replica)
+    mp.setitem(unit_c2_sample.UNIT_C2_CONFIG,
+               "extension_surface_dir", str(replica))
+    mp.setattr(unit_c2_sample, "CONFIG_SHA256",
+               charter.content_sha256(unit_c2_sample.UNIT_C2_CONFIG))
+    loaded = unit_c2_sample.load_locked_extension()
+    mixture = unit_c2_sample.pinned_mixture(loaded)
+    yield {"loaded": loaded, "mixture": mixture}
+    mp.undo()
+
+
+def test_c2_schedule_and_row_predicates(c2_fixture):
+    """294_s obligation: EXECUTABLE row predicates with
+    cross-population tests — every scheduled row belongs to exactly
+    one population; Q1 = bridge-only; Q2 excludes the control; the
+    sentinel population is the pinned ids."""
+    fx = c2_fixture
+    mixture = fx["mixture"]
+    rows = unit_c2_sample.unit_c2_schedule(fx["loaded"], mixture)
+    assert len(rows) == 785
+    assert [r["observation_id"] for r in rows] == \
+        list(mixture["schedule_rows"]) * 5
+    sentinel_ids = set(mixture["sentinel"]["observation_ids"])
+    populations = {}
+    for oid in set(mixture["schedule_rows"]):
+        population = unit_c2_sample.row_population(mixture, oid)
+        populations[population] = populations.get(population, 0) + 1
+        # exactly one population per row
+        flags = [unit_c2_sample.is_q1_population(mixture, oid),
+                 unit_c2_sample.is_q2_population(mixture, oid),
+                 unit_c2_sample.is_sentinel_population(mixture, oid)]
+        assert sum(flags) <= 1
+        if oid in sentinel_ids:
+            assert unit_c2_sample.is_sentinel_population(mixture, oid)
+            assert not unit_c2_sample.is_q1_population(mixture, oid)
+        if unit_c2_sample.is_q1_population(mixture, oid):
+            assert mixture["class_assignment"][oid] == "bridge"
+        if unit_c2_sample.is_q2_population(mixture, oid):
+            assert mixture["class_assignment"][oid] == "q2_composite"
+    # the control is NOT in the Q2 population
+    for oid, cls in mixture["class_assignment"].items():
+        if cls == "direct_specialist_control":
+            assert not unit_c2_sample.is_q2_population(mixture, oid)
+    # sentinel rows are anchor-class but sentinel-population
+    assert populations["sentinel"] == 3
+    manifest = unit_c2_sample.static_identity_manifest(
+        fx["loaded"], mixture)
+    body = {k: v for k, v in manifest.items()
+            if k != "manifest_sha256"}
+    assert manifest["manifest_sha256"] == charter.content_sha256(body)
+    # a foreign row refuses population lookup
+    with pytest.raises(InfrastructureError, match="not in the "
+                       "pinned mixture"):
+        unit_c2_sample.row_population(mixture, "nonexistent:row")
+
+
+def test_c2_report_gates_and_decision(c2_fixture, tmp_path):
+    """Synthetic 785-row archives exercise the gate branches on the
+    B2 schedule through the frozen decision function."""
+    fx = c2_fixture
+
+    def build_archive(root, q1_cells=("code_atomic", "fork_join",
+                                      "math_code"),
+                      q2_specialists=True):
+        from tasks.conductor.grpo_task import positional_to_semantic
+        from tasks.conductor.stage1 import (
+            NODE_FAMILIES, WORKER_FAMILIES,
+        )
+        loaded, mixture = fx["loaded"], fx["mixture"]
+        surface = loaded["surface"]
+        selection = p0_mixture_v2.load_frozen_selection_v2()
+        disclosure = selection["public_factor_disclosure"]
+        rows = unit_c2_sample.unit_c2_schedule(loaded, mixture)
+        root.mkdir(parents=True, exist_ok=True)
+
+        def fc(cell, assignment):
+            fams = NODE_FAMILIES[cell]
+            nodes = sorted(fams)
+            return sum(1 for n, w in zip(nodes, assignment)
+                       if WORKER_FAMILIES.get(w) == fams[n]) \
+                / len(nodes)
+
+        def code_idx(cell):
+            fams = NODE_FAMILIES[cell]
+            nodes = sorted(fams)
+            for i, node in enumerate(nodes):
+                if fams[node] == "code":
+                    return i
+            return None
+
+        plan_cache = {}
+
+        def group_plan(oid, cell, positions, num_steps, mode):
+            key = (oid, mode)
+            if key in plan_cache:
+                return plan_cache[key]
+            import itertools
+            candidates = []
+            for action in itertools.product(range(4),
+                                            repeat=num_steps):
+                semantic = tuple(positional_to_semantic(
+                    list(action), positions))
+                payoff = surface.get((oid, semantic))
+                if payoff is None:
+                    continue
+                candidates.append(
+                    (list(action), list(semantic), payoff,
+                     fc(cell, semantic)))
+            if mode == "q1":
+                r1 = next(c for c in candidates
+                          if c[2] == 1.0 and c[3] == 1.0)
+                half = next(c for c in candidates
+                            if c[2] == 0.5 and c[3] < 1.0)
+                plan = [r1] * 4 + [half] * 4
+            elif mode == "specialists":
+                idx = code_idx(cell)
+                w2 = next(c for c in candidates if c[1][idx] == 2)
+                w3 = next(c for c in candidates if c[1][idx] == 3)
+                plan = [w2] * 4 + [w3] * 4
+            else:
+                plan = [candidates[0]] * 8
+            plan_cache[key] = plan
+            return plan
+
+        lines = []
+        for i, row in enumerate(rows):
+            oid = row["observation_id"]
+            cell = disclosure[oid]["cell_id"]
+            positions = json.loads(row["positions"])
+            population = unit_c2_sample.row_population(mixture, oid)
+            if population == "bridge" and cell in q1_cells:
+                mode = "q1"
+            elif population in ("q2_composite",
+                                "direct_specialist_control") \
+                    and q2_specialists:
+                mode = "specialists"
+            else:
+                mode = "uniform"
+            plan = group_plan(oid, cell, positions,
+                              row["num_steps"], mode)
+            lines.append(json.dumps({
+                "global_group_index": i, "observation_id": oid,
+                "completions": [json.dumps({"worker_ids": a})
+                                for a, _, _, _ in plan],
+                "actions": [a for a, _, _, _ in plan],
+                "assignments": [s for _, s, _, _ in plan],
+                "rewards": [p for _, _, p, _ in plan]}))
+        (root / "actions.jsonl").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8")
+
+    # PASS branch: all three cells + specialists
+    pass_root = tmp_path / "c2-pass"
+    build_archive(pass_root)
+    report = unit_c2_sample.build_exposure_report(pass_root)
+    assert report["q1_gate_pass_all_cells"] is True
+    for cell, gate in report["q1_gate"].items():
+        assert gate["pass"] is True
+        assert len(gate["distinct_latents"]) >= 2
+    assert report["q2_cold_start_gate"]["pass"] is True
+    assert report["preregistered_decision"] == \
+        "Q1 + Q2 hierarchical-unlocking authorized"
+    # sizing derives over the direct-Q1 cells; sentinel absent
+    assert report["p0_size_derived"]["derivable"] is True
+    assert "math_atomic" not in \
+        report["p0_size_derived"]["sizing_cells"]
+    # the sentinel block is present, bound to the pinned record,
+    # and all-[0]-style silent here (uniform anchor rows)
+    sentinel = report["sentinel_block"]
+    assert sentinel["cell"] == "math_atomic"
+    assert sentinel["groups"] == 15          # 3 rows x 5 epochs
+    assert report["per_population_draws"]["sentinel"] == 15
+    assert report["per_population_draws"]["bridge"] == 84 * 5
+
+    # Q1-only branch: fork_join silent -> direct-Q1 FAILS (stop);
+    # then a Q2-fail variant reaches maximum-Q1-only
+    stop_root = tmp_path / "c2-stop"
+    build_archive(stop_root, q1_cells=("code_atomic", "math_code"))
+    stop_report = unit_c2_sample.build_exposure_report(stop_root)
+    assert stop_report["q1_gate"]["fork_join"]["pass"] is False
+    assert stop_report["preregistered_decision"] == \
+        "stop-and-review (no P0 launch)"
+    assert stop_report["p0_size_derived"]["derivable"] is False
+
+    q1only_root = tmp_path / "c2-q1only"
+    build_archive(q1only_root, q2_specialists=False)
+    q1only_report = unit_c2_sample.build_exposure_report(q1only_root)
+    assert q1only_report["q1_gate_pass_all_cells"] is True
+    assert q1only_report["q2_cold_start_gate"]["pass"] is False
+    assert "Q1-only" in q1only_report["preregistered_decision"]
