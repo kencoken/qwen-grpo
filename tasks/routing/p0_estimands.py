@@ -79,6 +79,21 @@ def code_node_index(cell: str) -> int | None:
     return None
 
 
+def valid_assignment(cell: str, assignment: Any) -> bool:
+    """313_s P1: the shared EXACT assignment check applied wherever
+    an estimand accepts an assignment — the cell's exact node count,
+    non-boolean integer workers, registered worker ids only. A
+    malformed assignment is never scored; it is excluded (False),
+    exactly like a None from the parser."""
+    if assignment is None or not isinstance(assignment,
+                                            (list, tuple)):
+        return False
+    if len(assignment) != len(NODE_FAMILIES[cell]):
+        return False
+    return all(isinstance(w, int) and not isinstance(w, bool)
+               and w in WORKER_FAMILIES for w in assignment)
+
+
 # --- Q1: the counted event -----------------------------------------------------
 
 def q1_counted_event(event: Q1CountedEvent, cell: str,
@@ -101,11 +116,11 @@ def q1_counted_event(event: Q1CountedEvent, cell: str,
         raise InfrastructureError(
             "rewards and assignments are not parallel")
     has_high = any(
-        r == event.high_reward and a is not None
+        r == event.high_reward and valid_assignment(cell, a)
         and family_correct_fraction(cell, a) == 1.0
         for r, a in zip(rewards, assignments))
     has_low = any(
-        r == event.low_reward and a is not None
+        r == event.low_reward and valid_assignment(cell, a)
         and family_correct_fraction(cell, a) < 1.0
         for r, a in zip(rewards, assignments))
     return has_high and has_low
@@ -141,14 +156,15 @@ def c2_eligible_completion(rule: EligibilityRule, cell: str,
                            assignment: Sequence[int] | None) -> bool:
     """Quantity 2 — eligibility: every non-Code node routed
     family-correct AND every Code choice within the specialist pool;
-    malformed completions are EXCLUDED (False), never dropped from
-    the group."""
+    malformed completions — None from the parser OR a structurally
+    malformed assignment (313_s P1) — are EXCLUDED (False), never
+    dropped from the group."""
     if rule.rule_id != "c2-eligibility-v1" \
             or rule.non_code_routing != "family_correct" \
             or rule.malformed_completions != "excluded":
         raise InfrastructureError(
             f"unknown eligibility rule {rule!r}")
-    if assignment is None:
+    if not valid_assignment(cell, assignment):
         return False
     families = NODE_FAMILIES[cell]
     nodes = sorted(families)
@@ -185,8 +201,9 @@ def marginal_target_selection(cell: str,
     gate: the Code slot carries the target worker, counted over
     VALID completions regardless of upstream correctness (the
     contract's marginal gate structurally cannot become
-    conditional)."""
-    if assignment is None:
+    conditional). A malformed assignment (313_s P1) never counts as
+    a selection."""
+    if not valid_assignment(cell, assignment):
         return False
     index = code_node_index(cell)
     if index is None:
@@ -208,14 +225,15 @@ def conditional_choice(numerator: int,
     return numerator / denominator
 
 
-def group_contrasts(rewards: Sequence[float],
+def group_contrasts(cell: str, rewards: Sequence[float],
                     assignments: Sequence[Sequence[int] | None],
                     pair_entry: Mapping[str, Any] | None
                     ) -> dict[str, bool]:
     """Quantity 4 — the contrasts. Semantic: reward levels 1 and 0.5
     co-present in the group (NOT the Q1 counted event — no
     family-correctness condition). Direct: both family-correct
-    variants of the pair drawn in one group."""
+    variants of the pair drawn in one group; only structurally
+    VALID assignments can hit a variant (313_s P1)."""
     for value in rewards:
         reward_level(value)
     semantic = any(r == 0.5 for r in rewards) \
@@ -225,9 +243,11 @@ def group_contrasts(rewards: Sequence[float],
         w2 = list(pair_entry["assignment_w2"])
         w3 = list(pair_entry["assignment_w3"])
         hits_w2 = sum(1 for a in assignments
-                      if a is not None and list(a) == w2)
+                      if valid_assignment(cell, a)
+                      and list(a) == w2)
         hits_w3 = sum(1 for a in assignments
-                      if a is not None and list(a) == w3)
+                      if valid_assignment(cell, a)
+                      and list(a) == w3)
         direct = hits_w2 > 0 and hits_w3 > 0
     return {"semantic_contrast": semantic,
             "direct_contrast": direct}
@@ -373,6 +393,11 @@ def sentinel_checkpoint_block(scope: ActiveScope,
         if oid not in ids:
             continue
         index = row["global_group_index"]
+        if not isinstance(index, int) or isinstance(index, bool) \
+                or index < 0:
+            raise InfrastructureError(
+                f"{oid}: global_group_index {index!r} is not a "
+                "non-negative non-boolean integer (313_s)")
         rewards = list(row["rewards"])
         assignments = list(row["assignments"])
         block["group_denominator"] += 1
@@ -381,7 +406,7 @@ def sentinel_checkpoint_block(scope: ActiveScope,
             block["reward_varying_groups"] += 1
             _mark("varying", index)
         for reward, assignment in zip(rewards, assignments):
-            if assignment is None:
+            if not valid_assignment(cell, assignment):
                 continue
             if 1 in assignment:
                 block["worker1_selections"] += 1

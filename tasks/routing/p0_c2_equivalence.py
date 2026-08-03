@@ -146,6 +146,20 @@ def derive_from_trace(trace_rows: Sequence[Mapping[str, Any]], *,
         raise InfrastructureError(
             "trace rows do not follow the pinned schedule — the "
             "replay refuses (reorder/substitution)")
+    # 313_s P1: scheduled ids REPEAT, so the id sequence alone
+    # cannot see a swap of two complete rows for the same
+    # observation — every global_group_index must be a non-boolean
+    # integer equal to its physical row position
+    for position, row in enumerate(trace_rows):
+        index = row.get("global_group_index")
+        if not isinstance(index, int) or isinstance(index, bool) \
+                or index != position:
+            raise InfrastructureError(
+                f"trace row at position {position} carries "
+                f"global_group_index {index!r} — every index must "
+                "equal its physical row position (313_s: a "
+                "repeated-id reorder is not observable from the id "
+                "sequence)")
 
     sentinel_ids = sorted(contract.scope.sentinel_observation_ids)
     population_by_observation = {
@@ -268,7 +282,8 @@ def derive_from_trace(trace_rows: Sequence[Mapping[str, Any]], *,
         counted = (population == "bridge" and cell in cells
                    and est.q1_counted_event(event, cell, rewards,
                                             assignments))
-        contrasts = est.group_contrasts(rewards, assignments, pair)
+        contrasts = est.group_contrasts(cell, rewards, assignments,
+                                        pair)
         group_eligible = sum(
             1 for a in assignments
             if est.c2_eligible_completion(eligibility, cell, a))

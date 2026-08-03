@@ -4678,7 +4678,8 @@ def test_p0_estimand_rules():
     # contrast) with the 0.5 FULLY family-correct — NOT a Q1 event
     rewards, assignments = [1.0, 0.5], [(2,), (3,)]
     assert p0_estimands.group_contrasts(
-        rewards, assignments, None)["semantic_contrast"]
+        "code_atomic", rewards, assignments, None)[
+        "semantic_contrast"]
     assert not p0_estimands.q1_counted_event(
         event, "code_atomic", rewards, assignments)
     with pytest.raises(InfrastructureError, match="unknown Q1"):
@@ -4697,6 +4698,26 @@ def test_p0_estimand_rules():
         elig, "fork_join", (1, 2, 1))
     assert not p0_estimands.c2_eligible_completion(
         elig, "fork_join", None)
+    # 313_s P1: STRUCTURALLY malformed assignments are excluded
+    # everywhere an estimand accepts an assignment — the reviewer's
+    # reproductions are permanent regressions
+    assert not p0_estimands.valid_assignment(
+        "fork_join", (0, 2, 1, 0))
+    assert not p0_estimands.valid_assignment("fork_join", (0,))
+    assert not p0_estimands.valid_assignment(
+        "fork_join", (0, True, 1))
+    assert not p0_estimands.valid_assignment(
+        "fork_join", (0, 7, 1))
+    assert p0_estimands.valid_assignment("fork_join", (0, 2, 1))
+    assert not p0_estimands.c2_eligible_completion(
+        elig, "fork_join", (0, 2, 1, 0))
+    assert not p0_estimands.marginal_target_selection(
+        "fork_join", (0, 2, 1, 0), 2)
+    assert not p0_estimands.marginal_target_selection(
+        "fork_join", (0,), 2)
+    assert not p0_estimands.q1_counted_event(
+        event, "fork_join", [1.0, 0.5],
+        [(0, 2, 1, 0), (0, 2, 0)])
     # COUNTEREXAMPLE 2: the target Code worker with a family-WRONG
     # non-Code slot — a marginal selection that is NOT eligible
     marginal_only = (1, 2, 1)
@@ -4715,11 +4736,16 @@ def test_p0_estimand_rules():
         elig, "fork_join", (0, 2, 1), {**pair, "direction": None})
     assert not p0_estimands.c2_optimal_completion(
         elig, "fork_join", marginal_only, pair)
-    # direct contrast requires BOTH variants in one group
+    # direct contrast requires BOTH VALID variants in one group
     assert p0_estimands.group_contrasts(
-        [1.0, 0.5], [(0, 2, 1), (0, 3, 1)], pair)["direct_contrast"]
+        "fork_join", [1.0, 0.5], [(0, 2, 1), (0, 3, 1)],
+        pair)["direct_contrast"]
     assert not p0_estimands.group_contrasts(
-        [1.0, 0.5], [(0, 2, 1), (0, 2, 1)], pair)["direct_contrast"]
+        "fork_join", [1.0, 0.5], [(0, 2, 1), (0, 2, 1)],
+        pair)["direct_contrast"]
+    assert not p0_estimands.group_contrasts(
+        "fork_join", [1.0, 0.5], [(0, 2, 1), (0, 3, 1, 0)],
+        pair)["direct_contrast"]
     # the conditional estimand: zero denominator is UNDEFINED
     assert p0_estimands.conditional_choice(0, 15) == 0.0
     assert p0_estimands.conditional_choice(0, 0) is None
@@ -4838,6 +4864,12 @@ def test_p0_sentinel_estimand():
                        "non-boolean"):
         p0_estimands.sentinel_checkpoint_block(
             scope, event, [], updates_per_group=True)
+    # 313_s: a forged group index refuses inside the sentinel block
+    with pytest.raises(InfrastructureError, match="non-negative "
+                       "non-boolean"):
+        p0_estimands.sentinel_checkpoint_block(scope, event, [
+            {"observation_id": ids[0], "global_group_index": True,
+             "rewards": [0.0], "assignments": [[0]]}])
 
 
 @pytest.fixture(scope="module")
@@ -4912,6 +4944,29 @@ def test_p0_c2_replay_sensitivity(c2_replay_ctx):
     swapped[0], swapped[1] = swapped[1], swapped[0]
     with pytest.raises(InfrastructureError, match="pinned schedule"):
         p0_c2_equivalence.derive_from_trace(swapped, **kwargs)
+    # 313_s P1: scheduled ids repeat — swapping two COMPLETE rows
+    # for the SAME observation preserves the id sequence and must
+    # refuse at the physical-position binding
+    by_oid = {}
+    for position, row in enumerate(trace):
+        by_oid.setdefault(row["observation_id"], []).append(position)
+    dup_first, dup_second = next(
+        positions[:2] for positions in by_oid.values()
+        if len(positions) > 1)
+    same_id_swap = list(trace)
+    same_id_swap[dup_first], same_id_swap[dup_second] = \
+        same_id_swap[dup_second], same_id_swap[dup_first]
+    assert [r["observation_id"] for r in same_id_swap] \
+        == [r["observation_id"] for r in trace]
+    with pytest.raises(InfrastructureError,
+                       match="physical row position"):
+        p0_c2_equivalence.derive_from_trace(same_id_swap, **kwargs)
+    # a forged index on a non-sentinel row likewise refuses
+    forged_index = copy.deepcopy(trace[:3]) + list(trace[3:])
+    forged_index[1]["global_group_index"] = 999999
+    with pytest.raises(InfrastructureError,
+                       match="physical row position"):
+        p0_c2_equivalence.derive_from_trace(forged_index, **kwargs)
     # (b) a one-observation population substitution alters the
     # projection mapping comparison (and the per-population draws)
     doctored = copy.deepcopy(c2_replay_ctx["mixture"])
