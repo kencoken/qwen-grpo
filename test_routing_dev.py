@@ -4540,6 +4540,35 @@ def test_p0_contract_instance_and_pins(tmp_path):
         p0_contract.load_p0_science_contract(path=tampered)
 
 
+def test_p0_contract_cross_checks_the_projection(monkeypatch):
+    """310_s P1: construction MECHANICALLY cross-checks the
+    C2-derived values against the double-bound projection — a
+    projection carrying different values makes the build refuse."""
+    real = p0_replay.load_projection()
+    altered = copy.deepcopy(real)
+    altered["p0_size_derived"]["sizing_cells"]["fork_join"] = 33
+    monkeypatch.setattr(p0_replay, "load_projection",
+                        lambda *a, **k: altered)
+    with pytest.raises(InfrastructureError, match="sizing counts"):
+        p0_contract.build_p0_science_contract()
+    altered = copy.deepcopy(real)
+    altered["q2_blocks"]["fork_join|w2_favoured"][
+        "c2_optimal_completions"] = 9
+    monkeypatch.setattr(p0_replay, "load_projection",
+                        lambda *a, **k: altered)
+    with pytest.raises(InfrastructureError, match="conditional "
+                       "baseline"):
+        p0_contract.build_p0_science_contract()
+    altered = copy.deepcopy(real)
+    altered["q2_cold_start_gate"]["per_direction"][
+        "math_code|w3_favoured"]["target_selections"] = 107
+    monkeypatch.setattr(p0_replay, "load_projection",
+                        lambda *a, **k: altered)
+    with pytest.raises(InfrastructureError, match="marginal "
+                       "baseline"):
+        p0_contract.build_p0_science_contract()
+
+
 def test_p0_schedule_loader_reminders(tmp_path, monkeypatch):
     """The two 305_f-approval reminders, proven: the loader works
     with the LEGACY BUILDER DISABLED, and from a
@@ -4570,14 +4599,34 @@ def test_p0_schedule_loader_reminders(tmp_path, monkeypatch):
         p0_schedule.schedule_for_epochs(contract, True)
     with pytest.raises(InfrastructureError, match="spare capacity"):
         p0_schedule.schedule_for_epochs(contract, 40)
-    # the effective population map applies the contract's sentinel
-    # override
-    mixture = p0_replay.load_pinned_mixture()
+    # 310_s P1: population_of loads the AUTHENTICATED mixture
+    # internally — no caller-supplied mapping has a path in
     for oid in contract.scope.sentinel_observation_ids:
-        assert p0_schedule.population_of(contract, mixture, oid) \
-            == "sentinel"
+        assert p0_schedule.population_of(contract, oid) == "sentinel"
+    bridge_oid = next(
+        oid for oid, cls in
+        p0_replay.load_pinned_mixture()["class_assignment"].items()
+        if cls == "bridge")
+    assert p0_schedule.population_of(contract, bridge_oid) \
+        == "bridge"
     with pytest.raises(InfrastructureError, match="not a scheduled"):
-        p0_schedule.population_of(contract, mixture, "foreign:row")
+        p0_schedule.population_of(contract, "foreign:row")
+    # 310_s P1 regression: a one-field population substitution with
+    # a stale record hash cannot enter — the double-bound loader
+    # refuses the forged artifact at both bindings
+    forged = copy.deepcopy(p0_replay.load_pinned_mixture())
+    forged["class_assignment"][bridge_oid] = "q2_composite"
+    forged_path = tmp_path / "forged_mixture.json"
+    forged_path.write_text(
+        json.dumps(forged, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="file"):
+        p0_replay.load_pinned_mixture(path=forged_path)
+    with pytest.raises(InfrastructureError):
+        p0_replay.load_pinned_mixture(
+            path=forged_path,
+            expected_file_sha256=__import__("hashlib").sha256(
+                forged_path.read_bytes()).hexdigest())
 
     # reminder 2: trainer rows from a CLEAN-CLONE-RESTORED surface
     # (an isolated replica; the legacy builder still disabled)
@@ -4590,3 +4639,9 @@ def test_p0_schedule_loader_reminders(tmp_path, monkeypatch):
     assert len(rows) == 157
     assert [r["observation_id"] for r in rows] == epoch
     assert all(r["prompt"][0]["role"] == "system" for r in rows[:3])
+    # 310_s P2: repeated rows do not share mutable prompts
+    dup_oid = next(oid for oid in epoch if epoch.count(oid) > 1)
+    first, second = [i for i, r in enumerate(rows)
+                     if r["observation_id"] == dup_oid][:2]
+    rows[first]["prompt"][0]["content"] = "MUTATED"
+    assert rows[second]["prompt"][0]["content"] != "MUTATED"

@@ -19,6 +19,7 @@ clean-clone-restored surface (the 305_f approval reminders).
   instance identity-checked against its scheduled observation id."""
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -76,12 +77,14 @@ def schedule_for_epochs(contract: P0ScienceContract,
     return epoch_schedule(contract) * epochs
 
 
-def population_of(contract: P0ScienceContract,
-                  mixture: dict[str, Any], oid: str) -> str:
+def population_of(contract: P0ScienceContract, oid: str) -> str:
     """The effective population map (sentinel override by the
-    CONTRACT's frozen ids)."""
+    CONTRACT's frozen ids). 310_s P1: the mixture is loaded through
+    the AUTHENTICATED double-bound boundary internally — a
+    caller-supplied mapping has no path in."""
     if oid in set(contract.scope.sentinel_observation_ids):
         return "sentinel"
+    mixture = _validated_mixture(contract)
     cls = mixture["class_assignment"].get(oid)
     if cls is None:
         raise InfrastructureError(
@@ -144,5 +147,5 @@ def build_trainer_rows(contract: P0ScienceContract, epochs: int,
                 "positions": json.dumps(
                     latent["reference_program"]["positions"]),
             }
-        rows.append(dict(per_oid_cache[oid]))
+        rows.append(copy.deepcopy(per_oid_cache[oid]))
     return rows

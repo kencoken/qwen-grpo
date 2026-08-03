@@ -41,7 +41,7 @@ def build_p0_science_contract() -> p0_schema.P0ScienceContract:
     sentinel_ids = tuple(sorted(
         mixture["sentinel"]["observation_ids"]))
     pins = REPLAY_SOURCE
-    return p0_schema.P0ScienceContract(
+    contract = p0_schema.P0ScienceContract(
         schema_version=p0_schema.SCHEMA_VERSION,
         input_pins=p0_schema.InputPins(
             extension_surface_lock_sha256=pins[
@@ -152,6 +152,77 @@ def build_p0_science_contract() -> p0_schema.P0ScienceContract:
                     "completion_denominator", "first_group_indices",
                     "first_update_indices", "checkpoint_trajectory",
                     "evaluation_trajectory"))))
+    _validate_against_projection(contract)
+    return contract
+
+
+def _validate_against_projection(
+        contract: p0_schema.P0ScienceContract) -> None:
+    """310_s P1: the C2-derived contract values are MECHANICALLY
+    cross-checked against the double-bound compatibility projection
+    and the pinned mixture — the contract cannot pin projection A
+    while carrying values B."""
+    from .p0_replay import load_pinned_mixture as _load_mixture
+    from .p0_replay import load_projection
+    projection = load_projection()
+    if contract.input_pins.c2_projection_sha256 != \
+            projection["projection_sha256"]:
+        raise InfrastructureError(
+            "the contract pins a different projection")
+    sizing = projection["p0_size_derived"]
+    if dict(contract.q1.sizing_counts) != sizing["sizing_cells"]:
+        raise InfrastructureError(
+            "contract sizing counts != the projection's "
+            "authenticated cells (310_s)")
+    if contract.sizing.nominal_epochs != sizing["derived_epochs"]:
+        raise InfrastructureError(
+            "contract nominal epochs != the projection derivation")
+    if contract.sizing.groups_per_epoch \
+            * contract.sizing.nominal_epochs != \
+            sizing["derived_groups"]:
+        raise InfrastructureError(
+            "contract groups arithmetic != the projection "
+            "derivation")
+    if contract.sizing.groups_per_epoch != \
+            len(projection["epoch_rows"]):
+        raise InfrastructureError(
+            "contract groups_per_epoch != the projection epoch")
+    # per-cell counted / epochs consistency
+    for cell, count in contract.q1.sizing_counts:
+        measured = projection["q1_counted_per_epoch_measured"][cell]
+        if round(count / contract.q1.sizing_epochs, 4) != measured:
+            raise InfrastructureError(
+                f"{cell}: sizing count/epochs != the projection's "
+                "measured rate")
+    # Q2 baselines: conditional (eligible/optimal) and marginal
+    for baseline in contract.q2.conditional_baselines:
+        block = projection["q2_blocks"][baseline.direction]
+        if baseline.denominator != \
+                block["c2_eligible_completions"] \
+                or baseline.numerator != \
+                block["c2_optimal_completions"]:
+            raise InfrastructureError(
+                f"{baseline.direction}: conditional baseline != the "
+                "projection block (310_s)")
+    gate = projection["q2_cold_start_gate"]["per_direction"]
+    for direction, count in contract.q2.marginal_baselines:
+        if count != gate[direction]["target_selections"]:
+            raise InfrastructureError(
+                f"{direction}: marginal baseline != the projection "
+                "gate")
+    for direction, worker in contract.q2.per_direction_targets:
+        if worker != gate[direction]["target_worker"]:
+            raise InfrastructureError(
+                f"{direction}: target worker != the projection gate")
+    # sentinel ids: contract == pinned mixture == projection
+    mixture = _load_mixture()
+    if list(contract.scope.sentinel_observation_ids) != \
+            sorted(mixture["sentinel"]["observation_ids"]) \
+            or list(contract.scope.sentinel_observation_ids) != \
+            projection["sentinel_observation_ids"]:
+        raise InfrastructureError(
+            "contract sentinel ids != the pinned mixture / "
+            "projection")
 
 
 def freeze_contract(out_path: str | Path = CONTRACT_PATH) -> str:
