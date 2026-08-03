@@ -180,17 +180,56 @@ def generate_traceability_appendix() -> str:
         "different between directions.")
     out("")
 
-    out("## 5. Sentinel (C2 checkpoint-zero block)")
+    out("## 5. Sentinel — the COMPLETE signed obligation set "
+        "(305_f §4)")
+    out("")
+    out("Every field of "
+        "`contract.diagnostics.sentinel.fields_required`, with its "
+        "C2 checkpoint-zero value where the frozen projection "
+        "carries it (316_s: nothing omitted — deferred fields are "
+        "named as deferred, never dropped):")
     out("")
     sentinel = projection["sentinel_block"]
-    out(_row("field", "value"))
-    out(_row("---", "---"))
-    for field in ("groups", "worker1_selections",
-                  "worker1_completions", "reward1_completions",
-                  "reward_varying_groups", "q1_counted_groups",
-                  "first_worker1_group_index",
-                  "first_worker1_update_index"):
-        out(_row(f"`{field}`", sentinel[field]))
+    firsts_families = ("worker1", "reward1", "varying",
+                      "q1_counted")
+    out(_row("required field", "C2 checkpoint-zero value",
+             "source"))
+    out(_row("---", "---", "---"))
+    for field in contract.diagnostics.sentinel.fields_required:
+        if field in ("worker1_selections", "worker1_completions",
+                     "reward1_completions", "reward_varying_groups",
+                     "q1_counted_groups"):
+            out(_row(f"`{field}`", sentinel[field],
+                     "frozen projection"))
+        elif field == "group_denominator":
+            out(_row(f"`{field}`", sentinel["groups"],
+                     "frozen projection (`groups`)"))
+        elif field == "completion_denominator":
+            out(_row(f"`{field}`",
+                     "computed by `sentinel_checkpoint_block` "
+                     "(the legacy C2 block does not persist it)",
+                     "every P0 checkpoint (Unit 5)"))
+        elif field == "first_group_indices":
+            out(_row(f"`{field}`", "; ".join(
+                f"{family}="
+                f"{sentinel[f'first_{family}_group_index']}"
+                for family in firsts_families),
+                "frozen projection"))
+        elif field == "first_update_indices":
+            out(_row(f"`{field}`", "; ".join(
+                f"{family}="
+                f"{sentinel[f'first_{family}_update_index']}"
+                for family in firsts_families),
+                "frozen projection"))
+        elif field in ("checkpoint_trajectory",
+                       "evaluation_trajectory"):
+            out(_row(f"`{field}`",
+                     "assembled across checkpoints by the P0 "
+                     "consumer", "DEFERRED to Unit 5"))
+        else:
+            raise InfrastructureError(
+                f"unmapped required sentinel field {field!r} — the "
+                "appendix must be complete (316_s P1)")
     out("")
 
     out("## 6. Sizing and the cap (rule `%s`)"
@@ -245,7 +284,122 @@ def generate_traceability_appendix() -> str:
              f"**{projection['preregistered_decision']}**"))
     out("")
 
-    out("## 8. Supersession and lineage (references)")
+    out("## 8. Signed traceability matrix (316_s)")
+    out("")
+    out("The merge-gated mapping: requirement → contract field → "
+        "enforcement → regression → artifact. Deferred obligations "
+        "are NAMED with their owner, never dropped.")
+    out("")
+    out(_row("requirement", "field", "enforcement", "regression",
+             "artifact"))
+    out(_row("---", "---", "---", "---", "---"))
+    matrix = (
+        ("Q1 counted event (305_f §3)",
+         f"`q1.event` (`{event.rule_id}`)",
+         "`p0_estimands.q1_counted_event` (closed literals "
+         "operative)",
+         "`test_p0_estimand_rules` incl. the semantic-not-Q1 "
+         "counterexample",
+         "contract"),
+        ("Q1 direct gate",
+         "`q1.min_counted_groups_per_cell` = "
+         f"{contract.q1.min_counted_groups_per_cell}; "
+         "`q1.min_distinct_latents_among_counted` = "
+         f"{contract.q1.min_distinct_latents_among_counted}",
+         "`p0_estimands.evaluate_q1_gate`",
+         "`test_p0_estimand_rules`; oracle `q1_gate` equality",
+         "contract + projection"),
+        ("Q1 population = bridge rows",
+         "`scope.q1_direct_cells`; mixture `class_assignment`",
+         "`derive_from_trace` population binding; "
+         "`p0_schedule.population_of` (authenticated internal "
+         "load)",
+         "`test_p0_c2_replay_sensitivity` population substitution; "
+         "310_s forged-mixture regression",
+         "mixture"),
+        ("Q2 marginal cold-start gate",
+         f"`q2.marginal_*` (`{q2.marginal_rule_id}`)",
+         "`marginal_target_selection` + "
+         "`evaluate_q2_cold_start_gate` (structurally never "
+         "conditional)",
+         "`test_p0_estimand_rules` incl. the "
+         "marginal-not-conditional counterexample",
+         "contract"),
+        ("Q2 eligibility",
+         f"`q2.eligibility` (`{q2.eligibility.rule_id}`)",
+         "`c2_eligible_completion` + `valid_assignment`",
+         "313_s malformed-assignment regressions",
+         "contract"),
+        ("Q2 conditional choice",
+         f"`q2.conditional_*` (`{q2.conditional_rule_id}`); zero "
+         f"denominator = {q2.conditional_zero_denominator}",
+         "`conditional_choice` (None, never 0.0)",
+         "`test_p0_estimand_rules`",
+         "contract"),
+        ("Q2 contrasts",
+         "`diagnostics.items`",
+         "`group_contrasts` (cell-aware, valid assignments only)",
+         "`test_p0_estimand_rules`",
+         "contract"),
+        ("Sentinel complete block (305_f §4)",
+         "`diagnostics.sentinel.fields_required` (see §5)",
+         "`sentinel_checkpoint_block` + `sentinel_legacy_view`",
+         "`test_p0_sentinel_estimand` ([2]/[3]; population bound; "
+         "forged index)",
+         "contract + projection"),
+        ("Schedule identity",
+         f"`sizing.groups_per_epoch` = "
+         f"{contract.sizing.groups_per_epoch}; mixture pins",
+         "`p0_schedule` double bindings; `derive_from_trace` "
+         "physical-position binding",
+         "`test_p0_schedule_loader_reminders`; 313_s same-id swap",
+         "mixture"),
+        ("Exact C2 equivalence (303_f §3)",
+         "every projection field",
+         "`verify_c2_equivalence` (field-for-field + pin rehash)",
+         "`test_p0_c2_replay_equivalence` under independence "
+         "guards",
+         "projection"),
+        ("Sizing derivation",
+         "`q1.sizing_counts`; `sizing.nominal_epochs` = "
+         f"{contract.sizing.nominal_epochs}",
+         "`p0_estimands.derive_sizing`; "
+         "`_validate_against_projection`",
+         "`test_p0_estimand_rules`; "
+         "`test_p0_contract_cross_checks_the_projection`",
+         "contract + projection"),
+        ("Cap + launch (305_f §5)",
+         f"`sizing.cap` (`{contract.sizing.cap.rule_id}`)",
+         "`p0_cap.derive_launch_plan`; `require_launchable` "
+         "(rederive-and-compare, type-sensitive)",
+         "`test_p0_cap_arithmetic` (branches; legacy parity; "
+         "forged plans)",
+         "contract"),
+        ("Launch-freeze persistence (all cap inputs + all three "
+         "values)",
+         "the `derive_launch_plan` record",
+         "DEFERRED to Unit 5: `P0LaunchFreeze` persists the "
+         "record verbatim",
+         "DEFERRED to Unit 5",
+         "P0LaunchFreeze (future)"),
+        ("Checkpoint/evaluation trajectories",
+         "`diagnostics.sentinel.fields_required` trajectories",
+         "DEFERRED to Unit 5: assembled across checkpoints by the "
+         "P0 consumer",
+         "DEFERRED to Unit 5",
+         "P0 run record (future)"),
+        ("Appendix divergence gate (303_f §8)",
+         "this file",
+         "`verify_appendix` (raw byte equality)",
+         "`test_p0_traceability_appendix` (edited number; CRLF "
+         "rewrite; diverging artifact)",
+         "appendix"),
+    )
+    for row in matrix:
+        out(_row(*row))
+    out("")
+
+    out("## 9. Supersession and lineage (references)")
     out("")
     out("- Formal Q3 is out of scope (269_s; closed in 301_f); Q2 "
         "is authorized to be TRAINED, not shown learned (300_s/"
@@ -277,11 +431,12 @@ def freeze_appendix(out_path: str | Path = APPENDIX_PATH) -> str:
 
 
 def verify_appendix(path: str | Path = APPENDIX_PATH) -> dict[str, Any]:
-    """The mechanical divergence gate: the committed appendix bytes
-    must equal a fresh generation from the authenticated
-    artifacts."""
-    committed = Path(path).read_text("utf-8")
-    generated = generate_traceability_appendix()
+    """The mechanical divergence gate, BYTE-exact (316_s P2): the
+    committed RAW BYTES must equal the UTF-8 encoding of a fresh
+    generation — a CRLF rewrite or any re-encoding refuses, not
+    only textual edits."""
+    committed = Path(path).read_bytes()
+    generated = generate_traceability_appendix().encode("utf-8")
     if committed != generated:
         raise InfrastructureError(
             f"{path} diverges from the artifact-generated appendix "

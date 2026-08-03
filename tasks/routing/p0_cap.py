@@ -164,11 +164,57 @@ def derive_launch_plan(contract: P0ScienceContract, *,
     return plan
 
 
-def require_launchable(plan: dict[str, Any]) -> dict[str, Any]:
-    """The consuming boundary for launch construction: a
-    stop-branch plan refuses here — it is a reviewed-amendment
-    decision, never an automatic launch."""
-    if not plan.get("launchable") or plan.get("launch_epochs", 0) <= 0:
+def _strict_equal(a: Any, b: Any) -> bool:
+    """Type-SENSITIVE deep equality (316_s P1): bool is never an
+    int, int is never a float, NaN never equals anything."""
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, dict):
+        return set(a) == set(b) \
+            and all(_strict_equal(a[k], b[k]) for k in a)
+    if isinstance(a, (list, tuple)):
+        return len(a) == len(b) \
+            and all(_strict_equal(x, y) for x, y in zip(a, b))
+    if isinstance(a, float):
+        return a == b and not math.isnan(a)
+    return a == b
+
+
+def require_launchable(contract: P0ScienceContract,
+                       plan: dict[str, Any]) -> dict[str, Any]:
+    """The consuming boundary for launch construction (316_s P1):
+    the supplied plan is NEVER trusted — the complete plan is
+    REDERIVED from its persisted inputs under the authenticated
+    contract and compared type-sensitively; only then is the
+    genuine stop branch rejected. A forged branch, epoch count, or
+    boolean/NaN value refuses at the rederivation."""
+    _validate_cap_rule(contract)
+    if not isinstance(plan, dict) or not isinstance(
+            plan.get("inputs"), dict) \
+            or tuple(plan["inputs"]) != REGISTERED_CAPACITY_INPUTS:
+        raise InfrastructureError(
+            "the supplied plan does not carry the registered input "
+            "record (316_s P1)")
+    inputs = plan["inputs"]
+    rederived = derive_launch_plan(
+        contract,
+        cumulative_consumed_seconds=inputs[
+            "cumulative_consumed_seconds"],
+        measured_finalization_reserve_seconds=inputs[
+            "measured_finalization_reserve_seconds"],
+        frozen_non_rollout_overhead_seconds=inputs[
+            "frozen_non_rollout_overhead_seconds"],
+        measured_whole_epoch_seconds=inputs[
+            "measured_whole_epoch_seconds"])
+    if not _strict_equal(rederived, plan):
+        raise InfrastructureError(
+            "the supplied launch plan does not rederive from its "
+            "persisted inputs under the authenticated contract "
+            "(316_s P1) — a forged plan is never launchable")
+    if rederived["branch"] == \
+            contract.sizing.cap.capacity_zero_action \
+            or not rederived["launchable"] \
+            or rederived["launch_epochs"] <= 0:
         raise InfrastructureError(
             "capacity_epochs <= 0: stop for a reviewed scope "
             "amendment (305_f §5) — no launch is derivable from "

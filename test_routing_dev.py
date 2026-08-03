@@ -5085,7 +5085,7 @@ def test_p0_cap_arithmetic():
                                         plan["capacity_epochs"])
     assert tuple(plan["inputs"]) == \
         p0_cap.REGISTERED_CAPACITY_INPUTS
-    assert p0_cap.require_launchable(plan) is plan
+    assert p0_cap.require_launchable(contract, plan) is plan
     # disclosed under-target branch, with quantified projection
     plan = p0_cap.derive_launch_plan(
         contract, cumulative_consumed_seconds=8000.0,
@@ -5109,7 +5109,44 @@ def test_p0_cap_arithmetic():
     assert not plan["launchable"]
     with pytest.raises(InfrastructureError, match="reviewed scope "
                        "amendment"):
-        p0_cap.require_launchable(plan)
+        p0_cap.require_launchable(contract, plan)
+    # 316_s P1: the boundary REDERIVES the plan from its persisted
+    # inputs — the reviewer's forged plans are permanent regressions
+    forged_stop = dict(plan)
+    forged_stop["launchable"] = True
+    forged_stop["launch_epochs"] = 1
+    forged_stop["branch"] = "disclosed_under_target"
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_cap.require_launchable(contract, forged_stop)
+    capacity_one = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=0.0,
+        measured_finalization_reserve_seconds=0.0,
+        frozen_non_rollout_overhead_seconds=0.0,
+        measured_whole_epoch_seconds=30000.0)
+    assert capacity_one["capacity_epochs"] == 1
+    forged_epochs = dict(capacity_one)
+    forged_epochs["launch_epochs"] = 999
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_cap.require_launchable(contract, forged_epochs)
+    forged_bool = dict(capacity_one)
+    forged_bool["launch_epochs"] = True
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_cap.require_launchable(contract, forged_bool)
+    forged_nan = dict(capacity_one)
+    forged_nan["available_generation_seconds"] = float("nan")
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_cap.require_launchable(contract, forged_nan)
+    forged_ceiling = dict(capacity_one)
+    forged_ceiling["inputs"] = dict(capacity_one["inputs"])
+    forged_ceiling["inputs"]["operational_ceiling_seconds"] = 1e9
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_cap.require_launchable(contract, forged_ceiling)
+    with pytest.raises(InfrastructureError, match="registered "
+                       "input record"):
+        p0_cap.require_launchable(contract, {"launchable": True,
+                                             "launch_epochs": 5})
+    assert p0_cap.require_launchable(contract, capacity_one) \
+        is capacity_one
     # exact parity with the frozen legacy formula on shared inputs
     for consumed, reserve, overhead, whole in (
             (0.0, 0.0, 0.0, 600.0),
@@ -5138,7 +5175,18 @@ def test_p0_traceability_appendix(tmp_path, monkeypatch):
     or a diverging artifact value is mechanically detected."""
     result = p0_tables.verify_appendix()
     assert result["verdict"] == "PASS"
+    assert result["bytes"] == \
+        Path(p0_tables.APPENDIX_PATH).stat().st_size
     committed = Path(p0_tables.APPENDIX_PATH).read_text("utf-8")
+    # 316_s P1: the signed traceability matrix and the complete
+    # sentinel obligation set are present
+    assert "## 8. Signed traceability matrix" in committed
+    assert "| requirement | field | enforcement | regression | " \
+        "artifact |" in committed
+    contract = p0_contract.load_p0_science_contract()
+    for field in contract.diagnostics.sentinel.fields_required:
+        assert f"`{field}`" in committed
+    assert committed.count("DEFERRED to Unit 5") >= 4
     # every reviewed identity and headline value is in the tables
     assert p0_contract.CONTRACT_SHA256 in committed
     assert p0_replay.PROJECTION_SHA256 in committed
@@ -5155,6 +5203,15 @@ def test_p0_traceability_appendix(tmp_path, monkeypatch):
         encoding="utf-8")
     with pytest.raises(InfrastructureError, match="diverges"):
         p0_tables.verify_appendix(tampered)
+    # 316_s P2: verification is BYTE-exact — a CRLF rewrite with
+    # identical text refuses
+    crlf = tmp_path / "appendix_crlf.md"
+    crlf.write_bytes(
+        committed.replace("\n", "\r\n").encode("utf-8"))
+    assert crlf.read_text("utf-8").replace("\r\n", "\n") \
+        == committed
+    with pytest.raises(InfrastructureError, match="diverges"):
+        p0_tables.verify_appendix(crlf)
     # a diverging artifact value changes the generation (the
     # numbers COME from the artifacts, not from prose)
     altered = copy.deepcopy(p0_replay.load_projection())

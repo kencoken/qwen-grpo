@@ -65,18 +65,23 @@ Gate: >= 2 counted groups AND >= 2 distinct latents per cell.
 
 The asymmetric starting conditions (301_f) are carried as context: the conditional baselines above are materially different between directions.
 
-## 5. Sentinel (C2 checkpoint-zero block)
+## 5. Sentinel — the COMPLETE signed obligation set (305_f §4)
 
-| field | value |
-| --- | --- |
-| `groups` | 15 |
-| `worker1_selections` | 0 |
-| `worker1_completions` | 0 |
-| `reward1_completions` | 0 |
-| `reward_varying_groups` | 0 |
-| `q1_counted_groups` | 0 |
-| `first_worker1_group_index` | None |
-| `first_worker1_update_index` | None |
+Every field of `contract.diagnostics.sentinel.fields_required`, with its C2 checkpoint-zero value where the frozen projection carries it (316_s: nothing omitted — deferred fields are named as deferred, never dropped):
+
+| required field | C2 checkpoint-zero value | source |
+| --- | --- | --- |
+| `worker1_selections` | 0 | frozen projection |
+| `worker1_completions` | 0 | frozen projection |
+| `reward1_completions` | 0 | frozen projection |
+| `reward_varying_groups` | 0 | frozen projection |
+| `q1_counted_groups` | 0 | frozen projection |
+| `group_denominator` | 15 | frozen projection (`groups`) |
+| `completion_denominator` | computed by `sentinel_checkpoint_block` (the legacy C2 block does not persist it) | every P0 checkpoint (Unit 5) |
+| `first_group_indices` | worker1=None; reward1=None; varying=None; q1_counted=None | frozen projection |
+| `first_update_indices` | worker1=None; reward1=None; varying=None; q1_counted=None | frozen projection |
+| `checkpoint_trajectory` | assembled across checkpoints by the P0 consumer | DEFERRED to Unit 5 |
+| `evaluation_trajectory` | assembled across checkpoints by the P0 consumer | DEFERRED to Unit 5 |
 
 ## 6. Sizing and the cap (rule `p0-cap-v1`)
 
@@ -115,7 +120,29 @@ The asymmetric starting conditions (301_f) are carried as context: the condition
 | Q2 cold-start gate | True |
 | preregistered decision | **Q1 + Q2 hierarchical-unlocking authorized** |
 
-## 8. Supersession and lineage (references)
+## 8. Signed traceability matrix (316_s)
+
+The merge-gated mapping: requirement → contract field → enforcement → regression → artifact. Deferred obligations are NAMED with their owner, never dropped.
+
+| requirement | field | enforcement | regression | artifact |
+| --- | --- | --- | --- | --- |
+| Q1 counted event (305_f §3) | `q1.event` (`q1-counted-v1`) | `p0_estimands.q1_counted_event` (closed literals operative) | `test_p0_estimand_rules` incl. the semantic-not-Q1 counterexample | contract |
+| Q1 direct gate | `q1.min_counted_groups_per_cell` = 2; `q1.min_distinct_latents_among_counted` = 2 | `p0_estimands.evaluate_q1_gate` | `test_p0_estimand_rules`; oracle `q1_gate` equality | contract + projection |
+| Q1 population = bridge rows | `scope.q1_direct_cells`; mixture `class_assignment` | `derive_from_trace` population binding; `p0_schedule.population_of` (authenticated internal load) | `test_p0_c2_replay_sensitivity` population substitution; 310_s forged-mixture regression | mixture |
+| Q2 marginal cold-start gate | `q2.marginal_*` (`q2-marginal-v1`) | `marginal_target_selection` + `evaluate_q2_cold_start_gate` (structurally never conditional) | `test_p0_estimand_rules` incl. the marginal-not-conditional counterexample | contract |
+| Q2 eligibility | `q2.eligibility` (`c2-eligibility-v1`) | `c2_eligible_completion` + `valid_assignment` | 313_s malformed-assignment regressions | contract |
+| Q2 conditional choice | `q2.conditional_*` (`q2-conditional-v1`); zero denominator = undefined | `conditional_choice` (None, never 0.0) | `test_p0_estimand_rules` | contract |
+| Q2 contrasts | `diagnostics.items` | `group_contrasts` (cell-aware, valid assignments only) | `test_p0_estimand_rules` | contract |
+| Sentinel complete block (305_f §4) | `diagnostics.sentinel.fields_required` (see §5) | `sentinel_checkpoint_block` + `sentinel_legacy_view` | `test_p0_sentinel_estimand` ([2]/[3]; population bound; forged index) | contract + projection |
+| Schedule identity | `sizing.groups_per_epoch` = 157; mixture pins | `p0_schedule` double bindings; `derive_from_trace` physical-position binding | `test_p0_schedule_loader_reminders`; 313_s same-id swap | mixture |
+| Exact C2 equivalence (303_f §3) | every projection field | `verify_c2_equivalence` (field-for-field + pin rehash) | `test_p0_c2_replay_equivalence` under independence guards | projection |
+| Sizing derivation | `q1.sizing_counts`; `sizing.nominal_epochs` = 39 | `p0_estimands.derive_sizing`; `_validate_against_projection` | `test_p0_estimand_rules`; `test_p0_contract_cross_checks_the_projection` | contract + projection |
+| Cap + launch (305_f §5) | `sizing.cap` (`p0-cap-v1`) | `p0_cap.derive_launch_plan`; `require_launchable` (rederive-and-compare, type-sensitive) | `test_p0_cap_arithmetic` (branches; legacy parity; forged plans) | contract |
+| Launch-freeze persistence (all cap inputs + all three values) | the `derive_launch_plan` record | DEFERRED to Unit 5: `P0LaunchFreeze` persists the record verbatim | DEFERRED to Unit 5 | P0LaunchFreeze (future) |
+| Checkpoint/evaluation trajectories | `diagnostics.sentinel.fields_required` trajectories | DEFERRED to Unit 5: assembled across checkpoints by the P0 consumer | DEFERRED to Unit 5 | P0 run record (future) |
+| Appendix divergence gate (303_f §8) | this file | `verify_appendix` (raw byte equality) | `test_p0_traceability_appendix` (edited number; CRLF rewrite; diverging artifact) | appendix |
+
+## 9. Supersession and lineage (references)
 
 - Formal Q3 is out of scope (269_s; closed in 301_f); Q2 is authorized to be TRAINED, not shown learned (300_s/301_f).
 - math_atomic is the training-exposed sentinel (283_s route; 290_f signed wrap-up; erratum 289_f) — excluded from gates, sizing, authorization, and headline Q1.
