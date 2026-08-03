@@ -25,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import extension_run, ledger, p0_contract, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, support_run, telemetry, unit_c2_sample, unit_c_sample
+from tasks.routing import extension_run, ledger, p0_c2_equivalence, p0_contract, p0_estimands, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, support_run, telemetry, unit_c2_sample, unit_c_sample
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -4645,3 +4645,336 @@ def test_p0_schedule_loader_reminders(tmp_path, monkeypatch):
                      if r["observation_id"] == dup_oid][:2]
     rows[first]["prompt"][0]["content"] = "MUTATED"
     assert rows[second]["prompt"][0]["content"] != "MUTATED"
+
+
+# --- spine Unit 3: estimands + the exact C2 replay equivalence (312_f) ---------
+
+def test_p0_estimand_rules():
+    """The versioned typed estimand rules, including BOTH 305_f §3
+    counterexamples: a semantic contrast is not a Q1 counted event,
+    and marginal support is not conditional success."""
+    from types import SimpleNamespace
+    contract = p0_contract.load_p0_science_contract()
+    event = contract.q1.event
+    elig = contract.q2.eligibility
+    # family-correct fraction + the frozen reward ladder
+    assert p0_estimands.family_correct_fraction(
+        "fork_join", (0, 2, 1)) == 1.0
+    assert p0_estimands.family_correct_fraction(
+        "fork_join", (0, 2, 0)) == pytest.approx(2 / 3)
+    with pytest.raises(InfrastructureError, match="workers"):
+        p0_estimands.family_correct_fraction("fork_join", (0, 2))
+    assert p0_estimands.reward_level(0.5) == 0.5
+    with pytest.raises(InfrastructureError, match="ladder"):
+        p0_estimands.reward_level(0.75)
+    # the Q1 counted event (valid-only, same-group)
+    assert p0_estimands.q1_counted_event(
+        event, "code_atomic", [1.0, 0.5], [(2,), (0,)])
+    assert not p0_estimands.q1_counted_event(
+        event, "code_atomic", [1.0, 0.5], [None, (0,)])
+    assert not p0_estimands.q1_counted_event(
+        event, "code_atomic", [0.5, 0.5], [(2,), (0,)])
+    # COUNTEREXAMPLE 1: levels 1 and 0.5 co-present (a semantic
+    # contrast) with the 0.5 FULLY family-correct — NOT a Q1 event
+    rewards, assignments = [1.0, 0.5], [(2,), (3,)]
+    assert p0_estimands.group_contrasts(
+        rewards, assignments, None)["semantic_contrast"]
+    assert not p0_estimands.q1_counted_event(
+        event, "code_atomic", rewards, assignments)
+    with pytest.raises(InfrastructureError, match="unknown Q1"):
+        p0_estimands.q1_counted_event(SimpleNamespace(
+            rule_id="q1-counted-v99", valid_completions_only=True,
+            same_group=True, high_reward=1.0,
+            high_family_correctness="full", low_reward=0.5,
+            low_family_correctness="strictly_lower"),
+            "code_atomic", [], [])
+    # eligibility (malformed EXCLUDED; specialist pool enforced)
+    assert p0_estimands.c2_eligible_completion(
+        elig, "fork_join", (0, 2, 1))
+    assert not p0_estimands.c2_eligible_completion(
+        elig, "fork_join", (0, 1, 1))
+    assert not p0_estimands.c2_eligible_completion(
+        elig, "fork_join", (1, 2, 1))
+    assert not p0_estimands.c2_eligible_completion(
+        elig, "fork_join", None)
+    # COUNTEREXAMPLE 2: the target Code worker with a family-WRONG
+    # non-Code slot — a marginal selection that is NOT eligible
+    marginal_only = (1, 2, 1)
+    assert p0_estimands.marginal_target_selection(
+        "fork_join", marginal_only, 2)
+    assert not p0_estimands.c2_eligible_completion(
+        elig, "fork_join", marginal_only)
+    # optimality is defined WITHIN eligibility
+    pair = {"assignment_w2": [0, 2, 1], "assignment_w3": [0, 3, 1],
+            "direction": 2, "distinct_payoff": True}
+    assert p0_estimands.c2_optimal_completion(
+        elig, "fork_join", (0, 2, 1), pair)
+    assert not p0_estimands.c2_optimal_completion(
+        elig, "fork_join", (0, 3, 1), pair)
+    assert not p0_estimands.c2_optimal_completion(
+        elig, "fork_join", (0, 2, 1), {**pair, "direction": None})
+    assert not p0_estimands.c2_optimal_completion(
+        elig, "fork_join", marginal_only, pair)
+    # direct contrast requires BOTH variants in one group
+    assert p0_estimands.group_contrasts(
+        [1.0, 0.5], [(0, 2, 1), (0, 3, 1)], pair)["direct_contrast"]
+    assert not p0_estimands.group_contrasts(
+        [1.0, 0.5], [(0, 2, 1), (0, 2, 1)], pair)["direct_contrast"]
+    # the conditional estimand: zero denominator is UNDEFINED
+    assert p0_estimands.conditional_choice(0, 15) == 0.0
+    assert p0_estimands.conditional_choice(0, 0) is None
+    assert p0_estimands.conditional_choice(8, 152) \
+        == pytest.approx(8 / 152)
+    with pytest.raises(InfrastructureError, match="count pair"):
+        p0_estimands.conditional_choice(9, 8)
+    # gates
+    gate, ok = p0_estimands.evaluate_q1_gate(
+        contract.q1, ("code_atomic",),
+        {"code_atomic": {"counted_groups": 2, "latents": {1, 2},
+                         "renderers": {"bound_var"},
+                         "bridge_draws": 5}})
+    assert ok and gate["code_atomic"]["pass"]
+    _, ok = p0_estimands.evaluate_q1_gate(
+        contract.q1, ("code_atomic",),
+        {"code_atomic": {"counted_groups": 2, "latents": {1},
+                         "renderers": {"bound_var"},
+                         "bridge_draws": 5}})
+    assert not ok
+    q2_gate = p0_estimands.evaluate_q2_cold_start_gate(
+        contract.q2,
+        {"math_code|w3_favoured": {"selections": 8,
+                                   "latents": {1, 2}},
+         "fork_join|w2_favoured": {"selections": 7,
+                                   "latents": {1, 2}}})
+    assert q2_gate["per_direction"]["math_code|w3_favoured"]["pass"]
+    assert not q2_gate["per_direction"]["fork_join|w2_favoured"][
+        "pass"]
+    assert not q2_gate["pass"]
+    # sizing + the four-branch decision
+    cap = {"note": "frozen prose"}
+    sized = p0_estimands.derive_sizing(
+        contract.sizing, ("code_atomic", "fork_join", "math_code"),
+        {"code_atomic": 13, "fork_join": 34, "math_code": 13},
+        5, cap)
+    assert sized["derived_epochs"] == 39 \
+        and sized["derived_groups"] == 6123 \
+        and sized["min_cell"] == "code_atomic"
+    stopped = p0_estimands.derive_sizing(
+        contract.sizing, ("code_atomic",), {"code_atomic": 0},
+        5, cap)
+    assert not stopped["derivable"]
+    matrix = p0_mixture_v2.MIXTURE_V2_CONFIG["outcome_contract"][
+        "decision_matrix"]
+    assert p0_estimands.decide_outcome(
+        matrix, q1_pass=True, q2_pass=True) \
+        == "Q1 + Q2 hierarchical-unlocking authorized"
+    assert p0_estimands.decide_outcome(
+        matrix, q1_pass=False, q2_pass=True) == matrix["q1_fail"]
+    assert p0_estimands.decide_outcome(
+        matrix, q1_pass=True, q2_pass=False) \
+        == matrix["q1_pass_q2_fail"]
+    assert p0_estimands.decide_outcome(
+        matrix, q1_pass=True, q2_pass=True,
+        infrastructure_abort=True) == matrix["infrastructure_abort"]
+    with pytest.raises(InfrastructureError, match="branches"):
+        p0_estimands.decide_outcome(
+            {"q1_fail": "x"}, q1_pass=True, q2_pass=True)
+
+
+def test_p0_sentinel_estimand():
+    """The complete per-checkpoint sentinel block: both raw
+    denominators, worker-1 events as the estimand (the [2]/[3]
+    regression retained), firsts in group AND update indices, the
+    contract-bound population, and the exact legacy view shape."""
+    from types import SimpleNamespace
+    contract = p0_contract.load_p0_science_contract()
+    scope, event = contract.scope, contract.q1.event
+    ids = list(scope.sentinel_observation_ids)
+    rows = [
+        {"observation_id": ids[0], "global_group_index": 0,
+         "rewards": [0.0, 0.0], "assignments": [[0], [0]]},
+        {"observation_id":
+         "code_atomic:routing_dev:00008:67774cab:goal_first:private",
+         "global_group_index": 1,
+         "rewards": [1.0], "assignments": [[2]]},
+        # the [2]/[3] regression: different routing, NOT unlocking
+        {"observation_id": ids[1], "global_group_index": 3,
+         "rewards": [0.0, 0.0], "assignments": [[2], [3]]},
+        {"observation_id": ids[2], "global_group_index": 5,
+         "rewards": [1.0, 0.5, 0.0],
+         "assignments": [[1], [0], None]},
+    ]
+    block = p0_estimands.sentinel_checkpoint_block(
+        scope, event, rows, updates_per_group=2)
+    assert block["group_denominator"] == 3
+    assert block["completion_denominator"] == 7
+    assert block["worker1_selections"] == 1
+    assert block["worker1_completions"] == 1
+    assert block["reward1_completions"] == 1
+    assert block["reward_varying_groups"] == 1
+    assert block["q1_counted_groups"] == 1
+    assert block["first_group_indices"] == {
+        "worker1": 5, "reward1": 5, "varying": 5, "q1_counted": 5}
+    assert block["first_update_indices"]["worker1"] == 10
+    # the legacy view carries the exact frozen C2 field shape
+    frozen_sentinel = p0_replay.load_projection()["sentinel_block"]
+    view = p0_estimands.sentinel_legacy_view(block)
+    assert set(view) == set(frozen_sentinel)
+    assert view["groups"] == 3 and view["first_worker1_group_index"] \
+        == 5 and view["first_worker1_update_index"] == 10
+    # population bound: ids outside the sentinel cell refuse
+    bad = SimpleNamespace(
+        sentinel_observation_ids=("code_atomic:x:y",),
+        sentinel_cell="math_atomic", sentinel_training_exposed=True)
+    with pytest.raises(InfrastructureError, match="outside the "
+                       "contract"):
+        p0_estimands.sentinel_checkpoint_block(bad, event, [])
+    empty = SimpleNamespace(
+        sentinel_observation_ids=(), sentinel_cell="math_atomic",
+        sentinel_training_exposed=True)
+    with pytest.raises(InfrastructureError, match="empty sentinel"):
+        p0_estimands.sentinel_checkpoint_block(empty, event, [])
+    with pytest.raises(InfrastructureError, match="positive "
+                       "non-boolean"):
+        p0_estimands.sentinel_checkpoint_block(
+            scope, event, [], updates_per_group=True)
+
+
+@pytest.fixture(scope="module")
+def c2_replay_ctx():
+    contract = p0_contract.load_p0_science_contract()
+    mixture = p0_replay.load_pinned_mixture()
+    surface_dir = p0_replay.restore_extension_surface_if_absent()
+    loaded = dev_support.load_dev_surface(
+        surface_dir,
+        expected_lock_sha256=contract.input_pins
+        .extension_surface_lock_sha256)
+    selection = p0_mixture_v2.load_frozen_selection_v2()
+    trace_rows = resume_validation.read_trace(
+        Path("plans/conductor/evidence/unit_c2_v1/actions.jsonl"))
+    return {"contract": contract, "mixture": mixture,
+            "loaded": loaded,
+            "disclosure": selection["public_factor_disclosure"],
+            "trace_rows": trace_rows,
+            "frozen": p0_replay.load_projection()}
+
+
+def test_p0_c2_replay_equivalence(c2_replay_ctx):
+    """The oracle (303_f §3): the raw-trace rederivation reproduces
+    the frozen projection EXACTLY — derived under guards proving the
+    evaluator never invokes the legacy report builder, never reads
+    the source report's values, and never consumes the frozen
+    projection (305_f §2)."""
+    frozen = c2_replay_ctx["frozen"]
+    real_read_text = Path.read_text
+
+    def guarded_read_text(self, *args, **kwargs):
+        if "exposure_report" in str(self):
+            raise AssertionError(
+                "the evaluator read the source report")
+        return real_read_text(self, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            unit_c2_sample, "build_exposure_report",
+            lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError("legacy report builder invoked")))
+        mp.setattr(
+            p0_c2_equivalence, "load_projection",
+            lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError(
+                    "the evaluator consumed the frozen projection")))
+        mp.setattr(Path, "read_text", guarded_read_text)
+        derived = p0_c2_equivalence.derive_c2_projection()
+    assert derived == frozen
+    assert derived["projection_sha256"] == \
+        p0_replay.PROJECTION_SHA256
+    result = p0_c2_equivalence.verify_c2_equivalence()
+    assert result["verdict"] == "PASS"
+    assert result["fields_compared"] == len(frozen)
+
+
+def test_p0_c2_replay_sensitivity(c2_replay_ctx):
+    """The 305_f sensitivity set: row reorder; a population
+    substitution that alters the projection MAPPING comparison; the
+    CARRIED REMINDER — a COHERENT VALID alternative action that
+    changes a scientific result (and, as the contrast, a corrupted
+    redundant field refuses as corruption, never scoring as an
+    alternative result)."""
+    kwargs = {key: c2_replay_ctx[key]
+              for key in ("contract", "mixture", "loaded",
+                          "disclosure")}
+    trace = c2_replay_ctx["trace_rows"]
+    frozen = c2_replay_ctx["frozen"]
+    contract = kwargs["contract"]
+    # (a) row reorder refuses at the pinned-schedule identity
+    swapped = list(trace)
+    swapped[0], swapped[1] = swapped[1], swapped[0]
+    with pytest.raises(InfrastructureError, match="pinned schedule"):
+        p0_c2_equivalence.derive_from_trace(swapped, **kwargs)
+    # (b) a one-observation population substitution alters the
+    # projection mapping comparison (and the per-population draws)
+    doctored = copy.deepcopy(c2_replay_ctx["mixture"])
+    sub_oid = next(oid for oid, cls in
+                   doctored["class_assignment"].items()
+                   if cls == "goal_first_control")
+    doctored["class_assignment"][sub_oid] = "anchor"
+    derived = p0_c2_equivalence.derive_from_trace(
+        trace, **{**kwargs, "mixture": doctored})
+    diff = p0_c2_equivalence.compare_projections(derived, frozen)
+    assert "population_by_observation" in diff
+    assert "per_population_draws" in diff
+    assert "class_assignment" in diff
+    # (c) CARRIED REMINDER: replace the single reward-1.0 fully
+    # family-correct completion of a counted bridge group with a
+    # COPY of a coherent 0.5 completion from the same group — every
+    # consistency check passes, and a scientific result changes
+    population = frozen["population_by_observation"]
+    disclosure = kwargs["disclosure"]
+    found = None
+    for preferred in contract.scope.q1_direct_cells:
+        for idx, row in enumerate(trace):
+            oid = row["observation_id"]
+            if population[oid] != "bridge":
+                continue
+            cell = disclosure[oid]["cell_id"]
+            if cell != preferred:
+                continue
+            pairs = list(zip(row["rewards"], row["assignments"]))
+            highs = [i for i, (r, a) in enumerate(pairs)
+                     if r == 1.0 and a is not None
+                     and p0_estimands.family_correct_fraction(
+                         cell, a) == 1.0]
+            lows = [i for i, (r, a) in enumerate(pairs)
+                    if r == 0.5 and a is not None
+                    and p0_estimands.family_correct_fraction(
+                        cell, a) < 1.0]
+            if len(highs) == 1 and lows:
+                found = (idx, cell, highs[0], lows[0])
+                break
+        if found:
+            break
+    assert found is not None
+    idx, cell, high_i, low_j = found
+    altered = copy.deepcopy(trace)
+    for key in ("completions", "actions", "assignments", "rewards"):
+        altered[idx][key][high_i] = copy.deepcopy(
+            altered[idx][key][low_j])
+    derived = p0_c2_equivalence.derive_from_trace(altered, **kwargs)
+    diff = p0_c2_equivalence.compare_projections(derived, frozen)
+    assert "q1_gate" in diff
+    assert "q1_counted_per_epoch_measured" in diff
+    assert derived["q1_gate"][cell]["counted_groups"] \
+        == frozen["q1_gate"][cell]["counted_groups"] - 1
+    if cell == "code_atomic":
+        # the sizing minimum moved: the derived experiment changes
+        assert "p0_size_derived" in diff
+        assert derived["p0_size_derived"]["derived_epochs"] != \
+            frozen["p0_size_derived"]["derived_epochs"]
+    # (d) the contrast: corrupting ONLY the stored reward is
+    # detected as corruption, never scored as an alternative
+    corrupted = copy.deepcopy(trace)
+    corrupted[idx]["rewards"][high_i] = 0.5
+    with pytest.raises(InfrastructureError,
+                       match="corrupted redundant"):
+        p0_c2_equivalence.derive_from_trace(corrupted, **kwargs)
