@@ -538,3 +538,63 @@ chains the previous entry's hash. Never edit a recorded entry.
  "terminal_status": "complete"
 }
 ```
+
+## entry 16 — standalone_evaluation
+
+```json
+{
+ "budget_allocated_gpu_hours": 1.25,
+ "cohort_selection": "outcome_conditioned",
+ "entry_sha256": "29690789a6a379a790bc85c3a9acc43efa84fff26eba761efb8b35899a722d59",
+ "freeze": {
+  "attested_environment_sha256": "372f958f5e5aa30805222d338f2e90d665cf8188a7c2ac8d559d231b3f53cd42",
+  "config_sha256": "5b47ada33a0223c1d8322846e536cc95285d950fb8076635008b803e49dcfb1c",
+  "environment_manifest_sha256": "480bf685b2652dcfeee6c4ea1bbccc0db9766fa500d184093b1991ddbd7541e5",
+  "freeze_sha256": "ae51bc57476ed1a9729bd949c1651d4c88a0cbb62e310179e30af415b0fa8420",
+  "identity_manifest_sha256": "7b19aeb9a642478785db1aa0d24e9126cf6d6ad3358c46b6c6a44b4dd82514af",
+  "mixture_record_sha256": "135a72bf4deb77048371074636d88ffebf6bd07d1c00ae349b6fcee221975b3f",
+  "session_preflight_sha256": "4a2a1e3f6e268372ac31db37e5b2943f2dc58bb0b2452167836d8c4466630bec"
+ },
+ "kind": "standalone_evaluation",
+ "motivating_evidence": "295_f-signed B2 (pinned 135a72bf\u2026); 290_f wrap-up plan; 283_s route",
+ "outcome_informed": true,
+ "parent": "9f4661a84e601299951f17370eb22d9aa52f970a717b80844684240c8c550996",
+ "previous_entry_sha256": "9f4661a84e601299951f17370eb22d9aa52f970a717b80844684240c8c550996",
+ "question": "Unit C2: at checkpoint zero on the PINNED B2 schedule, is the Q1 reward-varying exposure present in all three direct-Q1 cells, and does each scheduled Q2 direction show cold-start marginal support for its intended specialist?"
+}
+```
+
+## entry 17 — closeout
+
+```json
+{
+ "budget_allocated_gpu_hours": 0.0,
+ "budget_consumed_gpu_hours": 1.0142,
+ "closes_entry_sha256": "29690789a6a379a790bc85c3a9acc43efa84fff26eba761efb8b35899a722d59",
+ "entry_sha256": "2bf50c1e5b31a7acf28dc9391ea4fc021a82cacb20906692558cf36174266fbe",
+ "freeze": {
+  "exposure_report_file_sha256": "03152f0eaa7e83b34110dc6e53be550f0f761d6141861246a70f55f5587e3abe",
+  "freeze_sha256": "ae51bc57476ed1a9729bd949c1651d4c88a0cbb62e310179e30af415b0fa8420",
+  "sample_record_file_sha256": "cc42c16bd925282477746644e5959a5d5848c47e18308a8fc69a437fac8e27b6",
+  "terminal_artifact_hashes": {
+   "actions.jsonl": "8e705317676134df447b25a72532151c8068bb238a239facc266c1fb5525af34",
+   "checkpoint_final_hashes.json": "ec31727cff24274f711becca4fb19336cfb3efeeab0d5cb2ec0e51c980bb51a1",
+   "checkpoint_zero_hashes.json": "ec31727cff24274f711becca4fb19336cfb3efeeab0d5cb2ec0e51c980bb51a1",
+   "environment_manifest.json": "ffc0caac9994dfcca9ca706254b048919173f8b2b98c1eb5a5cc664de24d74eb",
+   "exposure_report.json": "03152f0eaa7e83b34110dc6e53be550f0f761d6141861246a70f55f5587e3abe",
+   "identity_manifest.json": "a1f684535d33f2fd046c52162859c54104d05f7622376a1088843cdd9ba86eb8",
+   "sample_record.json": "cc42c16bd925282477746644e5959a5d5848c47e18308a8fc69a437fac8e27b6",
+   "schedule.json": "c2687919cd8a00768d9f5b148957f2c2013eb1b0a636f13ecb585d6bd5598b25",
+   "session_preflight.json": "5d6c668ca24ef6cc16026a9a65ca6fceb7bda2b2634002a7cd5842b53c28629a"
+  }
+ },
+ "kind": "closeout",
+ "motivating_evidence": "Unit-C2 sample complete",
+ "outcome_informed": true,
+ "outcome_pointer": "runs/routing-dev/unit-c2-v1/exposure_report.json",
+ "parent": "29690789a6a379a790bc85c3a9acc43efa84fff26eba761efb8b35899a722d59",
+ "previous_entry_sha256": "29690789a6a379a790bc85c3a9acc43efa84fff26eba761efb8b35899a722d59",
+ "question": "Unit C2: at checkpoint zero on the PINNED B2 schedule, is the Q1 reward-varying exposure present in all three direct-Q1 cells, and does each scheduled Q2 direction show cold-start marginal support for its intended specialist?",
+ "terminal_status": "complete"
+}
+```

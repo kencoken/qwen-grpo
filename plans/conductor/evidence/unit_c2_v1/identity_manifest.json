@@ -1,0 +1,12 @@
+{
+ "config_sha256": "5b47ada33a0223c1d8322846e536cc95285d950fb8076635008b803e49dcfb1c",
+ "extension_comparator_sha256": "9220c2c7a7efe890c60e5abbdcc3b84eecbbb971e75fa69e313e6d61888e5f1f",
+ "extension_surface_lock_sha256": "ccb1c3e2db2422a82919292144c0bdecc21d2cc89cb7a3a2c69bec17a2ce6d1b",
+ "kind": "routing-dev-unit-c2-identity-v1",
+ "manifest_sha256": "7b19aeb9a642478785db1aa0d24e9126cf6d6ad3358c46b6c6a44b4dd82514af",
+ "mixture_config_sha256": "66d62b924a471c869dd77312b062399842eedd05325b3927c8cee542b0e6cfb5",
+ "mixture_record_sha256": "135a72bf4deb77048371074636d88ffebf6bd07d1c00ae349b6fcee221975b3f",
+ "prompt_sha256": "fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070",
+ "routing_source_sha256": "e6c72d0945faf916caf4778de13909d7ec6389b207baf43f6617fd21eac9676f",
+ "seed": "20260803"
+}
