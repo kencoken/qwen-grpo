@@ -37,6 +37,16 @@ PROJECTION_PATH = P0_DIR / "c2_compatibility_projection.json"
 
 C2_EVIDENCE_DIR = Path("plans/conductor/evidence/unit_c2_v1")
 
+# the externally reviewed artifact identities (307_s P2/P1-2):
+# BOTH bindings are enforced at every consuming boundary
+PINNED_MIXTURE_FILE_SHA256 = \
+    "b305d9c808d21ba8ced0c21b01076497160527ba8164d588df35e20417a7deb6"
+# set at the rev2 refreeze (the projection gained the exact maps)
+PROJECTION_SHA256 = \
+    "f1912078fb27e67c489705737295bac461033324d58600825d944b5a12bf6355"
+PROJECTION_FILE_SHA256 = \
+    "41f15c5d27ee1c9867bc82833bd088319c5644f1c0a86096844442b4306446c3"
+
 # the authenticated replay-source pins (305_f §2; all verified
 # against the committed archive at this freeze)
 REPLAY_SOURCE = {
@@ -148,39 +158,61 @@ def verify_c2_replay_source(evidence_dir: str | Path | None = None,
         raise InfrastructureError(
             "the C2 closeout carries no terminal inventory")
 
-    # 2. the evidence bytes ARE the closeout-bound inventory —
-    # verified BEFORE any replay
+    # 2. EXACT file-set equality with the closeout inventory —
+    # every member must exist and match; nothing extra, nothing
+    # missing (307_s P1-1) — verified BEFORE any replay
+    on_disk = {p.name: _sha_file(p)
+               for p in sorted(evidence.iterdir()) if p.is_file()}
+    if on_disk != dict(inventory):
+        missing = sorted(set(inventory) - set(on_disk))
+        extra = sorted(set(on_disk) - set(inventory))
+        altered = sorted(k for k in set(inventory) & set(on_disk)
+                         if inventory[k] != on_disk[k])
+        raise InfrastructureError(
+            f"evidence is not exactly the closeout inventory: "
+            f"missing {missing[:3]}, extra {extra[:3]}, altered "
+            f"{altered[:3]} (307_s P1-1)")
     for name, pin_key in (
             ("actions.jsonl", "c2_actions_file_sha256"),
             ("exposure_report.json", "c2_report_file_sha256"),
             ("schedule.json", "c2_schedule_file_sha256"),
             ("sample_record.json", "c2_record_file_sha256")):
-        digest = _sha_file(evidence / name)
-        if digest != pins[pin_key]:
+        if on_disk[name] != pins[pin_key]:
             raise InfrastructureError(
                 f"{name}: evidence bytes do not match the pinned "
                 f"hash (305_f §2)")
-        if inventory.get(name) != digest:
-            raise InfrastructureError(
-                f"{name}: evidence bytes do not match the "
-                "closeout-bound inventory")
-    # every OTHER inventory file must match too where present
-    for name, bound in inventory.items():
-        member = evidence / name
-        if member.exists() and _sha_file(member) != bound:
-            raise InfrastructureError(
-                f"{name}: evidence bytes diverge from the inventory")
 
-    # 3. the anchors
+    # 3. the anchors — VALIDATED from the actual manifests, not
+    # merely asserted by the sample record (307_s P1-1)
+    from .dev_support import validate_env_self_hash
+    from .resume_validation import attested_environment_sha256
+    identity = json.loads(
+        (evidence / "identity_manifest.json").read_text("utf-8"))
+    identity_body = {k: v for k, v in identity.items()
+                     if k != "manifest_sha256"}
+    if content_sha256(identity_body) != \
+            identity.get("manifest_sha256") \
+            or identity["manifest_sha256"] != \
+            pins["identity_manifest_sha256"]:
+        raise InfrastructureError(
+            "the archived identity manifest does not rehash to the "
+            "reviewed anchor (307_s P1-1)")
+    environment = json.loads(
+        (evidence / "environment_manifest.json").read_text("utf-8"))
+    validate_env_self_hash(environment)
+    if attested_environment_sha256(environment) != \
+            pins["attested_environment_sha256"]:
+        raise InfrastructureError(
+            "the archived environment does not attest to the "
+            "reviewed anchor (307_s P1-1)")
     record = json.loads(
         (evidence / "sample_record.json").read_text("utf-8"))
     if record.get("identity_manifest_sha256") != \
-            pins["identity_manifest_sha256"] \
+            identity["manifest_sha256"] \
             or record.get("attested_environment_sha256") != \
-            pins["attested_environment_sha256"]:
+            attested_environment_sha256(environment):
         raise InfrastructureError(
-            "the archived record does not carry the reviewed "
-            "identity/environment anchors")
+            "the sample record and the validated manifests disagree")
 
     # 4. the locked surface (clean-clone restore), selection,
     # comparator
@@ -242,13 +274,21 @@ def materialize_pinned_mixture(out_path: str | Path
     return mixture
 
 
-def load_pinned_mixture(path: str | Path = PINNED_MIXTURE_PATH
+def load_pinned_mixture(path: str | Path = PINNED_MIXTURE_PATH,
+                        expected_file_sha256: str | None = None
                         ) -> dict[str, Any]:
-    """The strict artifact loader: self-hash must rehash AND equal
-    the frozen pin. (Unit 2 builds the full schedule loader on top;
-    this is the byte boundary.)"""
+    """The strict artifact loader, DOUBLE-BOUND in code (307_s P2):
+    the committed file bytes AND the semantic self-hash pin —
+    reformatted bytes refuse. (Unit 2 builds the full schedule
+    loader on top; this is the byte boundary.)"""
     from .p0_mixture_v2 import EXPECTED_MIXTURE_V2_RECORD_SHA256
-    record = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw = Path(path).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != \
+            (expected_file_sha256 or PINNED_MIXTURE_FILE_SHA256):
+        raise InfrastructureError(
+            "pinned-mixture file bytes do not match the reviewed "
+            "file hash (307_s P2)")
+    record = json.loads(raw.decode("utf-8"))
     body = {k: v for k, v in record.items() if k != "record_sha256"}
     if content_sha256(body) != record.get("record_sha256"):
         raise InfrastructureError(
@@ -271,6 +311,10 @@ def extract_projection(evidence_dir: str | Path | None = None
     reads these sources. Identity fields expected to change under
     new source are excluded."""
     evidence = Path(evidence_dir or C2_EVIDENCE_DIR)
+    # 307_s P1-2: the extraction boundary AUTHENTICATES the complete
+    # source bundle first — a modified report cannot stamp the
+    # frozen source pins into a fresh projection
+    verify_c2_replay_source(evidence_dir=evidence)
     report = json.loads(
         (evidence / "exposure_report.json").read_text("utf-8"))
     schedule = json.loads(
@@ -279,8 +323,19 @@ def extract_projection(evidence_dir: str | Path | None = None
         (evidence / "sample_record.json").read_text("utf-8"))
     valid = record["execution_telemetry"]["surface_reward_lookups"]
     total_completions = record["counters"]["sampled_completions"]
+    # 307_s P1-4: exact mapping parity — the class assignments,
+    # multiplicities, sentinel ids and the EFFECTIVE population map
+    # (sentinel override included) enter the projection from the
+    # authenticated pinned mixture, so the oracle compares mappings
+    # mechanically
+    mixture = load_pinned_mixture()
+    sentinel_ids = sorted(mixture["sentinel"]["observation_ids"])
+    population_by_observation = {}
+    for oid, cls in mixture["class_assignment"].items():
+        population_by_observation[oid] = (
+            "sentinel" if oid in set(sentinel_ids) else cls)
     projection = {
-        "kind": "c2-compatibility-projection-v1",
+        "kind": "c2-compatibility-projection-v2",
         "source": {
             "closeout_entry_sha256":
                 REPLAY_SOURCE["c2_closeout_entry_sha256"],
@@ -292,6 +347,13 @@ def extract_projection(evidence_dir: str | Path | None = None
         "epoch_rows": schedule[:157],
         "schedule_rows": schedule,
         "mixture_record_sha256": record["mixture_record_sha256"],
+        "class_assignment": dict(sorted(
+            mixture["class_assignment"].items())),
+        "multiplicities": dict(sorted(
+            mixture["multiplicities"].items())),
+        "sentinel_observation_ids": sentinel_ids,
+        "population_by_observation": dict(sorted(
+            population_by_observation.items())),
         "valid_completions": valid,
         "invalid_completions": total_completions - valid,
     }
@@ -320,14 +382,29 @@ def freeze_projection(out_path: str | Path = PROJECTION_PATH
     return projection
 
 
-def load_projection(path: str | Path = PROJECTION_PATH
+def load_projection(path: str | Path = PROJECTION_PATH,
+                    expected_file_sha256: str | None = None,
+                    expected_projection_sha256: str | None = None
                     ) -> dict[str, Any]:
-    projection = json.loads(Path(path).read_text(encoding="utf-8"))
+    """307_s P1-2/P2: BOTH externally reviewed hashes are enforced —
+    the committed file bytes AND the semantic self-hash. A
+    coherently rewritten projection (recomputed self-hash) refuses
+    at the file pin; reformatted bytes refuse likewise."""
+    expected_file = expected_file_sha256 or PROJECTION_FILE_SHA256
+    expected_self = expected_projection_sha256 or PROJECTION_SHA256
+    raw = Path(path).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != expected_file:
+        raise InfrastructureError(
+            "projection file bytes do not match the reviewed file "
+            "hash (307_s)")
+    projection = json.loads(raw.decode("utf-8"))
     body = {k: v for k, v in projection.items()
             if k != "projection_sha256"}
-    if content_sha256(body) != projection.get("projection_sha256"):
+    if content_sha256(body) != projection.get("projection_sha256") \
+            or projection["projection_sha256"] != expected_self:
         raise InfrastructureError(
-            "compatibility projection does not rehash")
-    if projection.get("kind") != "c2-compatibility-projection-v1":
+            "compatibility projection does not rehash to the "
+            "reviewed value")
+    if projection.get("kind") != "c2-compatibility-projection-v2":
         raise InfrastructureError("unknown projection kind")
     return projection
