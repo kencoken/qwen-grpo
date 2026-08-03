@@ -25,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import extension_run, ledger, p0_c2_equivalence, p0_cap, p0_contract, p0_estimands, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, p0_tables, support_run, telemetry, unit_c2_sample, unit_c_sample
+from tasks.routing import extension_run, ledger, p0_c2_equivalence, p0_cap, p0_contract, p0_estimands, p0_launch, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, p0_tables, support_run, telemetry, unit_c2_sample, unit_c_sample
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -5209,7 +5209,12 @@ def test_p0_traceability_appendix(tmp_path, monkeypatch):
     contract = p0_contract.load_p0_science_contract()
     for field in contract.diagnostics.sentinel.fields_required:
         assert f"`{field}`" in committed
-    assert committed.count("DEFERRED to Unit 5") >= 4
+    # the Unit-5 obligations are now NAMED with their implemented
+    # enforcement (no dangling deferred rows)
+    assert "DEFERRED to Unit 5" not in committed
+    assert "p0_launch.build_p0_launch_freeze" in committed
+    assert "p0_launch.assemble_sentinel_trajectories" in committed
+    assert "p0_launch.prepare_p0_launch" in committed
     # every reviewed identity and headline value is in the tables
     assert p0_contract.CONTRACT_SHA256 in committed
     assert p0_replay.PROJECTION_SHA256 in committed
@@ -5244,3 +5249,232 @@ def test_p0_traceability_appendix(tmp_path, monkeypatch):
     assert p0_tables.generate_traceability_appendix() != committed
     with pytest.raises(InfrastructureError, match="diverges"):
         p0_tables.verify_appendix()
+
+
+# --- spine Unit 5: P0LaunchFreeze schema + the first real consumer (320_f) -----
+
+def _launch_runtime_fields():
+    import hashlib as _hashlib
+    from tasks.conductor.stage1 import prompt_fewshot
+    return {
+        "model_id": "Qwen/Qwen2.5-3B-Instruct",
+        "model_revision":
+            "aa8e72537993ba99e69dfaafa59ed015b17504d1",
+        "quantization": "nf4",
+        "lora_adapter_dtype": "float32",
+        "lora_key_set_sha256":
+            "e44ecb9caf0be396aaaceae6802dbaab9209677103ba263c89"
+            "ca9a7ea65f6215",
+        "prompt_sha256": _hashlib.sha256(
+            prompt_fewshot().encode("utf-8")).hexdigest(),
+        "group_size": 8,
+        "seed": 20260901,
+        "temperature": 1.0,
+        "learning_rate": 1e-5,
+        "beta": 0.04,
+        "policy_max_new_tokens": 128,
+        "attested_environment_sha256":
+            p0_replay.REPLAY_SOURCE["attested_environment_sha256"],
+    }
+
+
+_LAUNCH_PRECURSORS = {
+    "routing_dev_val_lock_sha256": "1a" * 32,
+    "cycle_record_sha256": "2b" * 32,
+    "r_cycle_record_sha256": "3c" * 32,
+    "beta_smoke_record_sha256": "4d" * 32,
+}
+
+
+def test_p0_launch_freeze_schema(tmp_path):
+    """The p0-launch-freeze-v1 schema: verbatim plan persistence,
+    the unfreezable stop branch, closed fields (no execution-
+    manifest hash, no terminal hashes), and the strict loader
+    REQUIRING the externally reviewed hash."""
+    import dataclasses
+    contract = p0_contract.load_p0_science_contract()
+    runtime = _launch_runtime_fields()
+    plan = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=8000.0,
+        measured_finalization_reserve_seconds=1000.0,
+        frozen_non_rollout_overhead_seconds=500.0,
+        measured_whole_epoch_seconds=2000.0)
+    assert plan["branch"] == "disclosed_under_target"
+    freeze = p0_launch.build_p0_launch_freeze(
+        plan_record=plan, precursors=_LAUNCH_PRECURSORS,
+        runtime=runtime, contract=contract)
+    # verbatim persistence: the typed plan round-trips exactly
+    assert p0_cap._strict_equal(freeze.launch_plan.to_record(),
+                                plan)
+    assert freeze.science_contract_sha256 == \
+        p0_contract.CONTRACT_SHA256
+    # the closed schema carries NO execution-manifest / terminal
+    # hash field (305_f §1)
+    names = {f.name for f in dataclasses.fields(freeze)}
+    assert names == {"schema_version", "science_contract_sha256",
+                     "precursors", "launch_plan", "runtime"}
+    # save + load under the REQUIRED reviewed hash
+    out = tmp_path / "launch_freeze.json"
+    digest = p0_launch.save_launch_freeze(freeze, out)
+    assert digest == p0_launch.freeze_sha256(freeze)
+    loaded = p0_launch.load_p0_launch_freeze(out, digest)
+    assert loaded == freeze
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_launch.save_launch_freeze(freeze, out)
+    with pytest.raises(InfrastructureError, match="reviewed"):
+        p0_launch.load_p0_launch_freeze(out, "0" * 64)
+    tampered = json.loads(out.read_text("utf-8"))
+    tampered["launch_plan"]["launch_epochs"] = 14
+    bad = tmp_path / "tampered.json"
+    bad.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="reviewed"):
+        p0_launch.load_p0_launch_freeze(bad, digest)
+    extra = json.loads(out.read_text("utf-8"))
+    extra["execution_manifest_sha256"] = "9e" * 32
+    payload = {k: v for k, v in extra.items()
+               if k != "freeze_sha256"}
+    extra["freeze_sha256"] = charter.content_sha256(payload)
+    bad2 = tmp_path / "extra.json"
+    bad2.write_text(json.dumps(extra), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="closed schema"):
+        p0_launch.load_p0_launch_freeze(bad2,
+                                        extra["freeze_sha256"])
+    # the stop branch is UNFREEZABLE
+    stop = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=36000.0,
+        measured_finalization_reserve_seconds=0.0,
+        frozen_non_rollout_overhead_seconds=0.0,
+        measured_whole_epoch_seconds=600.0)
+    with pytest.raises(InfrastructureError, match="reviewed scope "
+                       "amendment"):
+        p0_launch.build_p0_launch_freeze(
+            plan_record=stop, precursors=_LAUNCH_PRECURSORS,
+            runtime=runtime, contract=contract)
+    # a forged plan refuses at the Unit-4 boundary
+    forged = json.loads(json.dumps(plan))
+    forged["launch_epochs"] = 39
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_launch.build_p0_launch_freeze(
+            plan_record=forged, precursors=_LAUNCH_PRECURSORS,
+            runtime=runtime, contract=contract)
+    # branch-inconsistent typed plans refuse at construction
+    with pytest.raises(InfrastructureError, match="under-target "
+                       "branch"):
+        record = json.loads(json.dumps(plan))
+        del record["projected_q1_counted_by_cell"]
+        record["spare_epochs_not_trained"] = 3
+        p0_launch.LaunchPlan.from_record(record)
+    # runtime validation: bool seed, NaN lr, wrong construction
+    with pytest.raises(InfrastructureError, match="seed"):
+        p0_launch.RuntimeIdentity(
+            **{**runtime, "seed": True})
+    with pytest.raises(InfrastructureError, match="finite"):
+        p0_launch.RuntimeIdentity(
+            **{**runtime, "learning_rate": float("nan")})
+    with pytest.raises(InfrastructureError, match="REAL training"):
+        p0_launch.RuntimeIdentity(
+            **{**runtime, "learning_rate": 0.0})
+    with pytest.raises(InfrastructureError, match="validated "
+                       "construction"):
+        p0_launch.RuntimeIdentity(
+            **{**runtime, "quantization": "int8"})
+    with pytest.raises(InfrastructureError, match="40-hex"):
+        p0_launch.RuntimeIdentity(
+            **{**runtime, "model_revision": "aa8e"})
+    with pytest.raises(InfrastructureError, match="precursors"):
+        p0_launch.PrecursorOutputs(
+            **{**_LAUNCH_PRECURSORS,
+               "cycle_record_sha256": "zz" * 32})
+
+
+def test_p0_sentinel_trajectories():
+    """The deferred 305_f §4 obligation: trajectory assembly with
+    strict index/completeness/population validation."""
+    contract = p0_contract.load_p0_science_contract()
+    scope, event = contract.scope, contract.q1.event
+    ids = list(scope.sentinel_observation_ids)
+    rows = [{"observation_id": ids[0], "global_group_index": 0,
+             "rewards": [0.0, 0.0], "assignments": [[0], [0]]}]
+    block = p0_estimands.sentinel_checkpoint_block(
+        scope, event, rows)
+    result = p0_launch.assemble_sentinel_trajectories(
+        contract, [(0, block), (157, block)], [(0, block)])
+    assert len(result["checkpoint_trajectory"]) == 2
+    assert result["checkpoint_trajectory"][1][0] == 157
+    assert len(result["evaluation_trajectory"]) == 1
+    with pytest.raises(InfrastructureError, match="strictly "
+                       "increasing"):
+        p0_launch.assemble_sentinel_trajectories(
+            contract, [(157, block), (0, block)], [])
+    with pytest.raises(InfrastructureError, match="strictly "
+                       "increasing"):
+        p0_launch.assemble_sentinel_trajectories(
+            contract, [(0, block), (0, block)], [])
+    with pytest.raises(InfrastructureError, match="non-negative "
+                       "non-boolean"):
+        p0_launch.assemble_sentinel_trajectories(
+            contract, [(True, block)], [])
+    incomplete = dict(block)
+    del incomplete["completion_denominator"]
+    with pytest.raises(InfrastructureError, match="COMPLETE"):
+        p0_launch.assemble_sentinel_trajectories(
+            contract, [(0, incomplete)], [])
+    foreign = dict(block)
+    foreign["observation_ids"] = ["math_atomic:x:y"]
+    with pytest.raises(InfrastructureError, match="frozen "
+                       "sentinel"):
+        p0_launch.assemble_sentinel_trajectories(
+            contract, [(0, foreign)], [])
+
+
+def test_p0_first_consumer_prepare(tmp_path, monkeypatch):
+    """The first real consumer end-to-end: every input through a
+    reviewed pin, the plan rederived at admission, the standing
+    oracles invoked FRESH, the dataset from the strict loader."""
+    contract = p0_contract.load_p0_science_contract()
+    plan = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=0.0,
+        measured_finalization_reserve_seconds=0.0,
+        frozen_non_rollout_overhead_seconds=0.0,
+        measured_whole_epoch_seconds=30000.0)
+    assert plan["capacity_epochs"] == 1
+    freeze = p0_launch.build_p0_launch_freeze(
+        plan_record=plan, precursors=_LAUNCH_PRECURSORS,
+        runtime=_launch_runtime_fields(), contract=contract)
+    out = tmp_path / "launch_freeze.json"
+    digest = p0_launch.save_launch_freeze(freeze, out)
+    calls = {"equivalence": 0, "appendix": 0}
+    real_equivalence = p0_c2_equivalence.verify_c2_equivalence
+    real_appendix = p0_tables.verify_appendix
+
+    def counting_equivalence(*args, **kwargs):
+        calls["equivalence"] += 1
+        return real_equivalence(*args, **kwargs)
+
+    def counting_appendix(*args, **kwargs):
+        calls["appendix"] += 1
+        return real_appendix(*args, **kwargs)
+
+    monkeypatch.setattr(p0_c2_equivalence, "verify_c2_equivalence",
+                        counting_equivalence)
+    monkeypatch.setattr(p0_tables, "verify_appendix",
+                        counting_appendix)
+    bundle = p0_launch.prepare_p0_launch(out, digest)
+    assert calls == {"equivalence": 1, "appendix": 1}
+    assert bundle["launch_epochs"] == 1
+    assert bundle["groups_total"] == 157
+    assert bundle["admission"] == {"launch_plan": "REDERIVED",
+                                   "c2_equivalence": "PASS",
+                                   "appendix": "PASS"}
+    assert [r["observation_id"] for r in bundle["trainer_rows"]] \
+        == bundle["schedule"]
+    assert bundle["runtime"].seed == 20260901
+    # a freeze pinning a DIFFERENT contract refuses at admission
+    import dataclasses
+    forged = dataclasses.replace(
+        freeze, science_contract_sha256="ab" * 32)
+    out2 = tmp_path / "forged_freeze.json"
+    digest2 = p0_launch.save_launch_freeze(forged, out2)
+    with pytest.raises(InfrastructureError, match="different "
+                       "science contract"):
+        p0_launch.prepare_p0_launch(out2, digest2)

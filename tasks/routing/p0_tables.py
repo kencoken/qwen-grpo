@@ -208,7 +208,7 @@ def generate_traceability_appendix() -> str:
             out(_row(f"`{field}`",
                      "computed by `sentinel_checkpoint_block` "
                      "(the legacy C2 block does not persist it)",
-                     "every P0 checkpoint (Unit 5)"))
+                     "every P0 checkpoint"))
         elif field == "first_group_indices":
             out(_row(f"`{field}`", "; ".join(
                 f"{family}="
@@ -224,8 +224,9 @@ def generate_traceability_appendix() -> str:
         elif field in ("checkpoint_trajectory",
                        "evaluation_trajectory"):
             out(_row(f"`{field}`",
-                     "assembled across checkpoints by the P0 "
-                     "consumer", "DEFERRED to Unit 5"))
+                     "assembled across checkpoints by "
+                     "`p0_launch.assemble_sentinel_trajectories`",
+                     "instance at the P0 run"))
         else:
             raise InfrastructureError(
                 f"unmapped required sentinel field {field!r} — the "
@@ -378,16 +379,28 @@ def generate_traceability_appendix() -> str:
         ("Launch-freeze persistence (all cap inputs + all three "
          "values)",
          "the `derive_launch_plan` record",
-         "DEFERRED to Unit 5: `P0LaunchFreeze` persists the "
-         "record verbatim",
-         "DEFERRED to Unit 5",
-         "P0LaunchFreeze (future)"),
+         "`p0_launch.build_p0_launch_freeze` (admits through "
+         "`require_launchable`; typed `LaunchPlan` must round-trip "
+         "to the record VERBATIM; stop branch unfreezable)",
+         "`test_p0_launch_freeze_schema`",
+         "P0LaunchFreeze schema (instance frozen post-merge, after "
+         "val/cycle/beta)"),
         ("Checkpoint/evaluation trajectories",
          "`diagnostics.sentinel.fields_required` trajectories",
-         "DEFERRED to Unit 5: assembled across checkpoints by the "
-         "P0 consumer",
-         "DEFERRED to Unit 5",
-         "P0 run record (future)"),
+         "`p0_launch.assemble_sentinel_trajectories` (strictly "
+         "increasing indices; complete field sets; contract-bound "
+         "population)",
+         "`test_p0_sentinel_trajectories`",
+         "P0 run record (instance at the P0 run)"),
+        ("Launch admission (the first real consumer)",
+         "`P0LaunchFreeze` (all fields; execution-manifest hash "
+         "and terminal hashes excluded by the closed schema)",
+         "`p0_launch.prepare_p0_launch` (freeze under its REQUIRED "
+         "reviewed hash; contract pin equality; plan REDERIVED; "
+         "fresh `verify_c2_equivalence` + `verify_appendix`; "
+         "strict schedule loader)",
+         "`test_p0_first_consumer_prepare`",
+         "launch bundle (runtime)"),
         ("Appendix divergence gate (303_f §8)",
          "this file",
          "`verify_appendix` (raw byte equality)",

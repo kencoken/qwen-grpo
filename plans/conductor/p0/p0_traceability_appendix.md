@@ -77,11 +77,11 @@ Every field of `contract.diagnostics.sentinel.fields_required`, with its C2 chec
 | `reward_varying_groups` | 0 | frozen projection |
 | `q1_counted_groups` | 0 | frozen projection |
 | `group_denominator` | 15 | frozen projection (`groups`) |
-| `completion_denominator` | computed by `sentinel_checkpoint_block` (the legacy C2 block does not persist it) | every P0 checkpoint (Unit 5) |
+| `completion_denominator` | computed by `sentinel_checkpoint_block` (the legacy C2 block does not persist it) | every P0 checkpoint |
 | `first_group_indices` | worker1=None; reward1=None; varying=None; q1_counted=None | frozen projection |
 | `first_update_indices` | worker1=None; reward1=None; varying=None; q1_counted=None | frozen projection |
-| `checkpoint_trajectory` | assembled across checkpoints by the P0 consumer | DEFERRED to Unit 5 |
-| `evaluation_trajectory` | assembled across checkpoints by the P0 consumer | DEFERRED to Unit 5 |
+| `checkpoint_trajectory` | assembled across checkpoints by `p0_launch.assemble_sentinel_trajectories` | instance at the P0 run |
+| `evaluation_trajectory` | assembled across checkpoints by `p0_launch.assemble_sentinel_trajectories` | instance at the P0 run |
 
 ## 6. Sizing and the cap (rule `p0-cap-v1`)
 
@@ -138,8 +138,9 @@ The merge-gated mapping: requirement → contract field → enforcement → regr
 | Exact C2 equivalence (303_f §3) | every projection field | `verify_c2_equivalence` (field-for-field + pin rehash) | `test_p0_c2_replay_equivalence` under independence guards | projection |
 | Sizing derivation | `q1.sizing_counts`; `sizing.nominal_epochs` = 39 | `p0_estimands.derive_sizing`; `_validate_against_projection` | `test_p0_estimand_rules`; `test_p0_contract_cross_checks_the_projection` | contract + projection |
 | Cap + launch (305_f §5) | `sizing.cap` (`p0-cap-v1`) | `p0_cap.derive_launch_plan`; `require_launchable` (rederive-and-compare, type-sensitive) | `test_p0_cap_arithmetic` (branches; legacy parity; forged plans) | contract |
-| Launch-freeze persistence (all cap inputs + all three values) | the `derive_launch_plan` record | DEFERRED to Unit 5: `P0LaunchFreeze` persists the record verbatim | DEFERRED to Unit 5 | P0LaunchFreeze (future) |
-| Checkpoint/evaluation trajectories | `diagnostics.sentinel.fields_required` trajectories | DEFERRED to Unit 5: assembled across checkpoints by the P0 consumer | DEFERRED to Unit 5 | P0 run record (future) |
+| Launch-freeze persistence (all cap inputs + all three values) | the `derive_launch_plan` record | `p0_launch.build_p0_launch_freeze` (admits through `require_launchable`; typed `LaunchPlan` must round-trip to the record VERBATIM; stop branch unfreezable) | `test_p0_launch_freeze_schema` | P0LaunchFreeze schema (instance frozen post-merge, after val/cycle/beta) |
+| Checkpoint/evaluation trajectories | `diagnostics.sentinel.fields_required` trajectories | `p0_launch.assemble_sentinel_trajectories` (strictly increasing indices; complete field sets; contract-bound population) | `test_p0_sentinel_trajectories` | P0 run record (instance at the P0 run) |
+| Launch admission (the first real consumer) | `P0LaunchFreeze` (all fields; execution-manifest hash and terminal hashes excluded by the closed schema) | `p0_launch.prepare_p0_launch` (freeze under its REQUIRED reviewed hash; contract pin equality; plan REDERIVED; fresh `verify_c2_equivalence` + `verify_appendix`; strict schedule loader) | `test_p0_first_consumer_prepare` | launch bundle (runtime) |
 | Appendix divergence gate (303_f §8) | this file | `verify_appendix` (raw byte equality) | `test_p0_traceability_appendix` (edited number; CRLF rewrite; diverging artifact) | appendix |
 
 ## 9. Supersession and lineage (references)

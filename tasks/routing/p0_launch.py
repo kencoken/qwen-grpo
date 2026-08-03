@@ -1,0 +1,517 @@
+"""P0 spine, Unit 5 — the P0LaunchFreeze schema and the FIRST REAL
+CONSUMER (303_f §2/§9 step 5; 305_f §1/§5).
+
+The `P0LaunchFreeze` (schema `p0-launch-freeze-v1`) carries: the
+science-contract hash; the val/cycle/beta reviewed-output pins;
+the ACTUAL epoch cap — the `derive_launch_plan` record persisted
+VERBATIM (typed here, with a strict round-trip proof back to the
+record); and the intrinsic runtime/seed identities plus the
+COMMIT-INDEPENDENT attested-environment expectation. By the closed
+schema it CANNOT carry an execution-manifest hash (an external
+launch argument) nor any terminal output hash (closeouts only) —
+the 305_f §1 identity graph is enforced by construction. The
+INSTANCE is constructed only after the val/cycle/beta inputs exist
+(post-merge); this unit freezes the schema, the builder, and the
+consuming path.
+
+`prepare_p0_launch` is the first real consumer: every input flows
+through a reviewed pin (the freeze under its externally reviewed
+hash — REQUIRED, a self-hash is never authentication; the contract
+under `d47a63ff…`), the launch plan is REDERIVED at admission
+(`require_launchable`), the standing oracles run FRESH
+(`verify_c2_equivalence` — which authenticates the complete replay
+source — and `verify_appendix`), and the trainer dataset is built
+by the STRICT schedule loader for exactly `launch_epochs` frozen
+epochs.
+
+`assemble_sentinel_trajectories` closes the deferred 305_f §4
+obligation: the per-checkpoint sentinel blocks are assembled into
+the `checkpoint_trajectory` / `evaluation_trajectory` structures
+with strict index and completeness validation."""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, fields
+from pathlib import Path
+from typing import Any, Mapping, Sequence
+
+from tasks.conductor.types import InfrastructureError
+
+from .charter import content_sha256
+from .p0_cap import (
+    REGISTERED_CAPACITY_INPUTS,
+    _strict_equal,
+    require_launchable,
+)
+from .p0_contract import load_p0_science_contract
+from .p0_replay import P0_DIR
+from .p0_schema import (
+    P0ScienceContract,
+    _require_finite,
+    _require_hex64,
+    _require_positive_int,
+    contract_sha256,
+)
+
+SCHEMA_VERSION = "p0-launch-freeze-v1"
+LAUNCH_FREEZE_PATH = P0_DIR / "p0_launch_freeze.json"
+
+_LAUNCH_BRANCHES = ("disclosed_under_target", "no_extra_training")
+
+
+def _require_nonneg_number(value: Any, where: str) -> None:
+    _require_finite(value, where)
+    if value < 0:
+        raise InfrastructureError(f"{where}: must be non-negative")
+
+
+@dataclass(frozen=True)
+class PrecursorOutputs:
+    """The reviewed-output pins of the precursor freezes (303_f §2:
+    'the launch freeze pins their reviewed outputs')."""
+    routing_dev_val_lock_sha256: str
+    cycle_record_sha256: str
+    r_cycle_record_sha256: str
+    beta_smoke_record_sha256: str
+
+    def __post_init__(self) -> None:
+        for field in fields(self):
+            _require_hex64(getattr(self, field.name),
+                           f"precursors.{field.name}")
+
+
+@dataclass(frozen=True)
+class CapInputs:
+    """The registered capacity inputs, persisted verbatim."""
+    operational_ceiling_seconds: float
+    cumulative_consumed_seconds: float
+    measured_finalization_reserve_seconds: float
+    frozen_non_rollout_overhead_seconds: float
+    measured_whole_epoch_seconds: float
+
+    def __post_init__(self) -> None:
+        if tuple(f.name for f in fields(self)) \
+                != REGISTERED_CAPACITY_INPUTS:
+            raise InfrastructureError(
+                "CapInputs fields diverge from the registered "
+                "tuple")
+        for field in fields(self):
+            _require_nonneg_number(getattr(self, field.name),
+                                   f"cap inputs.{field.name}")
+        if self.measured_whole_epoch_seconds <= 0 \
+                or self.operational_ceiling_seconds <= 0:
+            raise InfrastructureError(
+                "whole-epoch and ceiling seconds must be positive")
+
+
+@dataclass(frozen=True)
+class LaunchPlan:
+    """The 305_f §5 record, typed: every input and ALL THREE values
+    (nominal/capacity/launch) with the closed launchable branch.
+    The stop branch can NEVER be frozen — a freeze exists only for
+    a launchable plan."""
+    cap_rule_id: str
+    inputs: CapInputs
+    available_generation_seconds: float
+    nominal_epochs: int
+    capacity_epochs: int
+    launch_epochs: int
+    branch: str
+    launchable: bool
+    projected_q1_counted_by_cell: tuple[tuple[str, float], ...] | None
+    target_q1_counted_groups_per_sizing_cell: int | None
+    spare_epochs_not_trained: int | None
+
+    def __post_init__(self) -> None:
+        if self.cap_rule_id != "p0-cap-v1":
+            raise InfrastructureError(
+                f"unknown cap rule {self.cap_rule_id!r}")
+        _require_finite(self.available_generation_seconds,
+                        "plan.available_generation_seconds")
+        _require_positive_int(self.nominal_epochs,
+                              "plan.nominal_epochs")
+        _require_positive_int(self.capacity_epochs,
+                              "plan.capacity_epochs")
+        _require_positive_int(self.launch_epochs,
+                              "plan.launch_epochs")
+        if self.launchable is not True:
+            raise InfrastructureError(
+                "a launch freeze exists only for a launchable plan "
+                "(the stop branch is a reviewed-amendment decision)")
+        if self.launch_epochs != min(self.nominal_epochs,
+                                     self.capacity_epochs):
+            raise InfrastructureError(
+                "launch_epochs != min(nominal, capacity) (305_f §5)")
+        if self.branch not in _LAUNCH_BRANCHES:
+            raise InfrastructureError(
+                f"branch {self.branch!r} is not a launchable branch")
+        under = self.branch == "disclosed_under_target"
+        if under:
+            if self.projected_q1_counted_by_cell is None \
+                    or self.target_q1_counted_groups_per_sizing_cell \
+                    is None or self.spare_epochs_not_trained \
+                    is not None:
+                raise InfrastructureError(
+                    "the under-target branch must carry its "
+                    "quantified disclosure and no spare field")
+            for cell, value in self.projected_q1_counted_by_cell:
+                _require_nonneg_number(
+                    value, f"plan.projected[{cell}]")
+            _require_positive_int(
+                self.target_q1_counted_groups_per_sizing_cell,
+                "plan.target_q1_counted_groups_per_sizing_cell")
+        else:
+            if self.projected_q1_counted_by_cell is not None \
+                    or self.target_q1_counted_groups_per_sizing_cell \
+                    is not None or self.spare_epochs_not_trained \
+                    is None:
+                raise InfrastructureError(
+                    "the spare-capacity branch must carry the spare "
+                    "count and no under-target fields")
+            if not isinstance(self.spare_epochs_not_trained, int) \
+                    or isinstance(self.spare_epochs_not_trained,
+                                  bool) \
+                    or self.spare_epochs_not_trained < 0:
+                raise InfrastructureError(
+                    "plan.spare_epochs_not_trained must be a "
+                    "non-negative non-boolean integer")
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any]) -> "LaunchPlan":
+        expected_keys = {
+            "cap_rule_id", "inputs",
+            "available_generation_seconds", "nominal_epochs",
+            "capacity_epochs", "launch_epochs", "branch",
+            "launchable"}
+        optional = {"projected_q1_counted_by_cell",
+                    "target_q1_counted_groups_per_sizing_cell",
+                    "spare_epochs_not_trained"}
+        if not isinstance(record, Mapping) \
+                or not expected_keys <= set(record) \
+                or not set(record) <= expected_keys | optional:
+            raise InfrastructureError(
+                "launch-plan record keys diverge from the "
+                "registered shape")
+        projected = record.get("projected_q1_counted_by_cell")
+        return cls(
+            cap_rule_id=record["cap_rule_id"],
+            inputs=CapInputs(**record["inputs"]),
+            available_generation_seconds=record[
+                "available_generation_seconds"],
+            nominal_epochs=record["nominal_epochs"],
+            capacity_epochs=record["capacity_epochs"],
+            launch_epochs=record["launch_epochs"],
+            branch=record["branch"],
+            launchable=record["launchable"],
+            projected_q1_counted_by_cell=(
+                tuple(sorted((str(k), v)
+                             for k, v in projected.items()))
+                if projected is not None else None),
+            target_q1_counted_groups_per_sizing_cell=record.get(
+                "target_q1_counted_groups_per_sizing_cell"),
+            spare_epochs_not_trained=record.get(
+                "spare_epochs_not_trained"))
+
+    def to_record(self) -> dict[str, Any]:
+        """The VERBATIM `derive_launch_plan` record (the 316_s/318_s
+        admission boundary consumes exactly this shape)."""
+        record: dict[str, Any] = {
+            "cap_rule_id": self.cap_rule_id,
+            "inputs": {name: getattr(self.inputs, name)
+                       for name in REGISTERED_CAPACITY_INPUTS},
+            "available_generation_seconds":
+                self.available_generation_seconds,
+            "nominal_epochs": self.nominal_epochs,
+            "capacity_epochs": self.capacity_epochs,
+            "launch_epochs": self.launch_epochs,
+            "branch": self.branch,
+            "launchable": self.launchable,
+        }
+        if self.branch == "disclosed_under_target":
+            record["projected_q1_counted_by_cell"] = dict(
+                self.projected_q1_counted_by_cell)
+            record["target_q1_counted_groups_per_sizing_cell"] = \
+                self.target_q1_counted_groups_per_sizing_cell
+        else:
+            record["spare_epochs_not_trained"] = \
+                self.spare_epochs_not_trained
+        return record
+
+
+@dataclass(frozen=True)
+class RuntimeIdentity:
+    """The intrinsic runtime/seed fields plus the
+    COMMIT-INDEPENDENT attested-environment expectation (305_f §1).
+    The execution-manifest hash is NOT a field — it remains an
+    external launch argument by the closed schema."""
+    model_id: str
+    model_revision: str
+    quantization: str
+    lora_adapter_dtype: str
+    lora_key_set_sha256: str
+    prompt_sha256: str
+    group_size: int
+    seed: int
+    temperature: float
+    learning_rate: float
+    beta: float
+    policy_max_new_tokens: int
+    attested_environment_sha256: str
+
+    def __post_init__(self) -> None:
+        if not self.model_id or not isinstance(self.model_id, str):
+            raise InfrastructureError("runtime.model_id required")
+        if not isinstance(self.model_revision, str) \
+                or len(self.model_revision) != 40 \
+                or any(c not in "0123456789abcdef"
+                       for c in self.model_revision):
+            raise InfrastructureError(
+                "runtime.model_revision must be a 40-hex commit")
+        if self.quantization != "nf4" \
+                or self.lora_adapter_dtype != "float32":
+            raise InfrastructureError(
+                "runtime quantization/adapter dtype outside the "
+                "validated construction (nf4 + fp32 LoRA)")
+        for name in ("lora_key_set_sha256", "prompt_sha256",
+                     "attested_environment_sha256"):
+            _require_hex64(getattr(self, name), f"runtime.{name}")
+        for name in ("group_size", "seed",
+                     "policy_max_new_tokens"):
+            _require_positive_int(getattr(self, name),
+                                  f"runtime.{name}")
+        for name in ("temperature", "learning_rate", "beta"):
+            _require_finite(getattr(self, name), f"runtime.{name}")
+        if self.temperature <= 0 or self.learning_rate <= 0 \
+                or self.beta < 0:
+            raise InfrastructureError(
+                "P0 runs REAL training: temperature and "
+                "learning_rate must be positive, beta non-negative")
+
+
+@dataclass(frozen=True)
+class P0LaunchFreeze:
+    schema_version: str
+    science_contract_sha256: str
+    precursors: PrecursorOutputs
+    launch_plan: LaunchPlan
+    runtime: RuntimeIdentity
+
+    def __post_init__(self) -> None:
+        if self.schema_version != SCHEMA_VERSION:
+            raise InfrastructureError(
+                f"unknown launch-freeze schema "
+                f"{self.schema_version!r}")
+        _require_hex64(self.science_contract_sha256,
+                       "science_contract_sha256")
+
+
+def _to_jsonable(value: Any) -> Any:
+    if isinstance(value, (PrecursorOutputs, CapInputs,
+                          RuntimeIdentity)):
+        return {f.name: getattr(value, f.name)
+                for f in fields(value)}
+    if isinstance(value, LaunchPlan):
+        return value.to_record()
+    return value
+
+
+def canonical_freeze_json(freeze: P0LaunchFreeze) -> str:
+    payload = {f.name: _to_jsonable(getattr(freeze, f.name))
+               for f in fields(freeze)}
+    return json.dumps(payload, sort_keys=True,
+                      separators=(",", ":"), allow_nan=False)
+
+
+def freeze_sha256(freeze: P0LaunchFreeze) -> str:
+    return content_sha256(json.loads(canonical_freeze_json(freeze)))
+
+
+def build_p0_launch_freeze(*, plan_record: Mapping[str, Any],
+                           precursors: Mapping[str, str],
+                           runtime: Mapping[str, Any],
+                           contract: P0ScienceContract | None = None
+                           ) -> P0LaunchFreeze:
+    """Constructed only after the val/cycle/beta inputs exist. The
+    plan record is admitted through the Unit-4 boundary (REDERIVED
+    under the authenticated contract; the stop branch refuses), and
+    the typed plan must round-trip to the record VERBATIM."""
+    contract = contract or load_p0_science_contract()
+    require_launchable(contract, dict(plan_record))
+    freeze = P0LaunchFreeze(
+        schema_version=SCHEMA_VERSION,
+        science_contract_sha256=contract_sha256(contract),
+        precursors=PrecursorOutputs(**dict(precursors)),
+        launch_plan=LaunchPlan.from_record(plan_record),
+        runtime=RuntimeIdentity(**dict(runtime)))
+    if not _strict_equal(freeze.launch_plan.to_record(),
+                         dict(plan_record)):
+        raise InfrastructureError(
+            "the typed launch plan does not round-trip to the "
+            "derive_launch_plan record VERBATIM (305_f §5)")
+    return freeze
+
+
+def save_launch_freeze(freeze: P0LaunchFreeze,
+                       out_path: str | Path = LAUNCH_FREEZE_PATH
+                       ) -> str:
+    out_path = Path(out_path)
+    if out_path.exists():
+        raise InfrastructureError(
+            f"{out_path} exists; the launch freeze is written "
+            "exactly once")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.loads(canonical_freeze_json(freeze))
+    digest = content_sha256(payload)
+    payload["freeze_sha256"] = digest
+    out_path.write_text(
+        json.dumps(payload, indent=1, sort_keys=True,
+                   allow_nan=False) + "\n", encoding="utf-8")
+    return digest
+
+
+def load_p0_launch_freeze(path: str | Path,
+                          expected_sha256: str) -> P0LaunchFreeze:
+    """The strict closed loader. The externally reviewed hash is
+    REQUIRED — a self-hash alone is never authentication (303_f
+    §7); there is no default pin until a real instance is reviewed."""
+    _require_hex64(expected_sha256, "expected_sha256")
+    payload = json.loads(Path(path).read_text("utf-8"))
+    if not isinstance(payload, dict):
+        raise InfrastructureError("launch freeze must be an object")
+    stored = payload.pop("freeze_sha256", None)
+    if content_sha256(payload) != stored \
+            or stored != expected_sha256:
+        raise InfrastructureError(
+            "launch freeze does not rehash to the externally "
+            "reviewed value")
+    expected_fields = {f.name for f in fields(P0LaunchFreeze)}
+    if set(payload) != expected_fields:
+        raise InfrastructureError(
+            "launch-freeze fields diverge from the closed schema")
+    for name, cls in (("precursors", PrecursorOutputs),
+                      ("runtime", RuntimeIdentity)):
+        section = payload[name]
+        if not isinstance(section, dict) or set(section) \
+                != {f.name for f in fields(cls)}:
+            raise InfrastructureError(
+                f"{name}: fields diverge from the closed schema")
+    freeze = P0LaunchFreeze(
+        schema_version=payload["schema_version"],
+        science_contract_sha256=payload["science_contract_sha256"],
+        precursors=PrecursorOutputs(**payload["precursors"]),
+        launch_plan=LaunchPlan.from_record(payload["launch_plan"]),
+        runtime=RuntimeIdentity(**payload["runtime"]))
+    if freeze_sha256(freeze) != expected_sha256:
+        raise InfrastructureError(
+            "reconstructed launch freeze does not rehash to the "
+            "reviewed value")
+    return freeze
+
+
+# --- the first real consumer ---------------------------------------------------
+
+def prepare_p0_launch(freeze_path: str | Path,
+                      expected_freeze_sha256: str,
+                      evidence_dir: str | Path | None = None
+                      ) -> dict[str, Any]:
+    """THE FIRST REAL CONSUMER: freeze under its reviewed hash;
+    contract under its reviewed pin; the launch plan REDERIVED at
+    admission; the standing oracles run FRESH; the trainer dataset
+    built by the strict schedule loader for exactly launch_epochs
+    frozen epochs."""
+    from .p0_c2_equivalence import verify_c2_equivalence
+    from .p0_schedule import build_trainer_rows, schedule_for_epochs
+    from .p0_tables import verify_appendix
+    freeze = load_p0_launch_freeze(freeze_path,
+                                   expected_freeze_sha256)
+    contract = load_p0_science_contract()
+    if freeze.science_contract_sha256 != contract_sha256(contract):
+        raise InfrastructureError(
+            "the launch freeze pins a different science contract")
+    plan = freeze.launch_plan.to_record()
+    require_launchable(contract, plan)
+    equivalence = verify_c2_equivalence(evidence_dir)
+    appendix = verify_appendix()
+    launch_epochs = freeze.launch_plan.launch_epochs
+    schedule = schedule_for_epochs(contract, launch_epochs)
+    rows = build_trainer_rows(contract, launch_epochs)
+    if [row["observation_id"] for row in rows] != schedule:
+        raise InfrastructureError(
+            "trainer rows diverge from the frozen schedule")
+    return {
+        "freeze_sha256": expected_freeze_sha256,
+        "science_contract_sha256":
+            freeze.science_contract_sha256,
+        "launch_epochs": launch_epochs,
+        "groups_total": len(rows),
+        "schedule": schedule,
+        "trainer_rows": rows,
+        "runtime": freeze.runtime,
+        "admission": {
+            "launch_plan": "REDERIVED",
+            "c2_equivalence": equivalence["verdict"],
+            "appendix": appendix["verdict"],
+        },
+    }
+
+
+# --- the deferred trajectory assembly (305_f §4) -------------------------------
+
+_PER_CHECKPOINT_SENTINEL_FIELDS = (
+    "cell", "training_exposed", "observation_ids",
+    "group_denominator", "completion_denominator",
+    "worker1_selections", "worker1_completions",
+    "reward1_completions", "reward_varying_groups",
+    "q1_counted_groups", "first_group_indices",
+    "first_update_indices")
+
+
+def _validate_trajectory(name: str,
+                         entries: Sequence[tuple[int,
+                                                 Mapping[str, Any]]],
+                         contract: P0ScienceContract
+                         ) -> tuple[tuple[int, dict[str, Any]], ...]:
+    expected_ids = sorted(contract.scope.sentinel_observation_ids)
+    previous = None
+    validated = []
+    for index, block in entries:
+        if not isinstance(index, int) or isinstance(index, bool) \
+                or index < 0:
+            raise InfrastructureError(
+                f"{name}: checkpoint index {index!r} must be a "
+                "non-negative non-boolean integer")
+        if previous is not None and index <= previous:
+            raise InfrastructureError(
+                f"{name}: checkpoint indices must be strictly "
+                f"increasing ({index} after {previous})")
+        previous = index
+        if not isinstance(block, Mapping) or set(block) \
+                != set(_PER_CHECKPOINT_SENTINEL_FIELDS):
+            raise InfrastructureError(
+                f"{name}: a sentinel block is not the COMPLETE "
+                "per-checkpoint field set (305_f §4 — fields are "
+                "never dropped)")
+        if list(block["observation_ids"]) != expected_ids \
+                or block["cell"] != contract.scope.sentinel_cell:
+            raise InfrastructureError(
+                f"{name}: sentinel block population is not the "
+                "contract's frozen sentinel")
+        validated.append((index, dict(block)))
+    return tuple(validated)
+
+
+def assemble_sentinel_trajectories(
+        contract: P0ScienceContract,
+        checkpoint_blocks: Sequence[tuple[int, Mapping[str, Any]]],
+        evaluation_blocks: Sequence[tuple[int, Mapping[str, Any]]]
+        ) -> dict[str, Any]:
+    """The P0 consumer's assembly of the two signed trajectories
+    from per-checkpoint `sentinel_checkpoint_block` outputs —
+    strictly increasing indices, complete field sets, the
+    contract-bound population."""
+    return {
+        "checkpoint_trajectory": _validate_trajectory(
+            "checkpoint_trajectory", checkpoint_blocks, contract),
+        "evaluation_trajectory": _validate_trajectory(
+            "evaluation_trajectory", evaluation_blocks, contract),
+    }
