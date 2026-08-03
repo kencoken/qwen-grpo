@@ -25,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import extension_run, ledger, p0_mixture, p0_mixture_v2, support_run, telemetry, unit_c2_sample, unit_c_sample
+from tasks.routing import extension_run, ledger, p0_mixture, p0_mixture_v2, p0_replay, p0_schema, support_run, telemetry, unit_c2_sample, unit_c_sample
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -4204,3 +4204,165 @@ def test_c2_report_gates_and_decision(c2_fixture, tmp_path):
     assert unit_c2_sample.verify_unit_c2_run(
         pass_root, identity["manifest_sha256"],
         record["attested_environment_sha256"])["verdict"] == "PASS"
+
+
+# --- P0 spine Unit 1: schema, pinned artifact, frozen projection ---------------
+
+def _sample_contract():
+    return p0_schema.P0ScienceContract(
+        schema_version=p0_schema.SCHEMA_VERSION,
+        input_pins=p0_schema.InputPins(
+            extension_surface_lock_sha256="a" * 64,
+            selection_record_sha256="b" * 64,
+            selection_file_sha256="c" * 64,
+            comparator_record_sha256="d" * 64,
+            pinned_mixture_record_sha256="e" * 64,
+            pinned_mixture_file_sha256="f" * 64,
+            c2_closeout_entry_sha256="1" * 64,
+            c2_actions_file_sha256="2" * 64,
+            c2_report_file_sha256="3" * 64,
+            c2_schedule_file_sha256="4" * 64,
+            c2_record_file_sha256="5" * 64,
+            c2_projection_file_sha256="6" * 64),
+        scope=p0_schema.ActiveScope(
+            q1_direct_cells=("code_atomic", "fork_join", "math_code"),
+            q2_description="coarse cell-correlated unlocking",
+            q3="out_of_scope",
+            sentinel_cell="math_atomic",
+            sentinel_observation_ids=("x", "y", "z"),
+            sentinel_excluded_from=("direct_q1_gate",
+                                    "sizing_minimum",
+                                    "authorization", "headline_q1"),
+            sentinel_training_exposed=True),
+        q1=p0_schema.Q1Rule(
+            version="q1-v1", population="bridge rows",
+            min_counted_groups_per_cell=2,
+            min_distinct_latents_among_counted=2,
+            sizing_counts=(("code_atomic", 13), ("fork_join", 34),
+                           ("math_code", 13)),
+            sizing_epochs=5),
+        q2=p0_schema.Q2Rule(
+            version="q2-v1",
+            marginal_min_target_selections=8,
+            marginal_min_distinct_latents=2,
+            per_direction_targets=(("math_code|w3_favoured", 3),
+                                   ("fork_join|w2_favoured", 2)),
+            conditional_estimand="optimal/eligible; 0-denom = None",
+            conditional_baselines=(("fork_join|w2_favoured", "8/152"),
+                                   ("math_code|w3_favoured", "0/15")),
+            marginal_baselines=(("fork_join|w2_favoured", 73),
+                                ("math_code|w3_favoured", 108))),
+        sizing=p0_schema.SizingRule(
+            target_q1_counted_groups_per_sizing_cell=100,
+            groups_per_epoch=157, nominal_epochs=39,
+            operational_ceiling_hours=10.0,
+            launch_epochs_rule="min(nominal, capacity)",
+            capacity_zero_rule="stop for a reviewed amendment",
+            under_target_rule="disclosed under-target branch",
+            spare_capacity_rule="never extra training"),
+        diagnostics=p0_schema.RequiredDiagnostics(items=(
+            "q1_counted_by_cell", "q2_eligibility",
+            "q2_optimality", "q2_choice_conditional_on_eligibility",
+            "direct_and_semantic_contrasts",
+            "sentinel_first_occurrences",
+            "zero_variance_and_invalid_rates")))
+
+
+def test_p0_schema_immutability_and_loader(tmp_path):
+    import dataclasses
+    contract = _sample_contract()
+    # deep immutability: frozen dataclasses + tuples throughout
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        contract.schema_version = "x"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        contract.q1.min_counted_groups_per_cell = 1
+    assert isinstance(contract.scope.q1_direct_cells, tuple)
+    assert isinstance(contract.q1.sizing_counts[0], tuple)
+    # canonical serialization round-trips through the strict loader
+    digest = p0_schema.contract_sha256(contract)
+    path = tmp_path / "contract.json"
+    assert p0_schema.save_contract(contract, path) == digest
+    loaded = p0_schema.load_contract(path, digest)
+    assert loaded == contract
+    assert p0_schema.contract_sha256(loaded) == digest
+    # external authentication is REQUIRED: a wrong expected hash
+    # refuses; so does a missing one
+    with pytest.raises(InfrastructureError, match="externally "
+                       "reviewed"):
+        p0_schema.load_contract(path, "0" * 64)
+    with pytest.raises(InfrastructureError, match="expected hash"):
+        p0_schema.load_contract(path, "short")
+    # unknown fields refuse (closed schema)
+    payload = json.loads(path.read_text("utf-8"))
+    payload["extra"] = 1
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="unknown fields"):
+        p0_schema.load_contract(bad, digest)
+    # schema version is checked
+    payload = json.loads(path.read_text("utf-8"))
+    payload["schema_version"] = "p0-science-contract-v0"
+    bad.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="schema"):
+        p0_schema.load_contract(bad, digest)
+    # a tampered body fails the external hash
+    payload = json.loads(path.read_text("utf-8"))
+    payload["q1"]["min_counted_groups_per_cell"] = 1
+    bad.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="does not hash"):
+        p0_schema.load_contract(bad, digest)
+
+
+def test_p0_unit1_artifacts_and_replay_source(b2_fixture, tmp_path):
+    """The pinned artifact double-binds and equals a fresh legacy
+    rederivation; the frozen projection carries the exact 302_s
+    values; the replay-source verifier passes and its tamper
+    regressions refuse."""
+    # pinned mixture: rehash + pin + byte-level equality with a
+    # fresh legacy build on the restored surface
+    pinned = p0_replay.load_pinned_mixture()
+    assert pinned["record_sha256"] == \
+        p0_mixture_v2.EXPECTED_MIXTURE_V2_RECORD_SHA256
+    fresh = b2_fixture["mixture"]
+    assert json.loads(json.dumps(fresh)) == pinned
+    # one-time materialization refuses overwrite
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_replay.materialize_pinned_mixture()
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_replay.freeze_projection()
+    # the frozen projection: rehash + the exact frozen values
+    projection = p0_replay.load_projection()
+    assert projection["per_population_draws"] == {
+        "anchor": 75, "bridge": 420,
+        "direct_specialist_control": 25, "goal_first_control": 90,
+        "q2_composite": 160, "sentinel": 15}
+    assert sum(g["counted_groups"]
+               for g in projection["q1_gate"].values()) == 60
+    assert projection["p0_size_derived"]["derived_epochs"] == 39
+    assert projection["p0_size_derived"]["derived_groups"] == 6123
+    assert projection["zero_variance_groups"] == 662
+    assert projection["invalid_completions"] == 38
+    assert projection["valid_completions"] == 6242
+    assert projection["preregistered_decision"] == \
+        "Q1 + Q2 hierarchical-unlocking authorized"
+    assert len(projection["epoch_rows"]) == 157
+    assert len(projection["schedule_rows"]) == 785
+    assert projection["schedule_rows"] == \
+        projection["epoch_rows"] * 5
+    assert projection["mixture_record_sha256"] == \
+        pinned["record_sha256"]
+    # source pins agree with the module pins
+    assert projection["source"]["report_file_sha256"] == \
+        p0_replay.REPLAY_SOURCE["c2_report_file_sha256"]
+    # the replay-source verifier passes on the committed state
+    assert p0_replay.verify_c2_replay_source()["verdict"] == "PASS"
+    # tamper regression: a modified evidence byte refuses BEFORE any
+    # replay
+    tampered = tmp_path / "evidence"
+    shutil.copytree(p0_replay.C2_EVIDENCE_DIR, tampered)
+    lines = (tampered / "actions.jsonl").read_text(
+        "utf-8").splitlines()
+    (tampered / "actions.jsonl").write_text(
+        "\n".join(lines[:-1]) + "\n", encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="actions.jsonl"):
+        p0_replay.verify_c2_replay_source(evidence_dir=tampered)
