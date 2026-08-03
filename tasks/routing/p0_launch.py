@@ -14,20 +14,28 @@ INSTANCE is constructed only after the val/cycle/beta inputs exist
 (post-merge); this unit freezes the schema, the builder, and the
 consuming path.
 
-`prepare_p0_launch` is the first real consumer: every input flows
+`prepare_p0_dataset` is the first real consumer — DATASET
+PREPARATION, never launch admission (321_s): every input flows
 through a reviewed pin (the freeze under its externally reviewed
 hash — REQUIRED, a self-hash is never authentication; the contract
-under `d47a63ff…`), the launch plan is REDERIVED at admission
-(`require_launchable`), the standing oracles run FRESH
+under the reviewed pin), the launch plan is REDERIVED
+(`require_launchable`), the runtime identity is BOUND to the
+canonical `P0_RUNTIME_PROFILE` and the ACTUAL prompt
+(`bind_runtime_identity`), the standing oracles run FRESH
 (`verify_c2_equivalence` — which authenticates the complete replay
 source — and `verify_appendix`), and the trainer dataset is built
 by the STRICT schedule loader for exactly `launch_epochs` frozen
-epochs.
+epochs. Launch admission itself (precursor artifacts resolved
+under their pins; the execution-manifest EXTERNAL argument;
+environment attestation; cadence/eval/telemetry identity) is
+EXPLICITLY DEFERRED to the post-merge unit constructing the real
+instance and its authenticated `P0ExecutionIdentity`.
 
 `assemble_sentinel_trajectories` closes the deferred 305_f §4
 obligation: the per-checkpoint sentinel blocks are assembled into
 the `checkpoint_trajectory` / `evaluation_trajectory` structures
-with strict index and completeness validation."""
+under the exact frozen index sets, the producer invariants, and
+explicit infrastructure-abort handling."""
 from __future__ import annotations
 
 import json
@@ -58,15 +66,22 @@ LAUNCH_FREEZE_PATH = P0_DIR / "p0_launch_freeze.json"
 
 _LAUNCH_BRANCHES = ("disclosed_under_target", "no_extra_training")
 
-# --- the canonical complete P0 runtime profile (321_s P1) ----------------------
+# --- the canonical complete P0 runtime profile (321_s/323_s P1) ----------------
 # The construction sections are the Step-5-validated literals
 # (cross-checked against the hash-guarded C2 config at every
-# binding); the training deltas are the SIGNED house launch profile
-# (13_f/106_s/120_f: beta 1e-3, lr 1e-5, 10-step warmup, constant
-# schedule). Checkpoint/evaluation cadence, eval decoding, and
-# telemetry identity are NOT here — they are frozen with the real
-# P0LaunchFreeze instance post-merge and remain explicitly
-# deferred.
+# binding). The training deltas are the SIGNED Stage-0 launch
+# profile (13_f/106_s/120_f; implemented in
+# grpo_smoke.STAGE0C_LAUNCH_PROFILE): beta 1e-3, lr 1e-5, 10-step
+# warmup realized as `constant_with_warmup` (323_s: plain
+# "constant" IGNORES warmup_steps). The 2x4 batch shape at one
+# group per optimizer update is CONTROLLED by the 246_f
+# resume-validation execution, which validated real optimizer
+# updates in exactly that shape. The previously hard-coded trainer
+# settings (shuffle, gradient checkpointing + kwargs, model dtype,
+# attention implementation) are PINNED here (323_s). Checkpoint/
+# evaluation cadence, eval decoding, and telemetry identity are
+# NOT here — they are bound later through the authenticated
+# P0ExecutionIdentity and remain explicitly deferred.
 P0_RUNTIME_PROFILE: dict[str, Any] = {
     "kind": "p0-runtime-profile-v1",
     "model_id": "Qwen/Qwen2.5-3B-Instruct",
@@ -81,12 +96,19 @@ P0_RUNTIME_PROFILE: dict[str, Any] = {
     "grpo": {"beta": 1e-3, "group_size": 8, "temperature": 1.0,
              "per_device_batch": 2, "grad_accum": 4,
              "learning_rate": 1e-5, "warmup_steps": 10,
-             "scheduler": "constant", "loss": "dapo",
+             "scheduler": "constant_with_warmup", "loss": "dapo",
              "optim": "adamw_torch", "bf16": True},
     "policy_max_new_tokens": 128,
     "full_determinism": True,
     "updates_per_group": 1,
     "worker_outcome_mode": "precomputed_surface",
+    "trainer_settings": {
+        "shuffle_dataset": False,
+        "gradient_checkpointing": True,
+        "gradient_checkpointing_kwargs": {"use_reentrant": False},
+        "model_dtype": "bfloat16",
+        "attn_implementation": "sdpa",
+    },
     "lora_key_set": {
         "count": 504,
         "sorted_keys_sha256":
@@ -95,7 +117,7 @@ P0_RUNTIME_PROFILE: dict[str, Any] = {
     },
 }
 P0_RUNTIME_PROFILE_SHA256 = \
-    "eae2e2fcfc8147609433268ce3908765ae8880f605811523ff2e635a727e66a5"
+    "202bc3773f9f4d4fa4ccc1842c17199aabd8d8f5c532bda7826c7af53fa08ceb"
 
 
 def _validated_profile() -> dict[str, Any]:
@@ -131,17 +153,34 @@ def _validated_profile() -> dict[str, Any]:
             "validated (hash-guarded) C2 literals")
     c2_grpo = UNIT_C2_CONFIG["grpo"]
     for key in ("group_size", "temperature", "per_device_batch",
-                "grad_accum", "scheduler", "loss", "optim", "bf16"):
+                "grad_accum", "loss", "optim", "bf16"):
         if profile["grpo"][key] != c2_grpo[key]:
             raise InfrastructureError(
                 f"profile grpo.{key} diverges from the validated "
                 "construction")
+    # the training deltas are the SIGNED Stage-0 launch profile;
+    # the scheduler is a delta by design (the C2 zero-update run
+    # used plain constant with zero warmup) and must be the
+    # warmup-implementing variant (323_s)
     if profile["grpo"]["beta"] != 1e-3 \
             or profile["grpo"]["learning_rate"] != 1e-5 \
-            or profile["grpo"]["warmup_steps"] != 10:
+            or profile["grpo"]["warmup_steps"] != 10 \
+            or profile["grpo"]["scheduler"] \
+            != "constant_with_warmup":
         raise InfrastructureError(
             "profile training deltas diverge from the signed "
-            "launch profile (beta 1e-3, lr 1e-5, warmup 10)")
+            "launch profile (beta 1e-3, lr 1e-5, warmup 10, "
+            "constant_with_warmup)")
+    if profile["trainer_settings"] != {
+            "shuffle_dataset": False,
+            "gradient_checkpointing": True,
+            "gradient_checkpointing_kwargs":
+                {"use_reentrant": False},
+            "model_dtype": "bfloat16",
+            "attn_implementation": "sdpa"}:
+        raise InfrastructureError(
+            "profile trainer settings diverge from the signed "
+            "hard-coded construction (323_s)")
     return profile
 
 
@@ -658,11 +697,16 @@ _COUNTER_FIRSTS = (
 
 def _validate_sentinel_block(name: str, index: int,
                              block: Mapping[str, Any],
-                             contract: P0ScienceContract
+                             contract: P0ScienceContract,
+                             group_size: int,
+                             updates_per_group: int
                              ) -> dict[str, Any]:
-    """321_s P1: SEMANTIC validation of one per-checkpoint block —
-    exposure, counters, denominators, bounds, and count/first-index
-    consistency in both index spaces."""
+    """321_s/323_s P1: SEMANTIC validation of one per-checkpoint
+    block — exposure, counters, denominators, bounds, the PRODUCER
+    invariants (selections == completions; completion denominator
+    == groups x the frozen group size; update index == group index
+    x updates-per-group), and count/first-index consistency in
+    both index spaces."""
     where = f"{name}[{index}]"
     if not isinstance(block, Mapping) or set(block) \
             != set(_PER_CHECKPOINT_SENTINEL_FIELDS):
@@ -703,6 +747,18 @@ def _validate_sentinel_block(name: str, index: int,
             raise InfrastructureError(
                 f"{where}.{field} exceeds the group denominator "
                 "(321_s — impossible count)")
+    # 323_s: the PRODUCER invariants — states the block producer
+    # cannot emit are not valid trajectories
+    if block["worker1_selections"] != block["worker1_completions"]:
+        raise InfrastructureError(
+            f"{where}: worker-1 selections != completions — the "
+            "producer emits them identically (323_s)")
+    if block["completion_denominator"] \
+            != block["group_denominator"] * group_size:
+        raise InfrastructureError(
+            f"{where}: completion denominator "
+            f"{block['completion_denominator']} != groups x the "
+            f"frozen group size G={group_size} (323_s)")
     if block["q1_counted_groups"] > block["reward_varying_groups"]:
         raise InfrastructureError(
             f"{where}: a Q1-counted group necessarily varies — "
@@ -738,10 +794,13 @@ def _validate_sentinel_block(name: str, index: int,
                 f"{family} first index is "
                 f"{'set' if set_group else 'None'} (321_s — "
                 "count/index consistency)")
-        if set_group and firsts_update[family] < firsts_group[family]:
+        if set_group and firsts_update[family] \
+                != firsts_group[family] * updates_per_group:
             raise InfrastructureError(
-                f"{where}: {family} first update index below its "
-                "first group index")
+                f"{where}: {family} first update index "
+                f"{firsts_update[family]} != group index x "
+                f"updates_per_group={updates_per_group} (323_s — "
+                "the producer binds the two index spaces)")
     import copy as _copy
     return _copy.deepcopy(dict(block))
 
@@ -769,6 +828,11 @@ def _validate_expected_indices(name: str, expected: Sequence[int]
         raise InfrastructureError(
             f"{name}: the expected index set must begin at "
             "checkpoint zero (321_s)")
+    if len(expected) < 2:
+        raise InfrastructureError(
+            f"{name}: checkpoint zero PLUS a positive final "
+            "checkpoint are mandatory (323_s) — a single-element "
+            "expected set has no final checkpoint")
     return tuple(expected)
 
 
@@ -777,7 +841,9 @@ def _validate_trajectory(name: str,
                                                  Mapping[str, Any]]],
                          expected: tuple[int, ...],
                          status: str,
-                         contract: P0ScienceContract
+                         contract: P0ScienceContract,
+                         group_size: int,
+                         updates_per_group: int
                          ) -> tuple[tuple[int, dict[str, Any]], ...]:
     observed = [index for index, _ in entries]
     if status == "complete":
@@ -786,16 +852,19 @@ def _validate_trajectory(name: str,
                 f"{name}: observed checkpoints {observed[:5]}... "
                 f"!= the frozen expected set (empty or truncated "
                 "trajectories are not complete; 321_s)")
-    else:  # infrastructure_abort
-        if len(observed) >= len(expected) \
+    else:  # infrastructure_abort: EACH stream is a prefix (323_s;
+        # possibly complete — the abort may fall between streams);
+        # the assembly requires at least one STRICT prefix globally
+        if len(observed) > len(expected) \
                 or observed != list(expected)[:len(observed)]:
             raise InfrastructureError(
                 f"{name}: an infrastructure-abort trajectory must "
-                "be a STRICT PREFIX of the frozen expected set")
+                "be a PREFIX of the frozen expected set")
     validated = []
     for index, block in entries:
         validated.append((index, _validate_sentinel_block(
-            name, index, block, contract)))
+            name, index, block, contract, group_size,
+            updates_per_group)))
     return tuple(validated)
 
 
@@ -807,17 +876,24 @@ def assemble_sentinel_trajectories(
         expected_evaluation_indices: Sequence[int],
         status: str = "complete") -> dict[str, Any]:
     """The P0 consumer's assembly of the two signed trajectories
-    (321_s P1): the observed index sequences must EQUAL the frozen
-    expected sets exactly (checkpoint zero mandatory; the final
-    checkpoint is the last expected element) — an
-    `infrastructure_abort` trajectory is handled EXPLICITLY as a
-    disclosed strict prefix, never silently. Every block is
-    semantically validated and DEEP-COPIED (mutation after
-    assembly cannot reach the result). The expected sets are
-    frozen by the real P0LaunchFreeze instance post-merge."""
+    (321_s/323_s P1): the observed index sequences must EQUAL the
+    frozen expected sets exactly (checkpoint zero PLUS a positive
+    final checkpoint mandatory); every block must satisfy the
+    PRODUCER invariants under the canonical profile's frozen group
+    size and updates-per-group. An `infrastructure_abort` is
+    handled EXPLICITLY: each stream a prefix of its expected set
+    (possibly complete — the abort may fall between streams), at
+    least one stream a STRICT prefix, with a disclosed truncation
+    record. Blocks are DEEP-COPIED (mutation after assembly cannot
+    reach the result). The expected sets themselves are bound
+    later through the authenticated P0ExecutionIdentity — the home
+    for the deferred cadence/evaluation/telemetry configuration."""
     if status not in ("complete", "infrastructure_abort"):
         raise InfrastructureError(
             f"unknown trajectory status {status!r}")
+    profile = _validated_profile()
+    group_size = profile["grpo"]["group_size"]
+    updates_per_group = profile["updates_per_group"]
     expected_ckpt = _validate_expected_indices(
         "checkpoint_trajectory", expected_checkpoint_indices)
     expected_eval = _validate_expected_indices(
@@ -828,12 +904,21 @@ def assemble_sentinel_trajectories(
         "expected_evaluation_indices": expected_eval,
         "checkpoint_trajectory": _validate_trajectory(
             "checkpoint_trajectory", checkpoint_blocks,
-            expected_ckpt, status, contract),
+            expected_ckpt, status, contract, group_size,
+            updates_per_group),
         "evaluation_trajectory": _validate_trajectory(
             "evaluation_trajectory", evaluation_blocks,
-            expected_eval, status, contract),
+            expected_eval, status, contract, group_size,
+            updates_per_group),
     }
     if status == "infrastructure_abort":
+        if len(result["checkpoint_trajectory"]) \
+                == len(expected_ckpt) \
+                and len(result["evaluation_trajectory"]) \
+                == len(expected_eval):
+            raise InfrastructureError(
+                "an infrastructure abort with BOTH streams "
+                "complete is not an abort (323_s)")
         result["disclosed_truncation"] = {
             "checkpoints_observed":
                 len(result["checkpoint_trajectory"]),

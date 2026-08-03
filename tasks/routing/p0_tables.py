@@ -390,10 +390,11 @@ def generate_traceability_appendix() -> str:
          "`p0_launch.assemble_sentinel_trajectories` (exact frozen "
          "index sets w/ mandatory checkpoint zero and final; "
          "semantic counter/denominator/first-index validation; "
-         "deep-copied blocks; explicit infrastructure-abort "
-         "prefix). The EXPECTED INDEX SETS themselves remain "
-         "DEFERRED: frozen with the real P0LaunchFreeze instance "
-         "(post-merge)",
+         "deep-copied blocks; producer invariants under the "
+         "canonical profile; explicit infrastructure-abort "
+         "prefixes). The EXPECTED INDEX SETS themselves remain "
+         "DEFERRED: bound through the authenticated "
+         "P0ExecutionIdentity (post-merge)",
          "`test_p0_sentinel_trajectories`",
          "P0 run record (instance at the P0 run)"),
         ("Dataset preparation (the first real consumer)",
@@ -411,10 +412,11 @@ def generate_traceability_appendix() -> str:
          "the EXTERNAL execution-manifest argument (305_f §1); "
          "cadence/eval/telemetry identity",
          "**DEFERRED** to the post-merge unit constructing the "
-         "real `P0LaunchFreeze` instance — the precursor "
-         "artifacts do not exist yet, so their resolution cannot "
-         "be genuinely enforced and is NOT marked complete "
-         "(321_s)",
+         "real `P0LaunchFreeze` instance and its authenticated "
+         "`P0ExecutionIdentity` (the home for cadence/eval/"
+         "telemetry binding) — the precursor artifacts do not "
+         "exist yet, so their resolution cannot be genuinely "
+         "enforced and is NOT marked complete (321_s/323_s)",
          "DEFERRED (post-merge)",
          "P0LaunchFreeze instance + admission record (future)"),
         ("Appendix divergence gate (303_f §8)",

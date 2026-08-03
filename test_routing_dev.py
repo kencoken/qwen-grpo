@@ -5423,14 +5423,14 @@ def test_p0_sentinel_trajectories():
     ids = list(scope.sentinel_observation_ids)
     quiet_rows = [{"observation_id": ids[0],
                    "global_group_index": 0,
-                   "rewards": [0.0, 0.0],
-                   "assignments": [[0], [0]]}]
+                   "rewards": [0.0] * 8,
+                   "assignments": [[0]] * 8}]
     block = p0_estimands.sentinel_checkpoint_block(
         scope, event, quiet_rows)
     event_rows = [{"observation_id": ids[0],
                    "global_group_index": 3,
-                   "rewards": [1.0, 0.5],
-                   "assignments": [[1], [0]]}]
+                   "rewards": [1.0, 0.5] + [0.0] * 6,
+                   "assignments": [[1], [0]] + [None] * 6}]
     active = p0_estimands.sentinel_checkpoint_block(
         scope, event, event_rows)
 
@@ -5464,6 +5464,11 @@ def test_p0_sentinel_trajectories():
                  expected_checkpoint_indices=(157,))
     with pytest.raises(InfrastructureError, match="empty"):
         assemble([], [], expected_checkpoint_indices=())
+    # 323_s: checkpoint zero PLUS a positive final are mandatory —
+    # a single-element expected set refuses
+    with pytest.raises(InfrastructureError, match="positive final"):
+        assemble([(0, block)], [(0, block), (314, block)],
+                 expected_checkpoint_indices=(0,))
     # infrastructure abort: EXPLICIT, disclosed, strict prefix
     aborted = assemble([(0, block)], [(0, block)],
                        status="infrastructure_abort",
@@ -5472,8 +5477,21 @@ def test_p0_sentinel_trajectories():
     assert aborted["disclosed_truncation"] == {
         "checkpoints_observed": 1, "checkpoints_expected": 3,
         "evaluations_observed": 1, "evaluations_expected": 2}
-    with pytest.raises(InfrastructureError, match="STRICT PREFIX"):
+    with pytest.raises(InfrastructureError, match="PREFIX"):
         assemble([(157, block)], [(0, block)],
+                 status="infrastructure_abort")
+    # 323_s: an abort BETWEEN streams — one stream complete, the
+    # other a strict prefix — is a valid disclosed abort
+    between = assemble([(0, block), (157, block), (314, block)],
+                       [(0, block)],
+                       status="infrastructure_abort")
+    assert between["disclosed_truncation"] == {
+        "checkpoints_observed": 3, "checkpoints_expected": 3,
+        "evaluations_observed": 1, "evaluations_expected": 2}
+    # ... but BOTH streams complete is not an abort
+    with pytest.raises(InfrastructureError, match="not an abort"):
+        assemble([(0, block), (157, block), (314, block)],
+                 [(0, block), (314, block)],
                  status="infrastructure_abort")
     with pytest.raises(InfrastructureError, match="unknown "
                        "trajectory status"):
@@ -5518,6 +5536,28 @@ def test_p0_sentinel_trajectories():
     with pytest.raises(InfrastructureError, match="counted cannot "
                        "exceed varying"):
         assemble(broken(q1_counted_groups=1), evals)
+    # 323_s: the PRODUCER invariants — states the block producer
+    # cannot emit refuse
+    with pytest.raises(InfrastructureError, match="emits them "
+                       "identically"):
+        assemble(broken(worker1_selections=2,
+                        worker1_completions=1), evals)
+    seven_rows = [{"observation_id": ids[0],
+                   "global_group_index": 0,
+                   "rewards": [0.0] * 7,
+                   "assignments": [[0]] * 7}]
+    seven = p0_estimands.sentinel_checkpoint_block(
+        scope, event, seven_rows)
+    with pytest.raises(InfrastructureError, match="frozen group "
+                       "size"):
+        assemble([(0, seven), (157, seven), (314, seven)], evals)
+    drifted = _copy.deepcopy(active)
+    drifted["first_update_indices"] = {
+        **drifted["first_update_indices"], "worker1": 999}
+    with pytest.raises(InfrastructureError, match="binds the two "
+                       "index spaces"):
+        assemble([(0, drifted), (157, drifted), (314, drifted)],
+                 evals)
     incomplete = _copy.deepcopy(block)
     del incomplete["completion_denominator"]
     with pytest.raises(InfrastructureError, match="COMPLETE"):
