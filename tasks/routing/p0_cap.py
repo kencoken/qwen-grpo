@@ -189,12 +189,17 @@ def require_launchable(contract: P0ScienceContract,
     genuine stop branch rejected. A forged branch, epoch count, or
     boolean/NaN value refuses at the rederivation."""
     _validate_cap_rule(contract)
+    # 318_s P1: key MEMBERSHIP, never key order — canonical
+    # sorted-key JSON persistence reorders dictionary keys, and a
+    # genuine persisted plan must round-trip through admission
     if not isinstance(plan, dict) or not isinstance(
             plan.get("inputs"), dict) \
-            or tuple(plan["inputs"]) != REGISTERED_CAPACITY_INPUTS:
+            or set(plan["inputs"]) \
+            != set(REGISTERED_CAPACITY_INPUTS):
         raise InfrastructureError(
             "the supplied plan does not carry the registered input "
-            "record (316_s P1)")
+            "record (316_s P1: exact key membership, missing or "
+            "extra keys refuse)")
     inputs = plan["inputs"]
     rederived = derive_launch_plan(
         contract,

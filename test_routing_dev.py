@@ -5147,6 +5147,29 @@ def test_p0_cap_arithmetic():
                                              "launch_epochs": 5})
     assert p0_cap.require_launchable(contract, capacity_one) \
         is capacity_one
+    # 318_s P1: a genuine plan survives the repository's canonical
+    # sorted-key JSON round-trip (key order is NOT identity)
+    round_tripped = json.loads(json.dumps(capacity_one,
+                                          sort_keys=True))
+    assert list(round_tripped["inputs"]) \
+        != list(capacity_one["inputs"])
+    assert p0_cap.require_launchable(contract, round_tripped) \
+        is round_tripped
+    # ... while missing or extra input keys still refuse
+    missing_key = json.loads(json.dumps(capacity_one))
+    del missing_key["inputs"]["measured_whole_epoch_seconds"]
+    with pytest.raises(InfrastructureError, match="registered "
+                       "input record"):
+        p0_cap.require_launchable(contract, missing_key)
+    extra_key = json.loads(json.dumps(capacity_one))
+    extra_key["inputs"]["bonus_seconds"] = 0.0
+    with pytest.raises(InfrastructureError, match="registered "
+                       "input record"):
+        p0_cap.require_launchable(contract, extra_key)
+    extra_top = json.loads(json.dumps(capacity_one))
+    extra_top["bonus_field"] = 1
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_cap.require_launchable(contract, extra_top)
     # exact parity with the frozen legacy formula on shared inputs
     for consumed, reserve, overhead, whole in (
             (0.0, 0.0, 0.0, 600.0),
