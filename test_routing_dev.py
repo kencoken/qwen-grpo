@@ -5214,7 +5214,12 @@ def test_p0_traceability_appendix(tmp_path, monkeypatch):
     assert "DEFERRED to Unit 5" not in committed
     assert "p0_launch.build_p0_launch_freeze" in committed
     assert "p0_launch.assemble_sentinel_trajectories" in committed
-    assert "p0_launch.prepare_p0_launch" in committed
+    assert "p0_launch.prepare_p0_dataset" in committed
+    # 321_s: launch admission is EXPLICITLY deferred, never marked
+    # complete before the precursor artifacts exist
+    assert "Launch admission (execution + precursor binding)" \
+        in committed
+    assert "**DEFERRED** to the post-merge unit" in committed
     # every reviewed identity and headline value is in the tables
     assert p0_contract.CONTRACT_SHA256 in committed
     assert p0_replay.PROJECTION_SHA256 in committed
@@ -5267,11 +5272,13 @@ def _launch_runtime_fields():
             "ca9a7ea65f6215",
         "prompt_sha256": _hashlib.sha256(
             prompt_fewshot().encode("utf-8")).hexdigest(),
+        "runtime_profile_sha256":
+            p0_launch.P0_RUNTIME_PROFILE_SHA256,
         "group_size": 8,
         "seed": 20260901,
         "temperature": 1.0,
         "learning_rate": 1e-5,
-        "beta": 0.04,
+        "beta": 1e-3,
         "policy_max_new_tokens": 128,
         "attested_environment_sha256":
             p0_replay.REPLAY_SOURCE["attested_environment_sha256"],
@@ -5374,6 +5381,23 @@ def test_p0_launch_freeze_schema(tmp_path):
     with pytest.raises(InfrastructureError, match="REAL training"):
         p0_launch.RuntimeIdentity(
             **{**runtime, "learning_rate": 0.0})
+    # 321_s: the runtime must BIND to the canonical profile and the
+    # ACTUAL prompt — the reviewer's reproductions refuse at build
+    with pytest.raises(InfrastructureError, match="frozen"):
+        p0_launch.build_p0_launch_freeze(
+            plan_record=plan, precursors=_LAUNCH_PRECURSORS,
+            runtime={**runtime, "beta": 0.04}, contract=contract)
+    with pytest.raises(InfrastructureError, match="ACTUAL"):
+        p0_launch.build_p0_launch_freeze(
+            plan_record=plan, precursors=_LAUNCH_PRECURSORS,
+            runtime={**runtime, "prompt_sha256": "0" * 64},
+            contract=contract)
+    with pytest.raises(InfrastructureError, match="canonical"):
+        p0_launch.build_p0_launch_freeze(
+            plan_record=plan, precursors=_LAUNCH_PRECURSORS,
+            runtime={**runtime,
+                     "runtime_profile_sha256": "9f" * 32},
+            contract=contract)
     with pytest.raises(InfrastructureError, match="validated "
                        "construction"):
         p0_launch.RuntimeIdentity(
@@ -5388,43 +5412,123 @@ def test_p0_launch_freeze_schema(tmp_path):
 
 
 def test_p0_sentinel_trajectories():
-    """The deferred 305_f §4 obligation: trajectory assembly with
-    strict index/completeness/population validation."""
+    """321_s P1: trajectory assembly enforces the exact frozen
+    index sets (checkpoint zero + final mandatory; truncation and
+    emptiness refuse), semantic counter/denominator/first-index
+    validation, deep-copied immutability, and EXPLICIT
+    infrastructure-abort prefix handling."""
+    import copy as _copy
     contract = p0_contract.load_p0_science_contract()
     scope, event = contract.scope, contract.q1.event
     ids = list(scope.sentinel_observation_ids)
-    rows = [{"observation_id": ids[0], "global_group_index": 0,
-             "rewards": [0.0, 0.0], "assignments": [[0], [0]]}]
+    quiet_rows = [{"observation_id": ids[0],
+                   "global_group_index": 0,
+                   "rewards": [0.0, 0.0],
+                   "assignments": [[0], [0]]}]
     block = p0_estimands.sentinel_checkpoint_block(
-        scope, event, rows)
-    result = p0_launch.assemble_sentinel_trajectories(
-        contract, [(0, block), (157, block)], [(0, block)])
-    assert len(result["checkpoint_trajectory"]) == 2
+        scope, event, quiet_rows)
+    event_rows = [{"observation_id": ids[0],
+                   "global_group_index": 3,
+                   "rewards": [1.0, 0.5],
+                   "assignments": [[1], [0]]}]
+    active = p0_estimands.sentinel_checkpoint_block(
+        scope, event, event_rows)
+
+    def assemble(ckpts, evals, **kw):
+        kw.setdefault("expected_checkpoint_indices", (0, 157, 314))
+        kw.setdefault("expected_evaluation_indices", (0, 314))
+        return p0_launch.assemble_sentinel_trajectories(
+            contract, ckpts, evals, **kw)
+
+    result = assemble([(0, block), (157, active), (314, block)],
+                      [(0, block), (314, block)])
+    assert result["status"] == "complete"
     assert result["checkpoint_trajectory"][1][0] == 157
-    assert len(result["evaluation_trajectory"]) == 1
-    with pytest.raises(InfrastructureError, match="strictly "
-                       "increasing"):
-        p0_launch.assemble_sentinel_trajectories(
-            contract, [(157, block), (0, block)], [])
-    with pytest.raises(InfrastructureError, match="strictly "
-                       "increasing"):
-        p0_launch.assemble_sentinel_trajectories(
-            contract, [(0, block), (0, block)], [])
+    # deep copy: mutating the source block cannot reach the result
+    block["worker1_selections"] = 999999
+    assert result["checkpoint_trajectory"][0][1][
+        "worker1_selections"] == 0
+    block = p0_estimands.sentinel_checkpoint_block(
+        scope, event, quiet_rows)
+    # empty and truncated COMPLETE trajectories refuse (321_s)
+    with pytest.raises(InfrastructureError, match="not complete"):
+        assemble([], [(0, block), (314, block)])
+    with pytest.raises(InfrastructureError, match="not complete"):
+        assemble([(0, block), (157, block)],
+                 [(0, block), (314, block)])
+    # the expected sets themselves are validated: checkpoint zero
+    # is mandatory; empty expected refuses
+    with pytest.raises(InfrastructureError, match="checkpoint "
+                       "zero"):
+        assemble([(157, block)], [(0, block)],
+                 expected_checkpoint_indices=(157,))
+    with pytest.raises(InfrastructureError, match="empty"):
+        assemble([], [], expected_checkpoint_indices=())
+    # infrastructure abort: EXPLICIT, disclosed, strict prefix
+    aborted = assemble([(0, block)], [(0, block)],
+                       status="infrastructure_abort",
+                       expected_evaluation_indices=(0, 314))
+    assert aborted["status"] == "infrastructure_abort"
+    assert aborted["disclosed_truncation"] == {
+        "checkpoints_observed": 1, "checkpoints_expected": 3,
+        "evaluations_observed": 1, "evaluations_expected": 2}
+    with pytest.raises(InfrastructureError, match="STRICT PREFIX"):
+        assemble([(157, block)], [(0, block)],
+                 status="infrastructure_abort")
+    with pytest.raises(InfrastructureError, match="unknown "
+                       "trajectory status"):
+        assemble([(0, block)], [(0, block)], status="partial")
+    # semantic validation (the 321_s reproductions)
+    def broken(**changes):
+        bad = _copy.deepcopy(block)
+        bad.update(changes)
+        return [(0, bad), (157, bad), (314, bad)]
+
+    evals = [(0, block), (314, block)]
+    with pytest.raises(InfrastructureError, match="exposure"):
+        assemble(broken(training_exposed=False), evals)
     with pytest.raises(InfrastructureError, match="non-negative "
                        "non-boolean"):
-        p0_launch.assemble_sentinel_trajectories(
-            contract, [(True, block)], [])
-    incomplete = dict(block)
+        assemble(broken(group_denominator=-1), evals)
+    with pytest.raises(InfrastructureError, match="impossible "
+                       "count"):
+        assemble(broken(worker1_selections=999), evals)
+    with pytest.raises(InfrastructureError, match="non-negative "
+                       "non-boolean"):
+        assemble(broken(completion_denominator=True), evals)
+    bad_first = _copy.deepcopy(block)
+    bad_first["first_group_indices"] = {
+        **bad_first["first_group_indices"], "worker1": True}
+    with pytest.raises(InfrastructureError, match="first index"):
+        assemble([(0, bad_first), (157, bad_first),
+                  (314, bad_first)], evals)
+    # count/index consistency: a positive counter with a None
+    # first index (and the reverse) refuse
+    with pytest.raises(InfrastructureError, match="count/index "
+                       "consistency"):
+        assemble(broken(worker1_selections=1,
+                        worker1_completions=1), evals)
+    stale_first = _copy.deepcopy(active)
+    stale_first["worker1_selections"] = 0
+    stale_first["worker1_completions"] = 0
+    with pytest.raises(InfrastructureError, match="count/index "
+                       "consistency"):
+        assemble([(0, stale_first), (157, stale_first),
+                  (314, stale_first)], evals)
+    with pytest.raises(InfrastructureError, match="counted cannot "
+                       "exceed varying"):
+        assemble(broken(q1_counted_groups=1), evals)
+    incomplete = _copy.deepcopy(block)
     del incomplete["completion_denominator"]
     with pytest.raises(InfrastructureError, match="COMPLETE"):
-        p0_launch.assemble_sentinel_trajectories(
-            contract, [(0, incomplete)], [])
-    foreign = dict(block)
+        assemble([(0, incomplete), (157, incomplete),
+                  (314, incomplete)], evals)
+    foreign = _copy.deepcopy(block)
     foreign["observation_ids"] = ["math_atomic:x:y"]
     with pytest.raises(InfrastructureError, match="frozen "
                        "sentinel"):
-        p0_launch.assemble_sentinel_trajectories(
-            contract, [(0, foreign)], [])
+        assemble([(0, foreign), (157, foreign), (314, foreign)],
+                 evals)
 
 
 def test_p0_first_consumer_prepare(tmp_path, monkeypatch):
@@ -5459,17 +5563,23 @@ def test_p0_first_consumer_prepare(tmp_path, monkeypatch):
                         counting_equivalence)
     monkeypatch.setattr(p0_tables, "verify_appendix",
                         counting_appendix)
-    bundle = p0_launch.prepare_p0_launch(out, digest)
+    bundle = p0_launch.prepare_p0_dataset(out, digest)
     assert calls == {"equivalence": 1, "appendix": 1}
     assert bundle["launch_epochs"] == 1
     assert bundle["groups_total"] == 157
-    assert bundle["admission"] == {"launch_plan": "REDERIVED",
-                                   "c2_equivalence": "PASS",
-                                   "appendix": "PASS"}
+    assert bundle["gates"] == {"launch_plan": "REDERIVED",
+                               "runtime_binding": "BOUND",
+                               "c2_equivalence": "PASS",
+                               "appendix": "PASS"}
+    # 321_s: dataset preparation NEVER authorizes an execution —
+    # launch admission is explicitly deferred with its outstanding
+    # obligations named
+    assert bundle["launch_admission"]["status"] == "DEFERRED"
+    assert len(bundle["launch_admission"]["outstanding"]) == 4
     assert [r["observation_id"] for r in bundle["trainer_rows"]] \
         == bundle["schedule"]
     assert bundle["runtime"].seed == 20260901
-    # a freeze pinning a DIFFERENT contract refuses at admission
+    # a freeze pinning a DIFFERENT contract refuses
     import dataclasses
     forged = dataclasses.replace(
         freeze, science_contract_sha256="ab" * 32)
@@ -5477,4 +5587,16 @@ def test_p0_first_consumer_prepare(tmp_path, monkeypatch):
     digest2 = p0_launch.save_launch_freeze(forged, out2)
     with pytest.raises(InfrastructureError, match="different "
                        "science contract"):
-        p0_launch.prepare_p0_launch(out2, digest2)
+        p0_launch.prepare_p0_dataset(out2, digest2)
+    # 321_s reproduction: a hand-crafted freeze DECLARING a forged
+    # prompt loads structurally but refuses at preparation — the
+    # freeze must bind the execution it authorizes
+    forged_prompt = dataclasses.replace(
+        freeze, runtime=dataclasses.replace(
+            freeze.runtime, prompt_sha256="0" * 64))
+    out3 = tmp_path / "forged_prompt.json"
+    digest3 = p0_launch.save_launch_freeze(forged_prompt, out3)
+    assert p0_launch.load_p0_launch_freeze(out3, digest3) \
+        == forged_prompt
+    with pytest.raises(InfrastructureError, match="ACTUAL"):
+        p0_launch.prepare_p0_dataset(out3, digest3)

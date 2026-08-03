@@ -387,20 +387,36 @@ def generate_traceability_appendix() -> str:
          "val/cycle/beta)"),
         ("Checkpoint/evaluation trajectories",
          "`diagnostics.sentinel.fields_required` trajectories",
-         "`p0_launch.assemble_sentinel_trajectories` (strictly "
-         "increasing indices; complete field sets; contract-bound "
-         "population)",
+         "`p0_launch.assemble_sentinel_trajectories` (exact frozen "
+         "index sets w/ mandatory checkpoint zero and final; "
+         "semantic counter/denominator/first-index validation; "
+         "deep-copied blocks; explicit infrastructure-abort "
+         "prefix). The EXPECTED INDEX SETS themselves remain "
+         "DEFERRED: frozen with the real P0LaunchFreeze instance "
+         "(post-merge)",
          "`test_p0_sentinel_trajectories`",
          "P0 run record (instance at the P0 run)"),
-        ("Launch admission (the first real consumer)",
+        ("Dataset preparation (the first real consumer)",
          "`P0LaunchFreeze` (all fields; execution-manifest hash "
          "and terminal hashes excluded by the closed schema)",
-         "`p0_launch.prepare_p0_launch` (freeze under its REQUIRED "
-         "reviewed hash; contract pin equality; plan REDERIVED; "
-         "fresh `verify_c2_equivalence` + `verify_appendix`; "
-         "strict schedule loader)",
+         "`p0_launch.prepare_p0_dataset` (freeze under its "
+         "REQUIRED reviewed hash; contract pin equality; plan "
+         "REDERIVED; runtime BOUND to the canonical profile + the "
+         "ACTUAL prompt; fresh `verify_c2_equivalence` + "
+         "`verify_appendix`; strict schedule loader)",
          "`test_p0_first_consumer_prepare`",
-         "launch bundle (runtime)"),
+         "dataset bundle (runtime; never an authorization)"),
+        ("Launch admission (execution + precursor binding)",
+         "precursor pins; `runtime.attested_environment_sha256`; "
+         "the EXTERNAL execution-manifest argument (305_f §1); "
+         "cadence/eval/telemetry identity",
+         "**DEFERRED** to the post-merge unit constructing the "
+         "real `P0LaunchFreeze` instance — the precursor "
+         "artifacts do not exist yet, so their resolution cannot "
+         "be genuinely enforced and is NOT marked complete "
+         "(321_s)",
+         "DEFERRED (post-merge)",
+         "P0LaunchFreeze instance + admission record (future)"),
         ("Appendix divergence gate (303_f §8)",
          "this file",
          "`verify_appendix` (raw byte equality)",

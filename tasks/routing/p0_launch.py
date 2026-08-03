@@ -58,6 +58,92 @@ LAUNCH_FREEZE_PATH = P0_DIR / "p0_launch_freeze.json"
 
 _LAUNCH_BRANCHES = ("disclosed_under_target", "no_extra_training")
 
+# --- the canonical complete P0 runtime profile (321_s P1) ----------------------
+# The construction sections are the Step-5-validated literals
+# (cross-checked against the hash-guarded C2 config at every
+# binding); the training deltas are the SIGNED house launch profile
+# (13_f/106_s/120_f: beta 1e-3, lr 1e-5, 10-step warmup, constant
+# schedule). Checkpoint/evaluation cadence, eval decoding, and
+# telemetry identity are NOT here — they are frozen with the real
+# P0LaunchFreeze instance post-merge and remain explicitly
+# deferred.
+P0_RUNTIME_PROFILE: dict[str, Any] = {
+    "kind": "p0-runtime-profile-v1",
+    "model_id": "Qwen/Qwen2.5-3B-Instruct",
+    "revision": "aa8e72537993ba99e69dfaafa59ed015b17504d1",
+    "quantization": {"load_in_4bit": True, "quant_type": "nf4",
+                     "double_quant": True,
+                     "compute_dtype": "bfloat16"},
+    "lora": {"r": 16, "alpha": 32, "dropout": 0.05,
+             "adapter_dtype": "float32",
+             "targets": ["q_proj", "k_proj", "v_proj", "o_proj",
+                         "gate_proj", "up_proj", "down_proj"]},
+    "grpo": {"beta": 1e-3, "group_size": 8, "temperature": 1.0,
+             "per_device_batch": 2, "grad_accum": 4,
+             "learning_rate": 1e-5, "warmup_steps": 10,
+             "scheduler": "constant", "loss": "dapo",
+             "optim": "adamw_torch", "bf16": True},
+    "policy_max_new_tokens": 128,
+    "full_determinism": True,
+    "updates_per_group": 1,
+    "worker_outcome_mode": "precomputed_surface",
+    "lora_key_set": {
+        "count": 504,
+        "sorted_keys_sha256":
+            "e44ecb9caf0be396aaaceae6802dbaab9209677103ba263c89"
+            "ca9a7ea65f6215",
+    },
+}
+P0_RUNTIME_PROFILE_SHA256 = \
+    "eae2e2fcfc8147609433268ce3908765ae8880f605811523ff2e635a727e66a5"
+
+
+def _validated_profile() -> dict[str, Any]:
+    """The profile under BOTH its own pin and the validated
+    construction: every construction section must equal the
+    hash-guarded C2 config's section (the Step-5-validated
+    literals), and the training deltas must be the signed launch
+    profile."""
+    from .unit_c2_sample import CONFIG_SHA256, UNIT_C2_CONFIG
+    if content_sha256(P0_RUNTIME_PROFILE) \
+            != P0_RUNTIME_PROFILE_SHA256:
+        raise InfrastructureError(
+            "P0_RUNTIME_PROFILE was mutated after import (321_s)")
+    if content_sha256(UNIT_C2_CONFIG) != CONFIG_SHA256:
+        raise InfrastructureError(
+            "UNIT_C2_CONFIG was mutated after import")
+    profile = P0_RUNTIME_PROFILE
+    for key in ("model_id", "policy_max_new_tokens",
+                "full_determinism"):
+        source = "model_id" if key == "model_id" else key
+        if profile[key] != UNIT_C2_CONFIG[source]:
+            raise InfrastructureError(
+                f"profile {key} diverges from the validated "
+                "construction")
+    if profile["revision"] != UNIT_C2_CONFIG["revision"] \
+            or profile["quantization"] \
+            != UNIT_C2_CONFIG["quantization"] \
+            or profile["lora"] != UNIT_C2_CONFIG["lora"] \
+            or profile["lora_key_set"] \
+            != UNIT_C2_CONFIG["lora_key_set"]:
+        raise InfrastructureError(
+            "profile construction sections diverge from the "
+            "validated (hash-guarded) C2 literals")
+    c2_grpo = UNIT_C2_CONFIG["grpo"]
+    for key in ("group_size", "temperature", "per_device_batch",
+                "grad_accum", "scheduler", "loss", "optim", "bf16"):
+        if profile["grpo"][key] != c2_grpo[key]:
+            raise InfrastructureError(
+                f"profile grpo.{key} diverges from the validated "
+                "construction")
+    if profile["grpo"]["beta"] != 1e-3 \
+            or profile["grpo"]["learning_rate"] != 1e-5 \
+            or profile["grpo"]["warmup_steps"] != 10:
+        raise InfrastructureError(
+            "profile training deltas diverge from the signed "
+            "launch profile (beta 1e-3, lr 1e-5, warmup 10)")
+    return profile
+
 
 def _require_nonneg_number(value: Any, where: str) -> None:
     _require_finite(value, where)
@@ -250,6 +336,7 @@ class RuntimeIdentity:
     lora_adapter_dtype: str
     lora_key_set_sha256: str
     prompt_sha256: str
+    runtime_profile_sha256: str
     group_size: int
     seed: int
     temperature: float
@@ -273,6 +360,7 @@ class RuntimeIdentity:
                 "runtime quantization/adapter dtype outside the "
                 "validated construction (nf4 + fp32 LoRA)")
         for name in ("lora_key_set_sha256", "prompt_sha256",
+                     "runtime_profile_sha256",
                      "attested_environment_sha256"):
             _require_hex64(getattr(self, name), f"runtime.{name}")
         for name in ("group_size", "seed",
@@ -286,6 +374,58 @@ class RuntimeIdentity:
             raise InfrastructureError(
                 "P0 runs REAL training: temperature and "
                 "learning_rate must be positive, beta non-negative")
+
+
+def bind_runtime_identity(runtime: RuntimeIdentity) -> None:
+    """321_s P1: the runtime identity must BIND to the canonical
+    validated profile and to the ACTUAL prompt — a freeze declaring
+    a different prompt, profile, or design hyperparameter is not an
+    identity of this experiment. Run at every build AND at every
+    preparation (a hand-crafted freeze file refuses here even
+    though it loads structurally)."""
+    import hashlib
+    from tasks.conductor.stage1 import prompt_fewshot
+    profile = _validated_profile()
+    if runtime.runtime_profile_sha256 != P0_RUNTIME_PROFILE_SHA256:
+        raise InfrastructureError(
+            "runtime does not pin the canonical P0 runtime profile "
+            "(321_s)")
+    actual_prompt = hashlib.sha256(
+        prompt_fewshot().encode("utf-8")).hexdigest()
+    if runtime.prompt_sha256 != actual_prompt:
+        raise InfrastructureError(
+            "runtime.prompt_sha256 does not match the ACTUAL "
+            "policy prompt — the freeze does not bind the "
+            "execution it authorizes (321_s)")
+    grpo = profile["grpo"]
+    bindings = (
+        ("model_id", runtime.model_id, profile["model_id"]),
+        ("model_revision", runtime.model_revision,
+         profile["revision"]),
+        ("quantization", runtime.quantization,
+         profile["quantization"]["quant_type"]),
+        ("lora_adapter_dtype", runtime.lora_adapter_dtype,
+         "float32"),
+        ("lora_key_set_sha256", runtime.lora_key_set_sha256,
+         profile["lora_key_set"]["sorted_keys_sha256"]),
+        ("group_size", runtime.group_size, grpo["group_size"]),
+        ("temperature", runtime.temperature, grpo["temperature"]),
+        ("learning_rate", runtime.learning_rate,
+         grpo["learning_rate"]),
+        ("beta", runtime.beta, grpo["beta"]),
+        ("policy_max_new_tokens", runtime.policy_max_new_tokens,
+         profile["policy_max_new_tokens"]),
+    )
+    for name, declared, canonical in bindings:
+        if declared != canonical:
+            raise InfrastructureError(
+                f"runtime.{name} = {declared!r} diverges from the "
+                f"canonical profile value {canonical!r} (321_s — "
+                "the design hyperparameters are frozen)")
+    if profile["lora"]["adapter_dtype"] != "float32":
+        raise InfrastructureError(
+            "profile adapter dtype outside the validated "
+            "construction")
 
 
 @dataclass(frozen=True)
@@ -337,12 +477,14 @@ def build_p0_launch_freeze(*, plan_record: Mapping[str, Any],
     the typed plan must round-trip to the record VERBATIM."""
     contract = contract or load_p0_science_contract()
     require_launchable(contract, dict(plan_record))
+    runtime_identity = RuntimeIdentity(**dict(runtime))
+    bind_runtime_identity(runtime_identity)
     freeze = P0LaunchFreeze(
         schema_version=SCHEMA_VERSION,
         science_contract_sha256=contract_sha256(contract),
         precursors=PrecursorOutputs(**dict(precursors)),
         launch_plan=LaunchPlan.from_record(plan_record),
-        runtime=RuntimeIdentity(**dict(runtime)))
+        runtime=runtime_identity)
     if not _strict_equal(freeze.launch_plan.to_record(),
                          dict(plan_record)):
         raise InfrastructureError(
@@ -408,17 +550,42 @@ def load_p0_launch_freeze(path: str | Path,
     return freeze
 
 
-# --- the first real consumer ---------------------------------------------------
+# --- the first real consumer: DATASET PREPARATION ------------------------------
+# 321_s P1: this is dataset preparation, NOT launch admission.
+# Launch admission is EXPLICITLY DEFERRED to the post-merge unit
+# that constructs the real P0LaunchFreeze instance: the precursor
+# artifacts must be resolved and verified under their pinned hashes
+# (they do not exist yet), the execution manifest must arrive as
+# the EXTERNAL launch argument (305_f §1) and bind against the
+# freeze, the environment manifest must attest to the freeze's
+# expectation, and cadence/eval-decoding/telemetry identity must be
+# frozen. None of that can be genuinely enforced before those
+# artifacts exist, so it is NOT marked complete anywhere.
 
-def prepare_p0_launch(freeze_path: str | Path,
-                      expected_freeze_sha256: str,
-                      evidence_dir: str | Path | None = None
-                      ) -> dict[str, Any]:
-    """THE FIRST REAL CONSUMER: freeze under its reviewed hash;
-    contract under its reviewed pin; the launch plan REDERIVED at
-    admission; the standing oracles run FRESH; the trainer dataset
-    built by the strict schedule loader for exactly launch_epochs
-    frozen epochs."""
+LAUNCH_ADMISSION_OUTSTANDING = (
+    "precursor artifacts (routing_dev_val lock, cycle, R_cycle, "
+    "beta smoke) resolved and verified under their pinned hashes",
+    "execution-manifest binding — the EXTERNAL launch argument "
+    "(305_f §1) — against the freeze's runtime identity",
+    "environment-manifest attestation against "
+    "runtime.attested_environment_sha256",
+    "checkpoint/evaluation cadence, evaluation decoding, and "
+    "telemetry identity (frozen with the real P0LaunchFreeze "
+    "instance)",
+)
+
+
+def prepare_p0_dataset(freeze_path: str | Path,
+                       expected_freeze_sha256: str,
+                       evidence_dir: str | Path | None = None
+                       ) -> dict[str, Any]:
+    """DATASET PREPARATION (the first real consumer): freeze under
+    its reviewed hash; contract under its reviewed pin; the launch
+    plan REDERIVED; the runtime identity BOUND to the canonical
+    profile and the ACTUAL prompt; the standing oracles run FRESH;
+    the trainer dataset built by the strict schedule loader.
+    Returns an explicit DEFERRED launch-admission block — this
+    function never authorizes an execution."""
     from .p0_c2_equivalence import verify_c2_equivalence
     from .p0_schedule import build_trainer_rows, schedule_for_epochs
     from .p0_tables import verify_appendix
@@ -430,6 +597,7 @@ def prepare_p0_launch(freeze_path: str | Path,
             "the launch freeze pins a different science contract")
     plan = freeze.launch_plan.to_record()
     require_launchable(contract, plan)
+    bind_runtime_identity(freeze.runtime)
     equivalence = verify_c2_equivalence(evidence_dir)
     appendix = verify_appendix()
     launch_epochs = freeze.launch_plan.launch_epochs
@@ -447,10 +615,18 @@ def prepare_p0_launch(freeze_path: str | Path,
         "schedule": schedule,
         "trainer_rows": rows,
         "runtime": freeze.runtime,
-        "admission": {
+        "gates": {
             "launch_plan": "REDERIVED",
+            "runtime_binding": "BOUND",
             "c2_equivalence": equivalence["verdict"],
             "appendix": appendix["verdict"],
+        },
+        "launch_admission": {
+            "status": "DEFERRED",
+            "deferred_to": "the post-merge P0 launch-admission "
+                           "unit (the real P0LaunchFreeze "
+                           "instance)",
+            "outstanding": LAUNCH_ADMISSION_OUTSTANDING,
         },
     }
 
@@ -466,52 +642,204 @@ _PER_CHECKPOINT_SENTINEL_FIELDS = (
     "first_update_indices")
 
 
-def _validate_trajectory(name: str,
-                         entries: Sequence[tuple[int,
-                                                 Mapping[str, Any]]],
-                         contract: P0ScienceContract
-                         ) -> tuple[tuple[int, dict[str, Any]], ...]:
-    expected_ids = sorted(contract.scope.sentinel_observation_ids)
+_SENTINEL_COUNTER_FIELDS = (
+    "group_denominator", "completion_denominator",
+    "worker1_selections", "worker1_completions",
+    "reward1_completions", "reward_varying_groups",
+    "q1_counted_groups")
+
+# counter -> the firsts family that must be set iff the counter > 0
+_COUNTER_FIRSTS = (
+    ("worker1_selections", "worker1"),
+    ("reward1_completions", "reward1"),
+    ("reward_varying_groups", "varying"),
+    ("q1_counted_groups", "q1_counted"))
+
+
+def _validate_sentinel_block(name: str, index: int,
+                             block: Mapping[str, Any],
+                             contract: P0ScienceContract
+                             ) -> dict[str, Any]:
+    """321_s P1: SEMANTIC validation of one per-checkpoint block —
+    exposure, counters, denominators, bounds, and count/first-index
+    consistency in both index spaces."""
+    where = f"{name}[{index}]"
+    if not isinstance(block, Mapping) or set(block) \
+            != set(_PER_CHECKPOINT_SENTINEL_FIELDS):
+        raise InfrastructureError(
+            f"{where}: a sentinel block is not the COMPLETE "
+            "per-checkpoint field set (305_f §4 — fields are never "
+            "dropped)")
+    if list(block["observation_ids"]) \
+            != sorted(contract.scope.sentinel_observation_ids) \
+            or block["cell"] != contract.scope.sentinel_cell:
+        raise InfrastructureError(
+            f"{where}: sentinel block population is not the "
+            "contract's frozen sentinel")
+    if block["training_exposed"] \
+            is not contract.scope.sentinel_training_exposed:
+        raise InfrastructureError(
+            f"{where}: training_exposed diverges from the "
+            "contract's sentinel exposure (321_s)")
+    for field in _SENTINEL_COUNTER_FIELDS:
+        value = block[field]
+        if not isinstance(value, int) or isinstance(value, bool) \
+                or value < 0:
+            raise InfrastructureError(
+                f"{where}.{field}: counters must be non-negative "
+                "non-boolean integers (321_s)")
+    if block["completion_denominator"] < block["group_denominator"]:
+        raise InfrastructureError(
+            f"{where}: completion denominator below the group "
+            "denominator")
+    for field in ("worker1_selections", "worker1_completions",
+                  "reward1_completions"):
+        if block[field] > block["completion_denominator"]:
+            raise InfrastructureError(
+                f"{where}.{field} exceeds the completion "
+                "denominator (321_s — impossible count)")
+    for field in ("reward_varying_groups", "q1_counted_groups"):
+        if block[field] > block["group_denominator"]:
+            raise InfrastructureError(
+                f"{where}.{field} exceeds the group denominator "
+                "(321_s — impossible count)")
+    if block["q1_counted_groups"] > block["reward_varying_groups"]:
+        raise InfrastructureError(
+            f"{where}: a Q1-counted group necessarily varies — "
+            "counted cannot exceed varying")
+    firsts_group = block["first_group_indices"]
+    firsts_update = block["first_update_indices"]
+    families = tuple(family for _, family in _COUNTER_FIRSTS)
+    for label, mapping in (("first_group_indices", firsts_group),
+                           ("first_update_indices", firsts_update)):
+        if not isinstance(mapping, Mapping) \
+                or set(mapping) != set(families):
+            raise InfrastructureError(
+                f"{where}.{label}: must carry exactly the four "
+                "first-occurrence families")
+        for family, value in mapping.items():
+            if value is not None and (
+                    not isinstance(value, int)
+                    or isinstance(value, bool) or value < 0):
+                raise InfrastructureError(
+                    f"{where}.{label}[{family}]: a first index is "
+                    "None or a non-negative non-boolean integer "
+                    "(321_s)")
+    for counter, family in _COUNTER_FIRSTS:
+        set_group = firsts_group[family] is not None
+        set_update = firsts_update[family] is not None
+        if set_group is not set_update:
+            raise InfrastructureError(
+                f"{where}: {family} first indices disagree "
+                "between the group and update spaces")
+        if (block[counter] > 0) is not set_group:
+            raise InfrastructureError(
+                f"{where}: {counter} = {block[counter]} but the "
+                f"{family} first index is "
+                f"{'set' if set_group else 'None'} (321_s — "
+                "count/index consistency)")
+        if set_group and firsts_update[family] < firsts_group[family]:
+            raise InfrastructureError(
+                f"{where}: {family} first update index below its "
+                "first group index")
+    import copy as _copy
+    return _copy.deepcopy(dict(block))
+
+
+def _validate_expected_indices(name: str, expected: Sequence[int]
+                               ) -> tuple[int, ...]:
+    if not expected:
+        raise InfrastructureError(
+            f"{name}: the frozen expected index set is empty — "
+            "checkpoint zero and the final checkpoint are "
+            "mandatory (321_s)")
     previous = None
-    validated = []
-    for index, block in entries:
+    for index in expected:
         if not isinstance(index, int) or isinstance(index, bool) \
                 or index < 0:
             raise InfrastructureError(
-                f"{name}: checkpoint index {index!r} must be a "
+                f"{name}: expected index {index!r} must be a "
                 "non-negative non-boolean integer")
         if previous is not None and index <= previous:
             raise InfrastructureError(
-                f"{name}: checkpoint indices must be strictly "
-                f"increasing ({index} after {previous})")
+                f"{name}: expected indices must be strictly "
+                "increasing")
         previous = index
-        if not isinstance(block, Mapping) or set(block) \
-                != set(_PER_CHECKPOINT_SENTINEL_FIELDS):
+    if expected[0] != 0:
+        raise InfrastructureError(
+            f"{name}: the expected index set must begin at "
+            "checkpoint zero (321_s)")
+    return tuple(expected)
+
+
+def _validate_trajectory(name: str,
+                         entries: Sequence[tuple[int,
+                                                 Mapping[str, Any]]],
+                         expected: tuple[int, ...],
+                         status: str,
+                         contract: P0ScienceContract
+                         ) -> tuple[tuple[int, dict[str, Any]], ...]:
+    observed = [index for index, _ in entries]
+    if status == "complete":
+        if observed != list(expected):
             raise InfrastructureError(
-                f"{name}: a sentinel block is not the COMPLETE "
-                "per-checkpoint field set (305_f §4 — fields are "
-                "never dropped)")
-        if list(block["observation_ids"]) != expected_ids \
-                or block["cell"] != contract.scope.sentinel_cell:
+                f"{name}: observed checkpoints {observed[:5]}... "
+                f"!= the frozen expected set (empty or truncated "
+                "trajectories are not complete; 321_s)")
+    else:  # infrastructure_abort
+        if len(observed) >= len(expected) \
+                or observed != list(expected)[:len(observed)]:
             raise InfrastructureError(
-                f"{name}: sentinel block population is not the "
-                "contract's frozen sentinel")
-        validated.append((index, dict(block)))
+                f"{name}: an infrastructure-abort trajectory must "
+                "be a STRICT PREFIX of the frozen expected set")
+    validated = []
+    for index, block in entries:
+        validated.append((index, _validate_sentinel_block(
+            name, index, block, contract)))
     return tuple(validated)
 
 
 def assemble_sentinel_trajectories(
         contract: P0ScienceContract,
         checkpoint_blocks: Sequence[tuple[int, Mapping[str, Any]]],
-        evaluation_blocks: Sequence[tuple[int, Mapping[str, Any]]]
-        ) -> dict[str, Any]:
+        evaluation_blocks: Sequence[tuple[int, Mapping[str, Any]]],
+        *, expected_checkpoint_indices: Sequence[int],
+        expected_evaluation_indices: Sequence[int],
+        status: str = "complete") -> dict[str, Any]:
     """The P0 consumer's assembly of the two signed trajectories
-    from per-checkpoint `sentinel_checkpoint_block` outputs —
-    strictly increasing indices, complete field sets, the
-    contract-bound population."""
-    return {
+    (321_s P1): the observed index sequences must EQUAL the frozen
+    expected sets exactly (checkpoint zero mandatory; the final
+    checkpoint is the last expected element) — an
+    `infrastructure_abort` trajectory is handled EXPLICITLY as a
+    disclosed strict prefix, never silently. Every block is
+    semantically validated and DEEP-COPIED (mutation after
+    assembly cannot reach the result). The expected sets are
+    frozen by the real P0LaunchFreeze instance post-merge."""
+    if status not in ("complete", "infrastructure_abort"):
+        raise InfrastructureError(
+            f"unknown trajectory status {status!r}")
+    expected_ckpt = _validate_expected_indices(
+        "checkpoint_trajectory", expected_checkpoint_indices)
+    expected_eval = _validate_expected_indices(
+        "evaluation_trajectory", expected_evaluation_indices)
+    result = {
+        "status": status,
+        "expected_checkpoint_indices": expected_ckpt,
+        "expected_evaluation_indices": expected_eval,
         "checkpoint_trajectory": _validate_trajectory(
-            "checkpoint_trajectory", checkpoint_blocks, contract),
+            "checkpoint_trajectory", checkpoint_blocks,
+            expected_ckpt, status, contract),
         "evaluation_trajectory": _validate_trajectory(
-            "evaluation_trajectory", evaluation_blocks, contract),
+            "evaluation_trajectory", evaluation_blocks,
+            expected_eval, status, contract),
     }
+    if status == "infrastructure_abort":
+        result["disclosed_truncation"] = {
+            "checkpoints_observed":
+                len(result["checkpoint_trajectory"]),
+            "checkpoints_expected": len(expected_ckpt),
+            "evaluations_observed":
+                len(result["evaluation_trajectory"]),
+            "evaluations_expected": len(expected_eval),
+        }
+    return result
