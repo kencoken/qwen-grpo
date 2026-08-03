@@ -25,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import extension_run, ledger, p0_c2_equivalence, p0_contract, p0_estimands, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, support_run, telemetry, unit_c2_sample, unit_c_sample
+from tasks.routing import extension_run, ledger, p0_c2_equivalence, p0_cap, p0_contract, p0_estimands, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, p0_tables, support_run, telemetry, unit_c2_sample, unit_c_sample
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -5033,3 +5033,134 @@ def test_p0_c2_replay_sensitivity(c2_replay_ctx):
     with pytest.raises(InfrastructureError,
                        match="corrupted redundant"):
         p0_c2_equivalence.derive_from_trace(corrupted, **kwargs)
+
+
+# --- spine Unit 4: registered cap arithmetic + generated tables (315_f) --------
+
+def test_p0_cap_arithmetic():
+    """The 305_f §5 record: every cap input + all three values, the
+    closed branches, the min() identity, and exact parity with the
+    frozen legacy formula."""
+    from types import SimpleNamespace
+    contract = p0_contract.load_p0_science_contract()
+    base = {"measured_finalization_reserve_seconds": 0.0,
+            "frozen_non_rollout_overhead_seconds": 0.0,
+            "measured_whole_epoch_seconds": 600.0}
+    # input validation
+    with pytest.raises(InfrastructureError, match="finite"):
+        p0_cap.derive_capacity(
+            contract, cumulative_consumed_seconds=float("nan"),
+            **base)
+    with pytest.raises(InfrastructureError, match="finite"):
+        p0_cap.derive_capacity(
+            contract, cumulative_consumed_seconds=True, **base)
+    with pytest.raises(InfrastructureError, match="non-negative"):
+        p0_cap.derive_capacity(
+            contract, cumulative_consumed_seconds=-1.0, **base)
+    with pytest.raises(InfrastructureError, match="positive"):
+        p0_cap.derive_capacity(
+            contract, cumulative_consumed_seconds=0.0,
+            measured_finalization_reserve_seconds=0.0,
+            frozen_non_rollout_overhead_seconds=0.0,
+            measured_whole_epoch_seconds=0.0)
+    # an unregistered cap rule refuses before any arithmetic
+    forged = SimpleNamespace(sizing=SimpleNamespace(
+        cap=SimpleNamespace(
+            rule_id="p0-cap-v2",
+            launch_epochs="min_nominal_capacity",
+            capacity_inputs=p0_cap.REGISTERED_CAPACITY_INPUTS)))
+    with pytest.raises(InfrastructureError, match="unregistered"):
+        p0_cap.derive_capacity(
+            forged, cumulative_consumed_seconds=0.0, **base)
+    # spare-capacity branch: capacity >= nominal -> run EXACTLY the
+    # nominal; spare is recorded, never trained
+    plan = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=0.0, **base)
+    assert plan["capacity_epochs"] == 60
+    assert plan["nominal_epochs"] == 39
+    assert plan["launch_epochs"] == 39
+    assert plan["branch"] == "no_extra_training"
+    assert plan["spare_epochs_not_trained"] == 21
+    assert plan["launch_epochs"] == min(plan["nominal_epochs"],
+                                        plan["capacity_epochs"])
+    assert tuple(plan["inputs"]) == \
+        p0_cap.REGISTERED_CAPACITY_INPUTS
+    assert p0_cap.require_launchable(plan) is plan
+    # disclosed under-target branch, with quantified projection
+    plan = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=8000.0,
+        measured_finalization_reserve_seconds=1000.0,
+        frozen_non_rollout_overhead_seconds=500.0,
+        measured_whole_epoch_seconds=2000.0)
+    assert plan["capacity_epochs"] == 13
+    assert plan["launch_epochs"] == 13
+    assert plan["branch"] == "disclosed_under_target"
+    assert plan["projected_q1_counted_by_cell"] == {
+        "code_atomic": 33.8, "fork_join": 88.4, "math_code": 33.8}
+    assert plan["target_q1_counted_groups_per_sizing_cell"] == 100
+    assert plan["launch_epochs"] == min(plan["nominal_epochs"],
+                                        plan["capacity_epochs"])
+    # stop branch: capacity <= 0 is never a launch
+    plan = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=36000.0, **base)
+    assert plan["capacity_epochs"] == 0
+    assert plan["launch_epochs"] == 0
+    assert plan["branch"] == "stop_reviewed_amendment"
+    assert not plan["launchable"]
+    with pytest.raises(InfrastructureError, match="reviewed scope "
+                       "amendment"):
+        p0_cap.require_launchable(plan)
+    # exact parity with the frozen legacy formula on shared inputs
+    for consumed, reserve, overhead, whole in (
+            (0.0, 0.0, 0.0, 600.0),
+            (8000.0, 1000.0, 500.0, 2000.0),
+            (30000.0, 3000.0, 2999.9, 700.0),
+            (36000.0, 0.0, 0.0, 100.0),
+            (35990.0, 5.0, 4.9, 1.0)):
+        legacy = p0_mixture_v2.derive_p0_cap_v2(
+            cumulative_consumed_seconds=consumed,
+            measured_finalization_reserve_seconds=reserve,
+            frozen_non_rollout_overhead_seconds=overhead,
+            measured_whole_epoch_seconds=whole)
+        mine = p0_cap.derive_capacity(
+            contract, cumulative_consumed_seconds=consumed,
+            measured_finalization_reserve_seconds=reserve,
+            frozen_non_rollout_overhead_seconds=overhead,
+            measured_whole_epoch_seconds=whole)
+        assert mine["capacity_epochs"] == legacy["capped_epochs"]
+        assert mine["available_generation_seconds"] == \
+            legacy["available_generation_seconds"]
+
+
+def test_p0_traceability_appendix(tmp_path, monkeypatch):
+    """303_f §8: the committed appendix is byte-equal to a fresh
+    generation from the authenticated artifacts — an edited number
+    or a diverging artifact value is mechanically detected."""
+    result = p0_tables.verify_appendix()
+    assert result["verdict"] == "PASS"
+    committed = Path(p0_tables.APPENDIX_PATH).read_text("utf-8")
+    # every reviewed identity and headline value is in the tables
+    assert p0_contract.CONTRACT_SHA256 in committed
+    assert p0_replay.PROJECTION_SHA256 in committed
+    assert p0_replay.PINNED_MIXTURE_FILE_SHA256 in committed
+    assert "| derived groups | 6123 |" in committed
+    assert "0/15" in committed and "8/152" in committed
+    assert "**Q1 + Q2 hierarchical-unlocking authorized**" \
+        in committed
+    # an edited number diverges
+    tampered = tmp_path / "appendix.md"
+    tampered.write_text(
+        committed.replace("| derived groups | 6123 |",
+                          "| derived groups | 6124 |"),
+        encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="diverges"):
+        p0_tables.verify_appendix(tampered)
+    # a diverging artifact value changes the generation (the
+    # numbers COME from the artifacts, not from prose)
+    altered = copy.deepcopy(p0_replay.load_projection())
+    altered["zero_variance_groups"] = 663
+    monkeypatch.setattr(p0_tables, "load_projection",
+                        lambda *a, **k: altered)
+    assert p0_tables.generate_traceability_appendix() != committed
+    with pytest.raises(InfrastructureError, match="diverges"):
+        p0_tables.verify_appendix()
