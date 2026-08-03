@@ -25,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import extension_run, ledger, p0_mixture, p0_mixture_v2, p0_replay, p0_schema, support_run, telemetry, unit_c2_sample, unit_c_sample
+from tasks.routing import extension_run, ledger, p0_contract, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, support_run, telemetry, unit_c2_sample, unit_c_sample
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -4495,3 +4495,98 @@ def test_p0_unit1_artifacts_and_replay_source(b2_fixture, tmp_path):
     reformatted.write_text(json.dumps(pinned), encoding="utf-8")
     with pytest.raises(InfrastructureError, match="file"):
         p0_replay.load_pinned_mixture(path=reformatted)
+
+
+# --- P0 spine Unit 2: the contract instance + strict schedule loader -----------
+
+def test_p0_contract_instance_and_pins(tmp_path):
+    """The frozen instance equals a fresh build from the
+    authoritative sources; it loads only under the externally
+    reviewed pin; tampering refuses."""
+    contract = p0_contract.load_p0_science_contract()
+    rebuilt = p0_contract.build_p0_science_contract()
+    assert contract == rebuilt
+    assert p0_schema.contract_sha256(contract) == \
+        p0_contract.CONTRACT_SHA256
+    # the pins flow from the authoritative sources, not transcription
+    assert contract.input_pins.c2_actions_file_sha256 == \
+        p0_replay.REPLAY_SOURCE["c2_actions_file_sha256"]
+    assert contract.input_pins.pinned_mixture_record_sha256 == \
+        p0_mixture_v2.EXPECTED_MIXTURE_V2_RECORD_SHA256
+    assert contract.input_pins.c2_projection_sha256 == \
+        p0_replay.PROJECTION_SHA256
+    # the sentinel ids are the pinned mixture's
+    pinned = p0_replay.load_pinned_mixture()
+    assert list(contract.scope.sentinel_observation_ids) == \
+        sorted(pinned["sentinel"]["observation_ids"])
+    # the C2-measured values are in the frozen rules
+    assert dict(contract.q1.sizing_counts) == {
+        "code_atomic": 13, "fork_join": 34, "math_code": 13}
+    assert {b.direction: (b.numerator, b.denominator)
+            for b in contract.q2.conditional_baselines} == {
+        "fork_join|w2_favoured": (8, 152),
+        "math_code|w3_favoured": (0, 15)}
+    # one-time freeze refuses overwrite
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_contract.freeze_contract()
+    # a tampered committed contract refuses under the pin
+    tampered = tmp_path / "contract.json"
+    payload = json.loads(Path(
+        p0_contract.CONTRACT_PATH).read_text("utf-8"))
+    payload["sizing"]["nominal_epochs"] = 40
+    tampered.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="externally "
+                       "reviewed"):
+        p0_contract.load_p0_science_contract(path=tampered)
+
+
+def test_p0_schedule_loader_reminders(tmp_path, monkeypatch):
+    """The two 305_f-approval reminders, proven: the loader works
+    with the LEGACY BUILDER DISABLED, and from a
+    CLEAN-CLONE-RESTORED surface."""
+    contract = p0_contract.load_p0_science_contract()
+
+    # reminder 1: the legacy builder is DISABLED — the loader never
+    # touches it
+    def exploding_builder(*a, **k):
+        raise AssertionError(
+            "the schedule loader must never invoke the legacy "
+            "builder")
+
+    monkeypatch.setattr(p0_mixture_v2, "build_mixture_v2",
+                        exploding_builder)
+    epoch = p0_schedule.epoch_schedule(contract)
+    assert len(epoch) == 157
+    s5 = p0_schedule.schedule_for_epochs(contract, 5)
+    assert s5 == epoch * 5
+    # the loaded schedule IS the C2-authorized experiment
+    projection = p0_replay.load_projection()
+    assert epoch == projection["epoch_rows"]
+    assert s5 == projection["schedule_rows"]
+    # bounds: the launch freeze supplies epochs; the loader bounds
+    with pytest.raises(InfrastructureError, match="positive"):
+        p0_schedule.schedule_for_epochs(contract, 0)
+    with pytest.raises(InfrastructureError, match="positive"):
+        p0_schedule.schedule_for_epochs(contract, True)
+    with pytest.raises(InfrastructureError, match="spare capacity"):
+        p0_schedule.schedule_for_epochs(contract, 40)
+    # the effective population map applies the contract's sentinel
+    # override
+    mixture = p0_replay.load_pinned_mixture()
+    for oid in contract.scope.sentinel_observation_ids:
+        assert p0_schedule.population_of(contract, mixture, oid) \
+            == "sentinel"
+    with pytest.raises(InfrastructureError, match="not a scheduled"):
+        p0_schedule.population_of(contract, mixture, "foreign:row")
+
+    # reminder 2: trainer rows from a CLEAN-CLONE-RESTORED surface
+    # (an isolated replica; the legacy builder still disabled)
+    replica = tmp_path / "surface"
+    support_run.restore_surface_evidence(
+        "plans/conductor/evidence/support_extension_v1/surface",
+        replica)
+    rows = p0_schedule.build_trainer_rows(contract, 1,
+                                          surface_dir=replica)
+    assert len(rows) == 157
+    assert [r["observation_id"] for r in rows] == epoch
+    assert all(r["prompt"][0]["role"] == "system" for r in rows[:3])
