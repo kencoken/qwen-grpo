@@ -1,31 +1,38 @@
 """P0 precursors, Unit V — the `routing_dev_val` outcome-blind
 cohort freeze, the val surface tranche, and the val lock (the
-SIGNED precursors plan 326_f/328_f/330_f §1).
+SIGNED precursors plan 326_f/328_f/330_f §1; repaired per 332_s).
 
 V1 (CPU): the outcome-blind cohort — six cells equally, the
 DETERMINISTIC latent prefix 0–4 per cell, ALL THREE renderers (90
 observations) under the frozen natural-mixture definition — plus
-the COMPLETE evaluation identity: common-random-number seed
-derivation (330_f §1: NO checkpoint index), the canonical-profile
-decoding, the ordered observation list, batching, and the
-latent-level descriptive framing. `val_tranche_freeze()` is the
-preregistered record the reviewer signs BEFORE any GPU launch.
+the COMPLETE evaluation identity: the full-digest
+common-random-number seed derivation (330_f §1 / 332_s P1-4: the
+complete SHA-256 integer mod 2^31, slots 0..7, NO checkpoint
+index; the 720-seed schedule hash is frozen), the FULL sampling
+options, the ordered observation list, batching, and the
+latent-level descriptive framing.
 
-V2 (GPU, <= 0.35 GPU-h): `prepare_val_launch` /
-`execute_val_run` — the two-phase support-run pattern with a
-VAL-specific launch manifest (no probe rule; the outcome-blind
-prefix check retained), ledger admission on the verified head,
-`materialize_dev_support` for the complete authenticated 4^S
-surface, and the post-run semantic-overlap gate.
+V2 (GPU, <= 0.35 GPU-h, deadline-ENFORCED): `prepare_val_launch`
+/ `execute_val_run` — the two-phase pattern with the dedicated
+`val_materialization` ledger admission (332_s P0-1), the
+closed-schema val-launch manifest (source digest recomputed; the
+signed tranche-freeze hash bound), the frozen C2 lineage parent
+enforced, `materialize_dev_support` under the budget deadline,
+the post-run semantic-overlap gate against BOTH the training and
+cycle populations, and the val-specific terminal verifier before
+the success closeout.
 
-V3 (CPU): `build_val_lock` — the record binding the cohort, the
-natural-mixture weights, the complete evaluation identity, and
-the surface-lock hashes; its `record_sha256` is the
-`routing_dev_val_lock_sha256` pin the `P0LaunchFreeze` consumes.
+V3 (CPU): `build_val_lock` — loads and fully verifies the
+materialized surface FIRST (332_s P1-3), checks the surface IS the
+frozen cohort, binds the canonical natural-mixture weights (332_s
+P1-5) and the overlap-gate result, and writes once.
+`load_val_lock` REDERIVES the cohort/evaluation identity/weights
+from the frozen config under a closed schema and can authenticate
+the underlying surface bytes.
 
 Never-trained-on is STRUCTURAL: the P0 trainer consumes only the
-pinned mixture schedule (`135a72bf…`); `routing_dev_val` appears
-in no training schedule. All val evidence is development-only."""
+pinned mixture schedule; `routing_dev_val` appears in no training
+schedule. All val evidence is development-only."""
 from __future__ import annotations
 
 import hashlib
@@ -75,19 +82,25 @@ VAL_CONFIG: dict[str, Any] = {
         "cells": "equal",
         "latent_clusters_within_cell": "equal",
         "renderers_within_latent": "equal",
-        "definition": "the frozen 211_f natural-mixture definition; "
-                      "unchanged across all within-cycle comparisons",
+        "definition": "the frozen 211_f natural-mixture definition "
+                      "(charter.natural_mixture_weights); unchanged "
+                      "across all within-cycle comparisons",
     },
     "evaluation": {
         "domain": "p0_val_eval",
         "base_seed": 20260804,
-        "seed_rule": ("sha256(domain || base_seed || observation_id "
-                      "|| completion_slot) mod 2^31 — NO checkpoint "
-                      "index (common random numbers, 330_f §1); the "
-                      "checkpoint lives in provenance only"),
-        "decoding": {"temperature": 1.0,
-                     "policy_max_new_tokens": 128,
-                     "group_size": 8},
+        "seed_rule": ("int(sha256(domain || base_seed || "
+                      "observation_id || completion_slot), 16) mod "
+                      "2^31 over the COMPLETE digest (332_s P1-4); "
+                      "slots 0..7 only; NO checkpoint index (common "
+                      "random numbers, 330_f §1) — the checkpoint "
+                      "lives in provenance only"),
+        # the FULL sampling identity (332_s): the eval runner must
+        # construct generation from THIS record, nothing implicit
+        "sampling": {"do_sample": True, "temperature": 1.0,
+                     "top_p": 1.0, "top_k": None,
+                     "repetition_penalty": 1.0,
+                     "max_new_tokens": 128, "group_size": 8},
         "runtime_profile_sha256": P0_RUNTIME_PROFILE_SHA256,
         "batching": ("canonical (cell, latent index, renderer) "
                      "order; one 8-completion group per observation "
@@ -97,10 +110,11 @@ VAL_CONFIG: dict[str, Any] = {
                     "(5 clusters per cell) — never completion-level "
                     "precision claims"),
     },
-    "never_trained_on": ("structural — the P0 trainer consumes only "
-                         "the pinned mixture schedule 135a72bf…; "
-                         "routing_dev_val appears in no training "
-                         "schedule"),
+    "never_trained_on": (
+        "structural — the P0 trainer consumes only the pinned "
+        "mixture schedule (record_sha256 135a72bf4deb77048371074636"
+        "d88ffebf6bd07d1c00ae349b6fcee221975b3f); routing_dev_val "
+        "appears in no training schedule"),
     "development_only": True,
     "search_cap": 90,
     "budget_gpu_hours": 0.35,
@@ -124,13 +138,29 @@ VAL_CONFIG: dict[str, Any] = {
     },
 }
 VAL_CONFIG_SHA256 = \
-    "4d717337e5d765b2186a67a994e46eb7f5d89adc9f8b22ac802387e0943d1818"
+    "cd555009667f1778a03dbb064132c5a05c1ac822daa1dd15f6b75a453fee9242"
+
+# the complete frozen 720-seed schedule identity (332_s P1-4):
+# content hash over [(observation_id, slot, seed)] in canonical
+# order — recomputed and enforced by `seed_schedule()`
+VAL_SEED_SCHEDULE_SHA256 = \
+    "7f5f65181e41b8011e2a5ccd735dc287ce6b1fd77e948d004ac4e9a1d6035215"
+
+_VAL_LAUNCH_KEYS = frozenset({
+    "kind", "declaration_sha256", "namespace",
+    "worker_visible_fingerprint", "runtime_profile_fingerprint",
+    "worker_pool_fingerprint", "request_contract", "cache_identity",
+    "val_config_sha256", "val_freeze_sha256", "search_cap",
+    "budget_gpu_hours", "driver", "routing_source_sha256",
+    "environment_manifest_sha256", "support",
+    "scientific_design_sha256",
+})
 
 _VAL_DESIGN_FIELDS = (
     "declaration_sha256", "namespace", "worker_visible_fingerprint",
     "runtime_profile_fingerprint", "worker_pool_fingerprint",
     "request_contract", "cache_identity", "val_config_sha256",
-    "search_cap",
+    "val_freeze_sha256", "search_cap",
 )
 
 
@@ -155,24 +185,44 @@ def val_cohort_observations() -> list[dict[str, Any]]:
 def seed_for_completion(observation_id: str, completion_slot: int,
                         *, domain: str | None = None,
                         base_seed: int | None = None) -> int:
-    """The frozen common-random-number derivation (330_f §1): the
-    same (observation, slot) draws at EVERY checkpoint — the
-    checkpoint index is provenance, never RNG input."""
+    """The frozen common-random-number derivation (330_f §1; 332_s
+    P1-4): the COMPLETE SHA-256 digest as an integer, mod 2^31.
+    The same (observation, slot) draws at EVERY checkpoint — the
+    checkpoint index is provenance, never RNG input. Slots are
+    bounded by the frozen group size (0..7)."""
     config = _validated_config()
     evaluation = config["evaluation"]
     domain = domain or evaluation["domain"]
     base = base_seed if base_seed is not None \
         else evaluation["base_seed"]
+    group_size = evaluation["sampling"]["group_size"]
     if not isinstance(completion_slot, int) \
             or isinstance(completion_slot, bool) \
-            or completion_slot < 0:
+            or not 0 <= completion_slot < group_size:
         raise InfrastructureError(
-            "completion_slot must be a non-negative non-boolean "
-            "integer")
+            f"completion_slot must be an integer in "
+            f"[0, {group_size}) (332_s)")
     payload = f"{domain}||{base}||{observation_id}" \
               f"||{completion_slot}".encode("utf-8")
-    return int.from_bytes(hashlib.sha256(payload).digest()[:4],
-                          "big") % (2 ** 31)
+    return int(hashlib.sha256(payload).hexdigest(), 16) % (2 ** 31)
+
+
+def seed_schedule() -> list[tuple[str, int, int]]:
+    """The complete frozen 720-entry seed schedule in canonical
+    order, enforced against the reviewed pin."""
+    config = _validated_config()
+    group_size = config["evaluation"]["sampling"]["group_size"]
+    schedule = [
+        (obs["observation_id"], slot,
+         seed_for_completion(obs["observation_id"], slot))
+        for obs in val_cohort_observations()
+        for slot in range(group_size)]
+    digest = content_sha256([list(entry) for entry in schedule])
+    if digest != VAL_SEED_SCHEDULE_SHA256:
+        raise InfrastructureError(
+            "the derived seed schedule does not match the frozen "
+            "schedule pin (332_s P1-4)")
+    return schedule
 
 
 # identity-only fields normalized away (330_f §5); `public_params`
@@ -249,10 +299,46 @@ def semantic_overlap_report(
     return report
 
 
+def _regenerate_latent(obs: Mapping[str, Any]) -> dict[str, Any]:
+    from tasks.conductor import program
+    from tasks.conductor.profiles import DEFAULT_PROFILE
+    oid = obs["observation_id"]
+    return program.generate_latent(
+        obs["cell_id"], oid.split(":")[1], int(oid.split(":")[2]),
+        DEFAULT_PROFILE).latent
+
+
+def cycle_cohort_observations() -> list[dict[str, Any]]:
+    """The PLANNED Unit-Y cycle cohort (same shape, namespace
+    routing_dev_cycle) — regenerated here ONLY for the three-way
+    overlap gate; its own freeze is Unit Y."""
+    config = _validated_config()
+    return dev_support.dev_cohort_observations(
+        "routing_dev_cycle", config["cohort"], config["renderers"],
+        config["visibility"])
+
+
+def three_way_overlap_reports(
+        training_observations: list[Mapping[str, Any]]
+        ) -> dict[str, Any]:
+    """332_s: the signed plan's checks across training, validation
+    AND cycle populations — all pairwise intersections empty."""
+    val_obs = val_cohort_observations()
+    cycle_obs = cycle_cohort_observations()
+    return {
+        "val_vs_training": semantic_overlap_report(
+            val_obs, training_observations),
+        "val_vs_cycle": semantic_overlap_report(val_obs, cycle_obs),
+        "cycle_vs_training": semantic_overlap_report(
+            cycle_obs, training_observations),
+    }
+
+
 def val_tranche_freeze() -> dict[str, Any]:
     """The preregistered V1 record the reviewer signs BEFORE any
     GPU launch: the config, the regenerated cohort identities, the
-    planned execution volume, and the falsifiable predictions."""
+    seed-schedule pin, the planned execution volume, and the
+    falsifiable predictions."""
     from tasks.conductor import oracle
     config = _validated_config()
     observations = val_cohort_observations()
@@ -269,6 +355,7 @@ def val_tranche_freeze() -> dict[str, Any]:
         "motivation": "330_f-signed precursors plan §1",
         "config": config,
         "config_sha256": VAL_CONFIG_SHA256,
+        "seed_schedule_sha256": VAL_SEED_SCHEDULE_SHA256,
         "observation_ids": [obs["observation_id"]
                             for obs in observations],
         "observations_total": len(observations),
@@ -287,8 +374,9 @@ def build_val_launch_manifest(*, declaration: Mapping[str, Any],
     """The ONE pre-launch record for the val tranche: no probe rule
     (nothing is selected from this surface); the outcome-blind
     prefix check is retained; the manifest binds the frozen
-    VAL_CONFIG identity, the declaration, the driver digest, the
-    environment bytes, the search cap, and the budget."""
+    VAL_CONFIG identity, the SIGNED tranche-freeze hash (332_s
+    P1-7), the declaration, the driver digest, the environment
+    bytes, the search cap, and the budget."""
     config = _validated_config()
     dev_support.validate_dev_cohort(
         declaration["namespace"], declaration["cohort"],
@@ -323,6 +411,7 @@ def build_val_launch_manifest(*, declaration: Mapping[str, Any],
         "request_contract": declaration["request_contract"],
         "cache_identity": declaration["cache_identity"],
         "val_config_sha256": VAL_CONFIG_SHA256,
+        "val_freeze_sha256": val_tranche_freeze()["freeze_sha256"],
         "search_cap": config["search_cap"],
         "budget_gpu_hours": config["budget_gpu_hours"],
         "driver": DRIVER,
@@ -341,18 +430,33 @@ def build_val_launch_manifest(*, declaration: Mapping[str, Any],
 
 
 def validate_val_launch_manifest(manifest: Mapping[str, Any],
-                                 declaration: Mapping[str, Any]
+                                 declaration: Mapping[str, Any],
+                                 *, recompute: bool = True
                                  ) -> dict[str, Any]:
-    """The strict revalidation boundary `materialize_dev_support`
-    consumes: rebuild-and-compare against the declaration."""
-    if manifest.get("kind") != VAL_LAUNCH_KIND:
+    """The strict CLOSED-SCHEMA revalidation boundary (332_s P1-7)
+    consumed by `materialize_dev_support` and the persisted-launch
+    loader: exact key set, rehash, design rehash, declaration and
+    config bindings, the signed tranche-freeze hash, and (with
+    `recompute`) the source digest recomputed from the tree."""
+    if not isinstance(manifest, Mapping) \
+            or set(manifest) != _VAL_LAUNCH_KEYS | \
+            {"manifest_sha256"}:
         raise InfrastructureError(
-            f"unknown val launch kind {manifest.get('kind')!r}")
+            "val-launch manifest keys do not match the closed "
+            "schema (332_s)")
+    if manifest["kind"] != VAL_LAUNCH_KIND:
+        raise InfrastructureError(
+            f"unknown val launch kind {manifest['kind']!r}")
     body = {k: v for k, v in manifest.items()
             if k != "manifest_sha256"}
-    if content_sha256(body) != manifest.get("manifest_sha256"):
+    if content_sha256(body) != manifest["manifest_sha256"]:
         raise InfrastructureError("val launch manifest does not "
                                   "rehash")
+    if manifest["scientific_design_sha256"] != content_sha256(
+            {field: manifest[field]
+             for field in _VAL_DESIGN_FIELDS}):
+        raise InfrastructureError(
+            "val scientific-design identity does not recompute")
     if manifest["declaration_sha256"] != \
             content_sha256(dict(declaration)):
         raise InfrastructureError(
@@ -361,11 +465,26 @@ def validate_val_launch_manifest(manifest: Mapping[str, Any],
         raise InfrastructureError(
             "val launch manifest does not bind the frozen "
             "VAL_CONFIG")
-    if manifest["scientific_design_sha256"] != content_sha256(
-            {field: manifest[field]
-             for field in _VAL_DESIGN_FIELDS}):
+    if manifest["val_freeze_sha256"] != \
+            val_tranche_freeze()["freeze_sha256"]:
         raise InfrastructureError(
-            "val scientific-design identity does not recompute")
+            "val launch manifest does not bind the signed "
+            "tranche freeze (332_s)")
+    for key in ("namespace", "worker_visible_fingerprint",
+                "runtime_profile_fingerprint",
+                "worker_pool_fingerprint", "request_contract",
+                "cache_identity"):
+        if manifest[key] != declaration[key]:
+            raise InfrastructureError(
+                f"val launch manifest {key} does not match the "
+                "declaration")
+    if recompute:
+        digest = routing_execution_digest(DRIVER)
+        if manifest["routing_source_sha256"] != \
+                digest["routing_source_sha256"]:
+            raise InfrastructureError(
+                "val launch manifest source digest does not match "
+                "the tree (332_s P1-7)")
     return dict(manifest)
 
 
@@ -376,7 +495,9 @@ def prepare_val_launch(*, run_dir: str | Path = VAL_RUN_ROOT,
                        Callable[[], dict[str, Any]] | None = None
                        ) -> dict[str, Any]:
     """Phase 1: build and persist every prelaunch input exactly
-    once."""
+    once. The prepared manifest/environment/declaration hashes go
+    to the narrow prelaunch review (332_s P1-7); `execute_val_run`
+    then REQUIRES the reviewed manifest hash."""
     config = _validated_config()
     run_dir = Path(run_dir)
     prelaunch = run_dir / "prelaunch"
@@ -410,18 +531,30 @@ def execute_val_run(*, run_dir: str | Path = VAL_RUN_ROOT,
                     expected_head_sha256: str | None,
                     question: str, motivating_evidence: str,
                     ledger_path: str | Path = LEDGER_PATH,
+                    lineage_parent_sha256: str | None = "frozen",
                     _runtime_factory: Callable[[], Any]
                     | None = None,
                     _environment_builder:
                     Callable[[], dict[str, Any]] | None = None
                     ) -> dict[str, Any]:
-    """Phase 2: full validation BEFORE the irreversible admission;
-    materialization + lock + the post-run semantic-overlap gate
-    under an abort handler; verified outputs before the success
-    closeout. Retry rule (330_f §5): a partial materialization can
-    never be locked; an identical-design retry receives a NEW
-    execution identity and cumulative accounting."""
+    """Phase 2: full validation BEFORE the irreversible admission
+    (kind `val_materialization`, 332_s P0-1); materialization under
+    the ENFORCED budget deadline (332_s P1-6); the surface lock;
+    the three-way overlap gate; the val lock; the terminal
+    verifier; then the success closeout. `lineage_parent_sha256`
+    defaults to the frozen C2 closeout — the production launch
+    must run on exactly that head (332_s P1-7); tests supply their
+    own ledger explicitly."""
     config = _validated_config()
+    if lineage_parent_sha256 == "frozen":
+        lineage_parent_sha256 = \
+            config["lineage"]["parent_entry_sha256"]
+    if lineage_parent_sha256 is not None \
+            and expected_head_sha256 != lineage_parent_sha256:
+        raise InfrastructureError(
+            "the val launch is admitted on the FROZEN lineage "
+            "parent (the C2 closeout head) — a different head "
+            "refuses (332_s P1-7)")
     run_dir = Path(run_dir)
     prelaunch = run_dir / "prelaunch"
     declaration = json.loads(
@@ -458,12 +591,13 @@ def execute_val_run(*, run_dir: str | Path = VAL_RUN_ROOT,
 
     # --- 2. ADMIT (irreversible from here) -------------------------
     entry = {
-        "kind": "support_materialization",
+        "kind": "val_materialization",
         "question": question,
         "motivating_evidence": motivating_evidence,
         "freeze": {
             "val_launch_sha256": manifest["manifest_sha256"],
             "val_config_sha256": VAL_CONFIG_SHA256,
+            "val_freeze_sha256": manifest["val_freeze_sha256"],
             "scientific_design_sha256":
                 manifest["scientific_design_sha256"],
         },
@@ -477,6 +611,7 @@ def execute_val_run(*, run_dir: str | Path = VAL_RUN_ROOT,
                                        launch_manifest=manifest)
     head = admitted["entry_sha256"]
     started = time.monotonic()
+    deadline = started + manifest["budget_gpu_hours"] * 3600.0
 
     try:
         _persist_verified(run_dir / "execute_env_manifest.json",
@@ -490,27 +625,28 @@ def execute_val_run(*, run_dir: str | Path = VAL_RUN_ROOT,
                 expected_manifest_sha256=expected_manifest_sha256,
                 ledger_path=ledger_path, expected_head_sha256=head,
                 _launch_validator=validate_val_launch_manifest,
-                _admitted_kind="support_materialization",
-                _admitted_manifest_key="val_launch_sha256")
+                _admitted_kind="val_materialization",
+                _admitted_manifest_key="val_launch_sha256",
+                deadline_monotonic=deadline)
         finally:
             rt.close()
         lock = dev_support.build_surface_lock(surface_dir)
         loaded = dev_support.load_dev_surface(
             surface_dir, expected_lock_sha256=lock["lock_sha256"])
-        # the post-run semantic-overlap gate against the LOCKED
-        # extension (training) surface — predictions falsified here
+        # the post-run THREE-WAY overlap gate (332_s): training,
+        # validation, and cycle populations pairwise disjoint
         from .p0_replay import restore_extension_surface_if_absent
         from .unit_c2_sample import UNIT_C2_CONFIG
         training = dev_support.load_dev_surface(
             restore_extension_surface_if_absent(),
             expected_lock_sha256=UNIT_C2_CONFIG[
                 "extension_surface_lock_sha256"])
-        val_obs = val_cohort_observations()
-        overlap = semantic_overlap_report(
-            val_obs,
+        overlap = three_way_overlap_reports(
             [{**obs, "latent": _regenerate_latent(obs)}
              for obs in training["observations"]])
-        val_lock = build_val_lock(surface_dir)
+        _persist_verified(run_dir / "overlap_report.json", overlap)
+        val_lock = build_val_lock(surface_dir,
+                                  overlap_report=overlap)
         record = {
             "run": "routing-dev-val-surface-v1",
             "surface_dir": str(surface_dir),
@@ -521,9 +657,12 @@ def execute_val_run(*, run_dir: str | Path = VAL_RUN_ROOT,
             "overlap_report": overlap,
             "development_only": True,
         }
-        for name, payload in (("overlap_report.json", overlap),
-                              ("run_record.json", record)):
-            _persist_verified(run_dir / name, payload)
+        _persist_verified(run_dir / "run_record.json", record)
+        # 332_s P1-7: the val-specific terminal verifier runs
+        # BEFORE the success closeout
+        verify_val_run(run_dir,
+                       expected_val_lock_sha256=val_lock[
+                           "record_sha256"])
     except BaseException as error:
         measured = round((time.monotonic() - started) / 3600.0, 4)
         append_ledger_entry(
@@ -573,22 +712,41 @@ def execute_val_run(*, run_dir: str | Path = VAL_RUN_ROOT,
             "ledger_head": closeout["entry_sha256"]}
 
 
-def _regenerate_latent(obs: Mapping[str, Any]) -> dict[str, Any]:
-    from tasks.conductor import program
-    from tasks.conductor.profiles import DEFAULT_PROFILE
-    oid = obs["observation_id"]
-    return program.generate_latent(
-        obs["cell_id"], oid.split(":")[1], int(oid.split(":")[2]),
-        DEFAULT_PROFILE).latent
-
-
 # --- V3: the val lock ----------------------------------------------------------
 
-def build_val_lock(surface_dir: str | Path) -> dict[str, Any]:
-    """The V3 record: cohort + natural-mixture weights + the
-    COMPLETE evaluation identity + the surface-lock binding.
-    `record_sha256` is the `routing_dev_val_lock_sha256` pin.
-    Written once as `val_lock.json` beside the run."""
+_VAL_LOCK_KEYS = frozenset({
+    "kind", "val_config_sha256", "namespace", "cohort", "renderers",
+    "visibility", "natural_mixture", "natural_mixture_weights",
+    "evaluation", "seed_schedule_sha256", "ordered_observation_ids",
+    "overlap_report", "surface_lock_sha256",
+    "surface_lock_file_sha256", "never_trained_on",
+    "development_only",
+})
+
+
+def _canonical_weights(observations: list[Mapping[str, Any]]
+                       ) -> list[list[Any]]:
+    """The canonical natural-mixture weights (332_s P1-5): the
+    frozen charter definition applied to the exact ordered cohort —
+    currently 1/90 for every observation — as ordered
+    [observation_id, weight] pairs."""
+    from .charter import natural_mixture_weights
+    weights = natural_mixture_weights(list(observations))
+    return [[obs["observation_id"],
+             weights[obs["observation_id"]]]
+            for obs in observations]
+
+
+def build_val_lock(surface_dir: str | Path, *,
+                   overlap_report: Mapping[str, Any]
+                   ) -> dict[str, Any]:
+    """The V3 record (332_s P1-3): the COMPLETE materialized
+    surface is loaded and verified FIRST; the surface must BE the
+    frozen cohort; the lock binds the config hash, the canonical
+    natural-mixture weights, the COMPLETE evaluation identity, the
+    seed-schedule pin, the three-way overlap result, and the
+    surface-lock hashes. Written exactly once; `record_sha256` is
+    the `routing_dev_val_lock_sha256` pin."""
     config = _validated_config()
     surface_dir = Path(surface_dir)
     lock_path = surface_dir.parent / "val_lock.json"
@@ -598,7 +756,27 @@ def build_val_lock(surface_dir: str | Path) -> dict[str, Any]:
             "once")
     surface_lock = json.loads(
         (surface_dir / "surface_lock.json").read_text("utf-8"))
+    # authenticate the surface BYTES under its own lock before any
+    # claim is copied out of it (332_s P1-3)
+    loaded = dev_support.load_dev_surface(
+        surface_dir, expected_lock_sha256=surface_lock["lock_sha256"])
     observations = val_cohort_observations()
+    ordered_ids = [obs["observation_id"] for obs in observations]
+    surface_ids = [obs["observation_id"]
+                   for obs in loaded["observations"]]
+    if sorted(surface_ids) != sorted(ordered_ids):
+        raise InfrastructureError(
+            "the materialized surface is not the frozen val cohort")
+    required = {"val_vs_training", "val_vs_cycle",
+                "cycle_vs_training"}
+    if not isinstance(overlap_report, Mapping) \
+            or set(overlap_report) != required or any(
+                overlap_report[key]["semantic_intersection"] != 0
+                or overlap_report[key]["prompt_intersection"] != 0
+                for key in required):
+        raise InfrastructureError(
+            "the val lock requires the passing three-way overlap "
+            "report (332_s)")
     record = {
         "kind": VAL_LOCK_KIND,
         "val_config_sha256": VAL_CONFIG_SHA256,
@@ -607,15 +785,17 @@ def build_val_lock(surface_dir: str | Path) -> dict[str, Any]:
         "renderers": config["renderers"],
         "visibility": config["visibility"],
         "natural_mixture": config["natural_mixture"],
+        "natural_mixture_weights": _canonical_weights(observations),
         "evaluation": config["evaluation"],
-        "ordered_observation_ids": [obs["observation_id"]
-                                    for obs in observations],
+        "seed_schedule_sha256": VAL_SEED_SCHEDULE_SHA256,
+        "ordered_observation_ids": ordered_ids,
+        "overlap_report": {key: dict(overlap_report[key])
+                           for key in sorted(required)},
         "surface_lock_sha256": surface_lock["lock_sha256"],
         "surface_lock_file_sha256":
             _sha_file(surface_dir / "surface_lock.json"),
         "never_trained_on": config["never_trained_on"],
         "development_only": True,
-        "framing": config["evaluation"]["framing"],
     }
     record["record_sha256"] = content_sha256(record)
     lock_path.write_text(
@@ -624,11 +804,23 @@ def build_val_lock(surface_dir: str | Path) -> dict[str, Any]:
     return record
 
 
-def load_val_lock(path: str | Path,
-                  expected_sha256: str) -> dict[str, Any]:
-    """The strict consuming loader: the externally reviewed hash is
-    REQUIRED (a self-hash is never authentication)."""
+def load_val_lock(path: str | Path, expected_sha256: str, *,
+                  surface_dir: str | Path | None = None
+                  ) -> dict[str, Any]:
+    """The strict consuming loader (332_s P1-3): the externally
+    reviewed hash is REQUIRED; the schema is CLOSED; the cohort,
+    evaluation identity, weights, and seed-schedule pin are
+    REDERIVED from the frozen config (a rehashed record carrying a
+    different base seed refuses HERE, not only at the hash); the
+    overlap result must be the passing three-way shape; and with
+    `surface_dir` the underlying surface BYTES are authenticated
+    under the bound lock."""
+    config = _validated_config()
     payload = json.loads(Path(path).read_text("utf-8"))
+    if not isinstance(payload, dict) \
+            or set(payload) != _VAL_LOCK_KEYS | {"record_sha256"}:
+        raise InfrastructureError(
+            "val lock keys do not match the closed schema (332_s)")
     body = {k: v for k, v in payload.items()
             if k != "record_sha256"}
     if content_sha256(body) != payload.get("record_sha256") \
@@ -636,8 +828,81 @@ def load_val_lock(path: str | Path,
         raise InfrastructureError(
             "val lock does not rehash to the externally reviewed "
             "value")
-    if payload.get("kind") != VAL_LOCK_KIND \
-            or payload.get("val_config_sha256") != VAL_CONFIG_SHA256:
+    observations = val_cohort_observations()
+    rederived = {
+        "kind": VAL_LOCK_KIND,
+        "val_config_sha256": VAL_CONFIG_SHA256,
+        "namespace": config["namespace"],
+        "cohort": config["cohort"],
+        "renderers": config["renderers"],
+        "visibility": config["visibility"],
+        "natural_mixture": config["natural_mixture"],
+        "natural_mixture_weights": _canonical_weights(observations),
+        "evaluation": config["evaluation"],
+        "seed_schedule_sha256": VAL_SEED_SCHEDULE_SHA256,
+        "ordered_observation_ids": [obs["observation_id"]
+                                    for obs in observations],
+        "never_trained_on": config["never_trained_on"],
+        "development_only": True,
+    }
+    for key, expected in rederived.items():
+        if payload[key] != expected:
+            raise InfrastructureError(
+                f"val lock field {key!r} does not rederive from "
+                "the frozen config (332_s P1-3)")
+    required = {"val_vs_training", "val_vs_cycle",
+                "cycle_vs_training"}
+    if set(payload["overlap_report"]) != required or any(
+            payload["overlap_report"][key][
+                "semantic_intersection"] != 0
+            or payload["overlap_report"][key][
+                "prompt_intersection"] != 0
+            for key in required):
         raise InfrastructureError(
-            "val lock is not the frozen Unit-V record")
+            "val lock does not bind a passing three-way overlap "
+            "result (332_s)")
+    if surface_dir is not None:
+        surface_dir = Path(surface_dir)
+        if _sha_file(surface_dir / "surface_lock.json") != \
+                payload["surface_lock_file_sha256"]:
+            raise InfrastructureError(
+                "surface lock bytes do not match the val lock "
+                "binding")
+        dev_support.load_dev_surface(
+            surface_dir,
+            expected_lock_sha256=payload["surface_lock_sha256"])
     return payload
+
+
+def verify_val_run(run_dir: str | Path, *,
+                   expected_val_lock_sha256: str) -> dict[str, Any]:
+    """The val-specific terminal verifier (332_s P1-7), run BEFORE
+    the success closeout and available post-hoc: the surface
+    authenticates under its lock; the val lock loads, rederives,
+    and binds those surface bytes; the persisted overlap report
+    matches the lock's bound result; the run record is
+    consistent."""
+    run_dir = Path(run_dir)
+    surface_dir = run_dir / "surface"
+    lock = load_val_lock(run_dir / "val_lock.json",
+                         expected_val_lock_sha256,
+                         surface_dir=surface_dir)
+    overlap = json.loads(
+        (run_dir / "overlap_report.json").read_text("utf-8"))
+    bound = {key: {k: overlap[key][k]
+                   for k in lock["overlap_report"][key]}
+             for key in lock["overlap_report"]}
+    if bound != lock["overlap_report"]:
+        raise InfrastructureError(
+            "persisted overlap report does not match the val "
+            "lock's bound result")
+    record = json.loads(
+        (run_dir / "run_record.json").read_text("utf-8"))
+    if record.get("val_lock_sha256") != expected_val_lock_sha256 \
+            or record.get("surface_lock_sha256") != \
+            lock["surface_lock_sha256"]:
+        raise InfrastructureError(
+            "run record does not bind the verified locks")
+    return {"verdict": "PASS",
+            "val_lock_sha256": expected_val_lock_sha256,
+            "surface_lock_sha256": lock["surface_lock_sha256"]}

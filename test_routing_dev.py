@@ -5642,12 +5642,13 @@ def test_p0_first_consumer_prepare(tmp_path, monkeypatch):
         p0_launch.prepare_p0_dataset(out3, digest3)
 
 
-# --- precursors Unit V: the routing_dev_val freeze (331_f) ---------------------
+# --- precursors Unit V: the routing_dev_val freeze (331_f/333_f) ---------------
 
 def test_p0_val_cohort_and_seeds(monkeypatch):
-    """V1: the outcome-blind cohort, identity disjointness, the
-    common-random-number seed derivation, and the preregistered
-    freeze record."""
+    """V1: the outcome-blind cohort, identity disjointness across
+    EVERY registered namespace, the full-digest CRN derivation with
+    its known vector and frozen 720-seed schedule, and the
+    preregistered freeze record."""
     obs = p0_val.val_cohort_observations()
     assert len(obs) == 90
     assert {o["cell_id"] for o in obs} == set(p0_val.VAL_CELLS)
@@ -5655,84 +5656,94 @@ def test_p0_val_cohort_and_seeds(monkeypatch):
         parts = o["observation_id"].split(":")
         assert parts[1] == "routing_dev_val"
         assert int(parts[2]) in range(5)
-    # canonical (cell, index, renderer) order
     keys = [(o["cell_id"], int(o["observation_id"].split(":")[2]),
              o["renderer_id"]) for o in obs]
     assert keys == sorted(keys, key=lambda k: (k[0], k[1]))
-    # identity disjointness across namespaces is BY CONSTRUCTION:
-    # the same (cell, index, renderer) in other namespaces yields
-    # different ids
-    val_ids = {o["observation_id"] for o in obs}
-    for namespace in ("routing_dev", "routing_dev_cycle"):
-        other = dev_support.dev_cohort_observations(
-            namespace,
-            {cell: [0, 1, 2, 3, 4] for cell in p0_val.VAL_CELLS},
-            p0_val.VAL_CONFIG["renderers"], "private")
-        assert val_ids & {o["observation_id"] for o in other} \
-            == set()
-    # the preregistered freeze: 90 observations, the reviewer's
-    # 4,020 planned step executions, config bound by hash
+    # 332_s: identity disjointness against EVERY registered
+    # namespace — the same (cell, index) coordinates never collide
+    val_latents = {o["latent_program_id"] for o in obs}
+    for namespace in sorted(program.NAMESPACE_CONFIG):
+        if namespace == "routing_dev_val":
+            continue
+        other = {program.generate_latent(
+            cell, namespace, index, DEFAULT_PROFILE
+        ).latent["latent_program_id"]
+            for cell in p0_val.VAL_CELLS for index in range(5)}
+        assert val_latents & other == set(), namespace
+    # the preregistered freeze
     freeze = p0_val.val_tranche_freeze()
     assert freeze["observations_total"] == 90
     assert freeze["planned_step_executions"] == 4020
     assert freeze["config_sha256"] == p0_val.VAL_CONFIG_SHA256
-    assert freeze["development_only"] is True
-    # a mutated config refuses everywhere
+    assert freeze["seed_schedule_sha256"] == \
+        p0_val.VAL_SEED_SCHEDULE_SHA256
     monkeypatch.setitem(p0_val.VAL_CONFIG, "search_cap", 91)
     with pytest.raises(InfrastructureError, match="mutated"):
         p0_val.val_cohort_observations()
     monkeypatch.undo()
-    # CRN seeds: deterministic; distinct across slot/observation/
-    # domain; the signature has NO checkpoint parameter (330_f §1)
+    # 332_s P1-4: the FULL-digest formula — the reviewer's frozen
+    # vector — and the complete schedule under its pin
+    first = obs[0]["observation_id"]
+    assert first == ("code_atomic:routing_dev_val:00000:70caabb1:"
+                     "resource_first:private")
+    assert p0_val.seed_for_completion(first, 0) == 1176822329
+    schedule = p0_val.seed_schedule()
+    assert len(schedule) == 720
+    assert len({seed for _, _, seed in schedule}) == 720
+    monkeypatch.setattr(p0_val, "VAL_SEED_SCHEDULE_SHA256",
+                        "0" * 64)
+    with pytest.raises(InfrastructureError, match="schedule pin"):
+        p0_val.seed_schedule()
+    monkeypatch.undo()
+    # CRN: no checkpoint parameter; slots bounded 0..7
     import inspect
-    signature = inspect.signature(p0_val.seed_for_completion)
-    assert "checkpoint" not in str(signature)
-    a = p0_val.seed_for_completion(obs[0]["observation_id"], 0)
-    assert a == p0_val.seed_for_completion(
-        obs[0]["observation_id"], 0)
-    assert a != p0_val.seed_for_completion(
-        obs[0]["observation_id"], 1)
-    assert a != p0_val.seed_for_completion(
-        obs[1]["observation_id"], 0)
-    assert a != p0_val.seed_for_completion(
-        obs[0]["observation_id"], 0, domain="cycle_eval")
-    with pytest.raises(InfrastructureError, match="non-negative"):
-        p0_val.seed_for_completion(obs[0]["observation_id"], True)
+    assert "checkpoint" not in str(
+        inspect.signature(p0_val.seed_for_completion))
+    assert p0_val.seed_for_completion(first, 0) == \
+        p0_val.seed_for_completion(first, 0)
+    assert p0_val.seed_for_completion(first, 0) != \
+        p0_val.seed_for_completion(first, 0, domain="cycle_eval")
+    for bad_slot in (8, -1, True):
+        with pytest.raises(InfrastructureError, match="0, 8"):
+            p0_val.seed_for_completion(first, bad_slot)
 
 
-def test_p0_val_semantic_overlap_gate():
-    """330_s §5: the normalized zero-overlap checks are substantive
-    (non-empty populations, identity fields normalized away) and
-    bite on a forged collision."""
-    obs = p0_val.val_cohort_observations()
+@pytest.fixture(scope="module")
+def val_training_reference():
     training = dev_support.load_dev_surface(
         p0_replay.restore_extension_surface_if_absent(),
         expected_lock_sha256=unit_c2_sample.UNIT_C2_CONFIG[
             "extension_surface_lock_sha256"])
-    reference = [{**o, "latent": p0_val._regenerate_latent(o)}
-                 for o in training["observations"]]
-    report = p0_val.semantic_overlap_report(obs, reference)
-    assert report["semantic_intersection"] == 0
-    assert report["prompt_intersection"] == 0
-    assert report["candidate_semantics"] == 30
-    assert report["reference_semantics"] > 0
-    # a forged collision (a val latent smuggled into the reference)
-    # refuses — the check has teeth
+    return [{**o, "latent": p0_val._regenerate_latent(o)}
+            for o in training["observations"]]
+
+
+def test_p0_val_three_way_overlap_gate(val_training_reference):
+    """332_s: the signed plan's checks across training, validation
+    AND cycle populations — all pairwise intersections empty, and
+    the check bites on a forged collision."""
+    reports = p0_val.three_way_overlap_reports(
+        val_training_reference)
+    assert set(reports) == {"val_vs_training", "val_vs_cycle",
+                            "cycle_vs_training"}
+    for report in reports.values():
+        assert report["semantic_intersection"] == 0
+        assert report["prompt_intersection"] == 0
+        assert report["candidate_semantics"] > 0
+    obs = p0_val.val_cohort_observations()
     with pytest.raises(InfrastructureError, match="overlap is not "
                        "empty"):
-        p0_val.semantic_overlap_report(obs, reference + [obs[0]])
+        p0_val.semantic_overlap_report(
+            obs, val_training_reference + [obs[0]])
     with pytest.raises(InfrastructureError, match="non-empty"):
         p0_val.semantic_overlap_report(obs, [])
 
 
-def test_p0_val_launch_manifest_and_lock(tmp_path):
-    """V2/V3 CPU boundaries: the val launch manifest (no probe
-    rule; outcome-blind prefix retained; config-bound) and the val
-    lock with its strict loader."""
+def _val_declaration():
+    from tasks.conductor import oracle
     config = p0_val.VAL_CONFIG
     observations = p0_val.val_cohort_observations()
-    from tasks.conductor import oracle
-    declaration = {
+    return {
         "support": config["tranche"],
         "namespace": config["namespace"],
         "cohort": {cell: sorted(config["cohort"][cell])
@@ -5753,44 +5764,207 @@ def test_p0_val_launch_manifest_and_lock(tmp_path):
         "request_contract": "rc-test",
         "cache_identity": "worker_completions/slw/rc-test",
     }
+
+
+def test_p0_val_launch_manifest_closed_schema():
+    """332_s P1-7: closed schema, recomputed source digest, the
+    signed tranche-freeze binding, and the outcome-blind prefix."""
+    declaration = _val_declaration()
     environment = _env_manifest()
     manifest = p0_val.build_val_launch_manifest(
         declaration=declaration, environment_manifest=environment)
     assert manifest["kind"] == p0_val.VAL_LAUNCH_KIND
-    assert manifest["val_config_sha256"] == p0_val.VAL_CONFIG_SHA256
-    assert manifest["budget_gpu_hours"] == 0.35
+    assert manifest["val_freeze_sha256"] == \
+        p0_val.val_tranche_freeze()["freeze_sha256"]
     assert "probe_rule_sha256" not in manifest
-    validated = p0_val.validate_val_launch_manifest(manifest,
-                                                    declaration)
+    validated = p0_val.validate_val_launch_manifest(
+        manifest, declaration)
     assert validated["manifest_sha256"] == \
         manifest["manifest_sha256"]
+    extra = dict(manifest)
+    extra["execution_note"] = "x"
+    with pytest.raises(InfrastructureError, match="closed schema"):
+        p0_val.validate_val_launch_manifest(extra, declaration)
     tampered = dict(manifest)
     tampered["search_cap"] = 200
     with pytest.raises(InfrastructureError, match="rehash"):
         p0_val.validate_val_launch_manifest(tampered, declaration)
+    resigned = {k: v for k, v in manifest.items()
+                if k != "manifest_sha256"}
+    resigned["routing_source_sha256"] = "ab" * 32
+    resigned["scientific_design_sha256"] = charter.content_sha256(
+        {f: resigned[f] for f in p0_val._VAL_DESIGN_FIELDS})
+    resigned["manifest_sha256"] = charter.content_sha256(resigned)
+    with pytest.raises(InfrastructureError, match="source digest"):
+        p0_val.validate_val_launch_manifest(resigned, declaration)
     curated = copy.deepcopy(declaration)
     curated["cohort"]["fork_join"] = [0, 1, 2, 3, 7]
     with pytest.raises(InfrastructureError, match="not the frozen "
                        "val cohort"):
         p0_val.build_val_launch_manifest(
             declaration=curated, environment_manifest=environment)
-    # V3: the val lock binds cohort + evaluation identity + surface
-    run_dir = tmp_path / "val-run"
-    surface_dir = run_dir / "surface"
-    surface_dir.mkdir(parents=True)
-    stub_lock = {"lock": "stub", "lock_sha256": "ab" * 32}
-    (surface_dir / "surface_lock.json").write_text(
-        json.dumps(stub_lock), encoding="utf-8")
-    record = p0_val.build_val_lock(surface_dir)
-    assert record["kind"] == p0_val.VAL_LOCK_KIND
-    assert record["surface_lock_sha256"] == "ab" * 32
-    assert len(record["ordered_observation_ids"]) == 90
-    assert record["evaluation"]["base_seed"] == 20260804
-    assert record["development_only"] is True
+
+
+def val_fake_rt(tmp_path):
+    observations = p0_val.val_cohort_observations()
+    by_task = {}
+    for obs in observations:
+        _, worker_call = perfect_worker(obs["latent"])
+        for step in program.workflow_steps(obs["latent"]):
+            by_task[step["subtask"]] = worker_call(
+                None, f"Task:\n{step['subtask']}\n\nx")
+
+    def completion(request: bytes) -> str:
+        user = request.decode("utf-8").split("\x00", 1)[1]
+        task = user.split("Task:\n", 1)[1].split("\n\n", 1)[0]
+        return by_task[task]
+
+    profile = profile_with(cache_path=str(tmp_path / "cache.sqlite"),
+                           device="cpu")
+    pool = FakeFourPool(profile, {w: completion for w in range(4)})
+    return FourWorkerRuntime(
+        profile, pool, WorkerCompletionCache(profile["cache_path"]))
+
+
+@pytest.fixture(scope="module")
+def val_run_fixture(tmp_path_factory):
+    """332_s: the consolidated CPU-fake end-to-end lifecycle —
+    prepare -> admit -> materialize -> surface lock -> overlap gate
+    -> val lock -> terminal verification -> closeout."""
+    tmp = tmp_path_factory.mktemp("val-run")
+    run_dir = tmp / "run"
+    ledger_path = tmp / "ledger.md"
+    # the real ledger carries a completed support run and the
+    # provisional R_cycle reserve (231_f); a val launch is an
+    # ordinary pre-closure launch against that state — mirror it
+    support_entry = ledger._append(
+        {"kind": "support_materialization", "question": "support",
+         "motivating_evidence": "test mirror",
+         "freeze": {"support_launch_sha256": "ab" * 32,
+                    "scientific_design_sha256": "cd" * 32},
+         "parent": None, "budget_allocated_gpu_hours": 1.0,
+         "outcome_informed": False,
+         "cohort_selection": "outcome_blind"}, None, ledger_path)
+    support_close = ledger._append(
+        {"kind": "closeout", "question": "support",
+         "motivating_evidence": "test mirror",
+         "freeze": {"surface_lock_sha256": "ef" * 32,
+                    "run_record_file_sha256": "12" * 32,
+                    "execute_env_file_sha256": "34" * 32,
+                    "rendered_observations": 3000},
+         "parent": support_entry["entry_sha256"],
+         "budget_allocated_gpu_hours": 0.0,
+         "budget_consumed_gpu_hours": 0.5,
+         "closes_entry_sha256": support_entry["entry_sha256"],
+         "terminal_status": "complete", "outcome_informed": False},
+        support_entry["entry_sha256"], ledger_path)
+    reserve_entry = ledger._append(
+        {"kind": "reserve_update", "question": "provisional reserve",
+         "motivating_evidence": "231_f basis (test mirror)",
+         "freeze": {"support_closeout_sha256":
+                    support_close["entry_sha256"],
+                    "surface_lock_sha256": "ef" * 32},
+         "parent": support_close["entry_sha256"],
+         "budget_allocated_gpu_hours": 0.0,
+         "outcome_informed": False,
+         "reserve": {"status": "provisional",
+                     "r_cycle_gpu_hours": 1.0,
+                     "assumed_cohort_size": 3000,
+                     "evaluation_multiplier": 2.0,
+                     # 0.5 h x 3600 / 3000 rendered (rederives)
+                     "measured_seconds_per_observation": 0.6,
+                     "measured_support_gpu_hours": 0.5,
+                     "rounding": "ceil_to_whole_gpu_hours"}},
+        support_close["entry_sha256"], ledger_path)
+    manifest = p0_val.prepare_val_launch(
+        run_dir=run_dir,
+        _runtime_factory=lambda: val_fake_rt(tmp),
+        _environment_builder=_env_manifest)
+    record = p0_val.execute_val_run(
+        run_dir=run_dir,
+        expected_manifest_sha256=manifest["manifest_sha256"],
+        expected_head_sha256=reserve_entry["entry_sha256"],
+        question="val surface",
+        motivating_evidence="330_f Unit V",
+        ledger_path=ledger_path,
+        lineage_parent_sha256=None,
+        _runtime_factory=lambda: val_fake_rt(tmp),
+        _environment_builder=lambda: _env_manifest(
+            git_commit="feedbeef"))
+    return {"tmp": tmp, "run_dir": run_dir,
+            "ledger_path": ledger_path, "manifest": manifest,
+            "record": record}
+
+
+def test_p0_val_run_end_to_end(val_run_fixture):
+    fx = val_run_fixture
+    record = fx["record"]
+    entries = ledger.verify_ledger_head(record["ledger_head"],
+                                        fx["ledger_path"])
+    assert [e["kind"] for e in entries] == \
+        ["support_materialization", "closeout", "reserve_update",
+         "val_materialization", "closeout"]
+    launch = entries[3]
+    assert launch["freeze"]["val_launch_sha256"] == \
+        fx["manifest"]["manifest_sha256"]
+    assert launch["freeze"]["val_freeze_sha256"] == \
+        p0_val.val_tranche_freeze()["freeze_sha256"]
+    assert launch["budget_allocated_gpu_hours"] == 0.35
+    assert entries[4]["terminal_status"] == "complete"
+    assert entries[4]["freeze"]["rendered_observations"] == 90
+    # the surface authenticates; the val lock loads WITH surface
+    # authentication and rederives from the frozen config
+    surface_dir = fx["run_dir"] / "surface"
+    lock = p0_val.load_val_lock(
+        fx["run_dir"] / "val_lock.json",
+        record["val_lock_sha256"], surface_dir=surface_dir)
+    assert lock["ordered_observation_ids"] == [
+        o["observation_id"]
+        for o in p0_val.val_cohort_observations()]
+    weights = dict(map(tuple, lock["natural_mixture_weights"]))
+    assert all(abs(w - 1 / 90) < 1e-12 for w in weights.values())
+    assert lock["evaluation"]["base_seed"] == 20260804
+    # the terminal verifier passes post-hoc
+    verdict = p0_val.verify_val_run(
+        fx["run_dir"],
+        expected_val_lock_sha256=record["val_lock_sha256"])
+    assert verdict["verdict"] == "PASS"
+    # write-once
     with pytest.raises(InfrastructureError, match="exactly once"):
-        p0_val.build_val_lock(surface_dir)
-    loaded = p0_val.load_val_lock(run_dir / "val_lock.json",
-                                  record["record_sha256"])
-    assert loaded == record
+        p0_val.build_val_lock(
+            surface_dir, overlap_report=record["overlap_report"])
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_val.prepare_val_launch(run_dir=fx["run_dir"])
+
+
+def test_p0_val_lock_tamper_and_lineage(val_run_fixture, tmp_path):
+    """332_s P1-3: a REHASHED lock with a different base seed
+    refuses at the rederivation; tampered bytes refuse at the
+    hash; the production lineage parent is the frozen C2 head."""
+    fx = val_run_fixture
+    record = fx["record"]
+    payload = json.loads(
+        (fx["run_dir"] / "val_lock.json").read_text("utf-8"))
+    forged = copy.deepcopy(payload)
+    forged["evaluation"]["base_seed"] = 999
+    body = {k: v for k, v in forged.items()
+            if k != "record_sha256"}
+    forged["record_sha256"] = charter.content_sha256(body)
+    forged_path = tmp_path / "forged_lock.json"
+    forged_path.write_text(json.dumps(forged), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="rederive"):
+        p0_val.load_val_lock(forged_path, forged["record_sha256"])
     with pytest.raises(InfrastructureError, match="reviewed"):
-        p0_val.load_val_lock(run_dir / "val_lock.json", "0" * 64)
+        p0_val.load_val_lock(fx["run_dir"] / "val_lock.json",
+                             "0" * 64)
+    # the production launch enforces the FROZEN C2 lineage parent
+    assert p0_val.VAL_CONFIG["lineage"]["parent_entry_sha256"] == \
+        p0_replay.REPLAY_SOURCE["c2_closeout_entry_sha256"]
+    with pytest.raises(InfrastructureError, match="FROZEN lineage "
+                       "parent"):
+        p0_val.execute_val_run(
+            run_dir=tmp_path / "never-used",
+            expected_manifest_sha256="aa" * 32,
+            expected_head_sha256="bb" * 32,
+            question="q", motivating_evidence="m",
+            ledger_path=tmp_path / "ledger.md")

@@ -641,6 +641,14 @@ def _load_persisted_launch(out_dir: Path, *, recompute: bool
         from .extension_run import validate_extension_launch_manifest
         launch = validate_extension_launch_manifest(
             raw, declaration, recompute=recompute)
+    elif isinstance(raw, Mapping) and raw.get("kind") == \
+            "routing-dev-val-launch-v1":
+        # 332_s P0-2: a validation surface persists the val-launch
+        # kind; it validates through the val boundary (it carries no
+        # probe rule, so the support contract can never admit it)
+        from .p0_val import validate_val_launch_manifest
+        launch = validate_val_launch_manifest(
+            raw, declaration, recompute=recompute)
     else:
         launch = validate_support_launch_manifest(
             raw, declaration, recompute=recompute)

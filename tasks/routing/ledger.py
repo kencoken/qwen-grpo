@@ -47,6 +47,7 @@ _OPTIONAL_ENTRY_KEYS = frozenset({
 })
 _ENTRY_KINDS = (
     "support_materialization", "support_extension",
+    "val_materialization",
     "resume_validation", "grouped_probe",
     "engineering_smoke", "standalone_evaluation", "training_run",
     "engineering_resume", "adaptive_continuation", "fork",
@@ -59,6 +60,7 @@ _ENTRY_KINDS = (
 # Entry kinds that describe a GPU launch and therefore consume budget.
 _LAUNCH_KINDS = frozenset({
     "support_materialization", "support_extension",
+    "val_materialization",
     "resume_validation", "grouped_probe",
     "engineering_smoke", "standalone_evaluation", "training_run",
     "engineering_resume", "adaptive_continuation", "fork",
@@ -519,6 +521,43 @@ def admit_and_append_launch(entry: Mapping[str, Any],
             raise InfrastructureError(
                 "the extension entry's freeze must carry the "
                 "manifest's scientific_design_sha256 (260_f Unit A)")
+    if launch_kind == "val_materialization":
+        # 332_s P0-1: the validation tranche has its OWN admission
+        # path — it intentionally carries no probe rule, so it can
+        # never satisfy (and never borrows) the probe-bearing
+        # support schema. Its freeze binds the val-launch manifest,
+        # the budget, the manifest's scientific-design identity, AND
+        # the signed tranche-freeze hash (332_s P1-7).
+        if launch_manifest is None:
+            raise InfrastructureError(
+                "a val materialization is admitted WITH its "
+                "val-launch manifest (332_s)")
+        if launch_manifest.get("kind") != "routing-dev-val-launch-v1":
+            raise InfrastructureError(
+                "a val materialization binds a val-launch manifest, "
+                f"not a {launch_manifest.get('kind')!r} (332_s)")
+        named = entry["freeze"].get("val_launch_sha256")
+        if named != launch_manifest.get("manifest_sha256") or not named:
+            raise InfrastructureError(
+                "the val entry's freeze must name the exact "
+                "val-launch manifest hash (332_s)")
+        if launch_max != launch_manifest.get("budget_gpu_hours"):
+            raise InfrastructureError(
+                f"the admitted budget {launch_max} differs from the "
+                f"manifest budget "
+                f"{launch_manifest.get('budget_gpu_hours')}")
+        design = entry["freeze"].get("scientific_design_sha256")
+        if not design or design != \
+                launch_manifest.get("scientific_design_sha256"):
+            raise InfrastructureError(
+                "the val entry's freeze must carry the manifest's "
+                "scientific_design_sha256")
+        frozen = entry["freeze"].get("val_freeze_sha256")
+        if not frozen or frozen != \
+                launch_manifest.get("val_freeze_sha256"):
+            raise InfrastructureError(
+                "the val entry's freeze must carry the signed "
+                "tranche-freeze hash the manifest binds (332_s)")
     state = envelope_state(entries, CYCLE_ENVELOPE_GPU_HOURS)
     remaining = state["remaining_gpu_hours"]
     reserve = state["reserve"]
