@@ -1,0 +1,18 @@
+{
+ "cache_hits": 0,
+ "declaration_sha256": "e202257e177b513ed4e838023822374b5e1a8e1032220eb2789107c6a616bf05",
+ "executed_step_records": 2812,
+ "payoff_rows": 1620,
+ "payoffs_sha256": "68444511291684a3a9cf003b517d6758bd01465bdb19521f7e2745a912c45351",
+ "planned_step_executions": 4020,
+ "runtime_profile_fingerprint": "rtp-8510479a336ee0dc",
+ "support": "routing-dev-val-surface-v1",
+ "surface_schema_version": 1,
+ "trace_manifest_sha256": "e9ed56de06a5250c29a54d14543b54dcb70276d02a8a3dbaf83dab81882d5783",
+ "trace_steps_sha256": "fbb37cfd161aea9b61300f184b6b961ee325f537ab0afe60b893f4a70e43aa3c",
+ "uncached_step_records": 2812,
+ "unique_singleton_generations": 600,
+ "wall_seconds": 226.4,
+ "worker_pool_fingerprint": "wp-197e286115f56e4a",
+ "worker_visible_fingerprint": "wv-4e196a1c467d108b"
+}

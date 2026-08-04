@@ -598,3 +598,70 @@ chains the previous entry's hash. Never edit a recorded entry.
  "terminal_status": "complete"
 }
 ```
+
+## entry 18 — val_materialization
+
+```json
+{
+ "budget_allocated_gpu_hours": 0.35,
+ "cohort_selection": "outcome_blind",
+ "entry_sha256": "5ef73f79804730948109bb810822c47a66664e2562388cb2a480f3c6e83d9bc0",
+ "freeze": {
+  "scientific_design_sha256": "a9ca17c39b2ddc347ce1bf0002cad578017a65376681703d9d307ed6e1c902fa",
+  "val_config_sha256": "73376e07cf83197bb210093bb31a38f5dbf4e17101eb6d61cc273b899a6deccf",
+  "val_freeze_sha256": "8ba9677fe770ec96aa0ccdd4eac96238c76058eb84aaa9f7aaf38fb378c68666",
+  "val_launch_sha256": "424b692d2e9f4557d88c3f7ed852931d67fbcbe6589eae54a9c4ef35cc0fe6d2"
+ },
+ "kind": "val_materialization",
+ "motivating_evidence": "330_f-signed precursors plan Unit V; 331_f-339_f signed freeze (rev5); 340_f prelaunch sign-off",
+ "outcome_informed": false,
+ "parent": "2bf50c1e5b31a7acf28dc9391ea4fc021a82cacb20906692558cf36174266fbe",
+ "previous_entry_sha256": "2bf50c1e5b31a7acf28dc9391ea4fc021a82cacb20906692558cf36174266fbe",
+ "question": "Unit V: the outcome-blind routing_dev_val cohort \u2014 natural mixture, never trained on \u2014 with complete authenticated 4^S surfaces, locked as the P0 checkpoint-evaluation population"
+}
+```
+
+## entry 19 — closeout
+
+```json
+{
+ "budget_allocated_gpu_hours": 0.0,
+ "budget_consumed_gpu_hours": 0.0637,
+ "closes_entry_sha256": "5ef73f79804730948109bb810822c47a66664e2562388cb2a480f3c6e83d9bc0",
+ "entry_sha256": "929e172415845471f2fe613ef71a36eb57d47492cfa58c4e511e95403a5ed11c",
+ "freeze": {
+  "execute_env_file_sha256": "60af673443902350c6fbf2df59c0526b3efda1d266c0844c5f04900db3ceb590",
+  "rendered_observations": 90,
+  "run_record_file_sha256": "a3841ad4c8e238eb00431152aa730675fe5451f254628dc995cb924f4d854f9e",
+  "surface_lock_sha256": "3698caa180bea70f7df1b97ace7c480defeb97bc90d7b08c81da9d206b5309be",
+  "terminal_artifact_hashes": {
+   "execute_env_manifest.json": "60af673443902350c6fbf2df59c0526b3efda1d266c0844c5f04900db3ceb590",
+   "overlap_report.json": "c82f0faa6af0491ace0dfe44bd8ce9a7424d41226593ba6bfcc60b7d5ea1e618",
+   "prelaunch/declaration.json": "e202257e177b513ed4e838023822374b5e1a8e1032220eb2789107c6a616bf05",
+   "prelaunch/env_manifest.json": "4a52dfd818a3d717be189769883e606bfac3690df0a04918f0efe95516e7ae6d",
+   "prelaunch/val_freeze.json": "e2f1f2d9afee8c2302c582f9588a60735509e59696b05fbf36d1d36eef372ea1",
+   "prelaunch/val_launch.json": "e2a82208f082da94ae54a8219b531055977a894e736f71b69ff01b8a814491e8",
+   "run_record.json": "a3841ad4c8e238eb00431152aa730675fe5451f254628dc995cb924f4d854f9e",
+   "surface/declaration.json": "e202257e177b513ed4e838023822374b5e1a8e1032220eb2789107c6a616bf05",
+   "surface/env_manifest.json": "4a52dfd818a3d717be189769883e606bfac3690df0a04918f0efe95516e7ae6d",
+   "surface/manifest.json": "170f8f525c3cac693b7c3e5680a912af7c9308b6db6b80e4f91af3b883904c82",
+   "surface/payoffs.jsonl": "68444511291684a3a9cf003b517d6758bd01465bdb19521f7e2745a912c45351",
+   "surface/support_launch.json": "e2a82208f082da94ae54a8219b531055977a894e736f71b69ff01b8a814491e8",
+   "surface/surface_lock.json": "e337e644a1087fc91751201756c06372d02c1be71ed95e27485a5ab7a1740407",
+   "surface/traces/traces/manifest.json": "e9ed56de06a5250c29a54d14543b54dcb70276d02a8a3dbaf83dab81882d5783",
+   "surface/traces/traces/steps.jsonl": "fbb37cfd161aea9b61300f184b6b961ee325f537ab0afe60b893f4a70e43aa3c",
+   "val_lock.json": "675fd8086a56791c72094119269db164e749e261ec4c477a853f5d8fb5a698d3"
+  },
+  "val_lock_file_sha256": "675fd8086a56791c72094119269db164e749e261ec4c477a853f5d8fb5a698d3",
+  "val_lock_sha256": "2aecdf28ad25cae10e494aa9fc1a95138a9feb5a29ab0636314b847987caf19d"
+ },
+ "kind": "closeout",
+ "motivating_evidence": "measured val-surface cost",
+ "outcome_informed": false,
+ "outcome_pointer": "runs/routing-dev/val-surface-v1/run_record.json",
+ "parent": "5ef73f79804730948109bb810822c47a66664e2562388cb2a480f3c6e83d9bc0",
+ "previous_entry_sha256": "5ef73f79804730948109bb810822c47a66664e2562388cb2a480f3c6e83d9bc0",
+ "question": "Unit V: the outcome-blind routing_dev_val cohort \u2014 natural mixture, never trained on \u2014 with complete authenticated 4^S surfaces, locked as the P0 checkpoint-evaluation population",
+ "terminal_status": "complete"
+}
+```

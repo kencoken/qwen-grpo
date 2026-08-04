@@ -5645,9 +5645,10 @@ def test_p0_first_consumer_prepare(tmp_path, monkeypatch):
 # --- precursors Unit V: the routing_dev_val freeze (331_f/333_f/335_f) ---------
 
 # captured at import, BEFORE any fixture patches the config (the
-# PRISTINE pattern): the production lineage parent
+# PRISTINE pattern): the production lineage parent + config pin
 PRISTINE_VAL_LINEAGE = \
     p0_val.VAL_CONFIG["lineage"]["parent_entry_sha256"]
+PRISTINE_VAL_CONFIG_SHA256 = p0_val.VAL_CONFIG_SHA256
 
 
 def test_p0_val_cohort_and_seeds(monkeypatch):
@@ -6456,3 +6457,35 @@ def test_p0_val_late_abort_and_full_retry(tmp_path, monkeypatch):
         )["terminal_status"] == "complete"
     finally:
         mp.undo()
+
+
+def test_p0_val_evidence_restores_clean_clone(tmp_path,
+                                              monkeypatch):
+    """The 341_f closure gate: the COMMITTED Unit-V evidence
+    restores the exact 16-file terminal root (deterministic gunzip)
+    and passes the chain-authenticated terminal verifier under the
+    COMMITTED ledger head and the externally reviewed val-lock
+    pin. PRISTINE config pinned (the module fixture patches the
+    lineage for its test ledger)."""
+    monkeypatch.setitem(p0_val.VAL_CONFIG["lineage"],
+                        "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
+    monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
+                        PRISTINE_VAL_CONFIG_SHA256)
+    restored = p0_val.restore_val_evidence(
+        target_run_dir=tmp_path / "restored")
+    verdict = p0_val.verify_val_run(
+        restored,
+        ledger_path=ledger.LEDGER_PATH,
+        expected_head_sha256=ledger.ledger_head(),
+        expected_val_lock_sha256=p0_val.VAL_LOCK_SHA256)
+    assert verdict["verdict"] == "PASS"
+    assert verdict["terminal_status"] == "complete"
+    assert verdict["val_lock_sha256"] == p0_val.VAL_LOCK_SHA256
+    # the reviewed pin is the recorded constant
+    assert p0_val.VAL_LOCK_SHA256 == (
+        "2aecdf28ad25cae10e494aa9fc1a95138a9feb5a29ab0636314b8479"
+        "87caf19d")
+    with pytest.raises(InfrastructureError, match="refusing to "
+                       "overwrite"):
+        p0_val.restore_val_evidence(
+            target_run_dir=tmp_path / "restored")

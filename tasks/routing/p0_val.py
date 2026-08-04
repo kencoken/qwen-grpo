@@ -72,6 +72,12 @@ DRIVER = "tasks/routing/p0_val.py"
 VAL_RUN_ROOT = "runs/routing-dev/val-surface-v1"
 VAL_LAUNCH_KIND = "routing-dev-val-launch-v1"
 VAL_LOCK_KIND = "routing-dev-val-lock-v1"
+VAL_EVIDENCE_DIR = "plans/conductor/evidence/val_surface_v1"
+# the EXTERNALLY REVIEWED val-lock pin (approved at the 341_f
+# execution sign-off) — the PrecursorOutputs
+# routing_dev_val_lock_sha256 the P0LaunchFreeze consumes
+VAL_LOCK_SHA256 = \
+    "2aecdf28ad25cae10e494aa9fc1a95138a9feb5a29ab0636314b847987caf19d"
 
 VAL_CELLS = ("code_atomic", "fork_join", "lookup_atomic",
              "lookup_math", "math_atomic", "math_code")
@@ -1321,3 +1327,71 @@ def verify_val_run(run_dir: str | Path, *,
             "launch_entry_sha256": launch["entry_sha256"],
             "val_lock_sha256": expected_val_lock_sha256,
             "surface_lock_sha256": lock["surface_lock_sha256"]}
+
+
+# --- evidence archival (the 341_f closure; extension convention) ---------------
+
+_VAL_EVIDENCE_FILES = (
+    "prelaunch/declaration.json", "prelaunch/env_manifest.json",
+    "prelaunch/val_launch.json", "prelaunch/val_freeze.json",
+    "surface/payoffs.jsonl", "surface/manifest.json",
+    "surface/declaration.json", "surface/support_launch.json",
+    "surface/env_manifest.json", "surface/surface_lock.json",
+    "surface/traces/traces/manifest.json",
+    "execute_env_manifest.json", "overlap_report.json",
+    "run_record.json", "val_lock.json",
+)
+_VAL_STEPS = "surface/traces/traces/steps.jsonl"
+
+
+def archive_val_evidence(run_dir: str | Path = VAL_RUN_ROOT,
+                         evidence_dir: str | Path =
+                         VAL_EVIDENCE_DIR) -> dict[str, str]:
+    """Archive the EXACT 16-file terminal root under committed
+    evidence, with `steps.jsonl` as a DETERMINISTIC gzip
+    (`gzip -n -9` convention: mtime 0, no name, level 9 — the 233_f
+    portability convention). Written exactly once."""
+    import gzip
+    import shutil
+    run_dir = Path(run_dir)
+    evidence = Path(evidence_dir)
+    if evidence.exists():
+        raise InfrastructureError(
+            f"{evidence} exists; evidence is archived exactly once")
+    for name in _VAL_EVIDENCE_FILES:
+        target = evidence / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(run_dir / name, target)
+    steps = (run_dir / _VAL_STEPS).read_bytes()
+    gz_path = evidence / (_VAL_STEPS + ".gz")
+    with open(gz_path, "wb") as raw:
+        with gzip.GzipFile(fileobj=raw, mode="wb", filename="",
+                           mtime=0, compresslevel=9) as handle:
+            handle.write(steps)
+    return {"evidence_dir": str(evidence),
+            "steps_sha256": hashlib.sha256(steps).hexdigest()}
+
+
+def restore_val_evidence(evidence_dir: str | Path =
+                         VAL_EVIDENCE_DIR,
+                         target_run_dir: str | Path = VAL_RUN_ROOT
+                         ) -> Path:
+    """The clean-clone restore: reconstruct the exact 16-file
+    terminal root from committed evidence (deterministic gunzip of
+    the trace steps); the restored root must pass `verify_val_run`
+    under the committed ledger head and the reviewed val-lock
+    pin."""
+    import gzip
+    import shutil
+    evidence = Path(evidence_dir)
+    target = Path(target_run_dir)
+    if target.exists():
+        raise InfrastructureError(
+            f"{target} exists; refusing to overwrite")
+    for name in _VAL_EVIDENCE_FILES:
+        destination = target / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(evidence / name, destination)
+    with gzip.open(evidence / (_VAL_STEPS + ".gz"), "rb") as handle:
+        (target / _VAL_STEPS).write_bytes(handle.read())
+    return target

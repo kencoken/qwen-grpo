@@ -1,0 +1,138 @@
+{
+ "closed": true,
+ "created_at": "2026-08-04T21:49:17.437484+00:00",
+ "endpoint_family_fingerprints": {
+  "code": "epf-d8f834da028432d3",
+  "lookup": "epf-a1266862977640ae",
+  "math": "epf-67f2e7836744f0e5"
+ },
+ "logical_to_physical": [
+  {
+   "device": "cuda",
+   "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+   "quantization": {
+    "compute_dtype": "bfloat16",
+    "double_quant": "true",
+    "load_in_4bit": "true",
+    "quant_type": "nf4"
+   },
+   "revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+   "workers": [
+    "lookup_1p5b",
+    "math_1p5b",
+    "code_1p5b"
+   ]
+  },
+  {
+   "device": "cuda",
+   "model_id": "Qwen/Qwen2.5-3B-Instruct",
+   "quantization": {
+    "compute_dtype": "bfloat16",
+    "double_quant": "true",
+    "load_in_4bit": "true",
+    "quant_type": "nf4"
+   },
+   "revision": "aa8e72537993ba99e69dfaafa59ed015b17504d1",
+   "workers": [
+    "code_3b"
+   ]
+  }
+ ],
+ "run_name": "traces",
+ "runtime_profile": {
+  "batch": {
+   "group_size": 8,
+   "prompt_groups_per_update": 2
+  },
+  "cache_path": "runs/routing-dev/support-cache/cache.sqlite",
+  "cell_mixture": {
+   "code_atomic": 1,
+   "fork_join": 0,
+   "lookup_atomic": 1,
+   "lookup_math": 1,
+   "math_atomic": 1,
+   "math_code": 1
+  },
+  "decoding": {
+   "do_sample": "false",
+   "stopping": "eos"
+  },
+  "device": "cuda",
+  "nf4": {
+   "compute_dtype": "bfloat16",
+   "double_quant": "true",
+   "load_in_4bit": "true",
+   "quant_type": "nf4"
+  },
+  "policy_max_new_tokens": 128,
+  "profile_name": "stage0-four-worker",
+  "prompts": {
+   "d16_revision": "rev10"
+  },
+  "request_contract": "worker-blocks-task-last-v1",
+  "resource_policy": "action-controlled-disclosure-v0",
+  "schema_version": 2,
+  "tools": {
+   "artifact_grammar": "cell-specs-v0.8",
+   "code": "cell-specs-v0.8",
+   "lookup": "cell-specs-v0.8",
+   "math": "cell-specs-v0.8"
+  },
+  "visibility_condition": "private",
+  "worker_pool": [
+   {
+    "endpoint_family": "lookup",
+    "endpoint_system_prompt_sha256": "b013c142be2ed48fea221196f80bdbc0b8fb459c83a73c62c42c03986f6f952f",
+    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+    "model_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+    "name": "lookup_1p5b",
+    "prompt_bundle_revision": "rev10",
+    "worker_id": 0
+   },
+   {
+    "endpoint_family": "math",
+    "endpoint_system_prompt_sha256": "24c16a2115eceed072c0189692bf25799e59977f199829cc1f896e9da3b48787",
+    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+    "model_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+    "name": "math_1p5b",
+    "prompt_bundle_revision": "rev10",
+    "worker_id": 1
+   },
+   {
+    "endpoint_family": "code",
+    "endpoint_system_prompt_sha256": "9b08f3e6f4afad854484a13257d973e79e8664194f16cf44930644ab22e88aea",
+    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+    "model_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+    "name": "code_1p5b",
+    "prompt_bundle_revision": "rev10",
+    "worker_id": 2
+   },
+   {
+    "endpoint_family": "code",
+    "endpoint_system_prompt_sha256": "9b08f3e6f4afad854484a13257d973e79e8664194f16cf44930644ab22e88aea",
+    "model_id": "Qwen/Qwen2.5-3B-Instruct",
+    "model_revision": "aa8e72537993ba99e69dfaafa59ed015b17504d1",
+    "name": "code_3b",
+    "prompt_bundle_revision": "rev10",
+    "worker_id": 3
+   }
+  ],
+  "worker_runtime": {
+   "max_new_tokens": 256,
+   "microbatch": 1
+  },
+  "workflow_max_steps": 3
+ },
+ "runtime_profile_fingerprint": "rtp-8510479a336ee0dc",
+ "status": "complete",
+ "steps_written": 4020,
+ "trace_schema_version": 2,
+ "worker_fingerprints": {
+  "code_1p5b": "slw-bfb9b10016770298",
+  "code_3b": "slw-247bf2139befbc03",
+  "lookup_1p5b": "slw-05f681adcdbed94a",
+  "math_1p5b": "slw-26e2e8c6e46a23bf"
+ },
+ "worker_pool_fingerprint": "wp-197e286115f56e4a",
+ "worker_visible_fingerprint": "wv-4e196a1c467d108b"
+}
