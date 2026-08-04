@@ -106,7 +106,8 @@ def validate_entry(entry: Mapping[str, Any]) -> None:
         raise InfrastructureError(
             f"cohort_selection must be one of {_COHORT_SELECTIONS}")
     if entry["kind"] in ("support_materialization",
-                         "support_extension", "grouped_probe") \
+                         "support_extension", "grouped_probe",
+                         "val_materialization") \
             and selection != "outcome_blind":
         raise InfrastructureError(
             f"a {entry['kind']} launch must declare "
@@ -572,8 +573,17 @@ def admit_and_append_launch(entry: Mapping[str, Any],
                 "(334_s P1-3)")
         val_closeouts = {e.get("closes_entry_sha256"): e
                          for e in entries if e["kind"] == "closeout"}
-        for attempt in (e for e in entries
-                        if e["kind"] == "val_materialization"):
+        prior_val = [e for e in entries
+                     if e["kind"] == "val_materialization"]
+        # 336_s P1-2: the FROZEN initial parent is part of the
+        # validated launch contract and is enforced HERE — the
+        # authoritative admission boundary, not only the runner
+        if not prior_val and entry.get("parent") != \
+                launch_manifest.get("lineage_parent_sha256"):
+            raise InfrastructureError(
+                "the FIRST val launch is admitted only on the "
+                "manifest's frozen initial parent (336_s P1-2)")
+        for attempt in prior_val:
             closeout = val_closeouts.get(attempt["entry_sha256"])
             if closeout is None:
                 raise InfrastructureError(

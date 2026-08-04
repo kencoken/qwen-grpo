@@ -5728,6 +5728,52 @@ def test_p0_val_alpha_normalized_overlap(val_training_reference):
     assert p0_val.alpha_normalize(
         "reads R-8V9 then R-1E3 then R-8V9") == \
         "reads R0 then R1 then R0"
+    # 336_s P1-1: HANDLE-INVARIANCE — consistently renaming every
+    # handle so its lexical order REVERSES must not change the
+    # semantic hash, for EVERY frozen multi-handle latent (val +
+    # cycle cohorts), including the reviewer's concrete example
+    import re as _re
+
+    def _rename_everywhere(obj, renames):
+        if isinstance(obj, str):
+            return _re.compile(r"R-[0-9A-Z]{3}").sub(
+                lambda m: renames.get(m.group(0), m.group(0)), obj)
+        if isinstance(obj, dict):
+            return {_rename_everywhere(k, renames):
+                    _rename_everywhere(v, renames)
+                    for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_rename_everywhere(x, renames) for x in obj]
+        return obj
+
+    reviewed_example = ("fork_join:routing_dev_val:00001:beaa828e:"
+                        "resource_first:private")
+    seen_example = False
+    multi_handle = 0
+    for o in (p0_val.val_cohort_observations()
+              + p0_val.cycle_cohort_observations()):
+        latent = o["latent"]
+        handles = sorted(set(_re.findall(
+            r"R-[0-9A-Z]{3}", json.dumps(
+                latent.get("public_manifest", [])))))
+        if len(handles) < 2:
+            continue
+        multi_handle += 1
+        if o["observation_id"] == reviewed_example:
+            seen_example = True
+        # ascending handles -> replacements whose sort REVERSES
+        renames = {h: f"R-{chr(90 - i)}ZZ"
+                   for i, h in enumerate(handles)}
+        assert sorted(renames.values(), reverse=True) == \
+            [renames[h] for h in handles]
+        renamed = _rename_everywhere(
+            {k: v for k, v in latent.items()
+             if k != "public_params"}, renames)
+        renamed["public_params"] = latent["public_params"]
+        assert p0_val.normalized_latent_semantics(renamed) == \
+            p0_val.normalized_latent_semantics(latent), \
+            o["observation_id"]
+    assert multi_handle > 0 and seen_example
     reports = p0_val.three_way_overlap_reports(
         val_training_reference)
     for report in reports.values():
@@ -5797,8 +5843,13 @@ def test_p0_val_launch_manifest_rederives_the_frozen_launch():
     declaration = _val_declaration()
     environment = _env_manifest()
     manifest = p0_val.build_val_launch_manifest(
-        declaration=declaration, environment_manifest=environment)
+        declaration=declaration, environment_manifest=environment,
+        execution_root="runs/routing-dev/val-surface-v1")
     assert manifest["run_root"] == p0_val.VAL_RUN_ROOT
+    assert manifest["lineage_parent_sha256"] == \
+        p0_val.VAL_CONFIG["lineage"]["parent_entry_sha256"]
+    assert manifest["execution_root"].endswith(
+        "runs/routing-dev/val-surface-v1")
     validated = p0_val.validate_val_launch_manifest(
         manifest, declaration)
     assert validated["manifest_sha256"] == \
@@ -5808,7 +5859,8 @@ def test_p0_val_launch_manifest_rederives_the_frozen_launch():
             ("search_cap", 200),
             ("support", "routing-dev-val-surface-v2"),
             ("driver", "tasks/routing/support_run.py"),
-            ("run_root", "runs/routing-dev/elsewhere")):
+            ("run_root", "runs/routing-dev/elsewhere"),
+            ("lineage_parent_sha256", "ab" * 32)):
         with pytest.raises(InfrastructureError,
                            match="frozen configuration value"):
             p0_val.validate_val_launch_manifest(
@@ -5839,7 +5891,8 @@ def test_p0_val_launch_manifest_rederives_the_frozen_launch():
             truncated["observations"][:-1]
         p0_val.build_val_launch_manifest(
             declaration=truncated,
-            environment_manifest=environment)
+            environment_manifest=environment,
+            execution_root="runs/routing-dev/val-surface-v1")
 
 
 def val_fake_rt(tmp_path):
@@ -5928,7 +5981,8 @@ def val_run_fixture(tmp_path_factory):
     -> closeout — with the frozen-lineage check exercised for real
     against the mirrored ledger head."""
     tmp = tmp_path_factory.mktemp("val-run")
-    run_dir = tmp / "run"
+    # 336_s P1-3: the registered attempt-1 root name
+    run_dir = tmp / "runs/routing-dev/val-surface-v1"
     ledger_path = tmp / "ledger.md"
     reserve_entry = _seed_reserve_ledger(ledger_path)
     mp = pytest.MonkeyPatch()
@@ -5986,16 +6040,15 @@ def test_p0_val_run_end_to_end(val_run_fixture):
     # the overlap disclosure is BOUND into the lock
     assert lock["overlap_report"]["val_vs_training"][
         "alpha_prompt_collisions"] == 21
-    # the full terminal verifier: in-run form and post-hoc against
-    # the closeout
-    assert p0_val.verify_val_run(
-        fx["run_dir"],
-        expected_val_lock_sha256=record["val_lock_sha256"]
-    )["verdict"] == "PASS"
-    assert p0_val.verify_val_run(
-        fx["run_dir"],
-        expected_val_lock_sha256=record["val_lock_sha256"],
-        closeout=entries[4])["verdict"] == "PASS"
+    # the full terminal verifier, authenticated from the chain
+    verdict = p0_val.verify_val_run(
+        fx["run_dir"], ledger_path=fx["ledger_path"],
+        expected_head_sha256=record["ledger_head"],
+        expected_val_lock_sha256=record["val_lock_sha256"])
+    assert verdict["verdict"] == "PASS"
+    assert verdict["terminal_status"] == "complete"
+    assert verdict["launch_entry_sha256"] == \
+        launch["entry_sha256"]
     with pytest.raises(InfrastructureError, match="exactly once"):
         p0_val.build_val_lock(
             surface_dir, overlap_report=record["overlap_report"])
@@ -6016,130 +6069,170 @@ def test_p0_val_terminal_verifier_bites(val_run_fixture, tmp_path):
     import shutil
     fx = val_run_fixture
     record = fx["record"]
+
+    def verify(run_dir, **kw):
+        kw.setdefault("ledger_path", fx["ledger_path"])
+        kw.setdefault("expected_head_sha256",
+                      record["ledger_head"])
+        kw.setdefault("expected_val_lock_sha256",
+                      record["val_lock_sha256"])
+        return p0_val.verify_val_run(run_dir, **kw)
+
     run_copy = tmp_path / "run-copy"
     shutil.copytree(fx["run_dir"], run_copy)
-    assert p0_val.verify_val_run(
-        run_copy,
-        expected_val_lock_sha256=record["val_lock_sha256"]
-    )["verdict"] == "PASS"
+    assert verify(run_copy)["verdict"] == "PASS"
     (run_copy / "execute_env_manifest.json").unlink()
     with pytest.raises(InfrastructureError, match="missing"):
-        p0_val.verify_val_run(
-            run_copy,
-            expected_val_lock_sha256=record["val_lock_sha256"])
+        verify(run_copy)
     shutil.copytree(fx["run_dir"], run_copy, dirs_exist_ok=True)
     (run_copy / "unbound_extra.json").write_text("{}")
     with pytest.raises(InfrastructureError, match="extra"):
-        p0_val.verify_val_run(
-            run_copy,
-            expected_val_lock_sha256=record["val_lock_sha256"])
+        verify(run_copy)
     (run_copy / "unbound_extra.json").unlink()
+    # 336_s P1-4: a forged run-record identity refuses (the bytes
+    # diverge from the closeout's bound file hash)
+    forged_record = json.loads(
+        (run_copy / "run_record.json").read_text("utf-8"))
+    forged_record["run"] = "forged-run"
+    (run_copy / "run_record.json").write_text(
+        json.dumps(forged_record, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    with pytest.raises(InfrastructureError):
+        verify(run_copy)
+    shutil.copytree(fx["run_dir"], run_copy, dirs_exist_ok=True)
     tampered = json.loads(
         (run_copy / "overlap_report.json").read_text("utf-8"))
     tampered["val_vs_training"]["alpha_prompt_collisions"] = 0
     (run_copy / "overlap_report.json").write_text(
         json.dumps(tampered), encoding="utf-8")
     with pytest.raises(InfrastructureError):
-        p0_val.verify_val_run(
-            run_copy,
-            expected_val_lock_sha256=record["val_lock_sha256"])
+        verify(run_copy)
+    # a forged HEAD cannot authenticate anything
+    with pytest.raises(InfrastructureError):
+        verify(fx["run_dir"], expected_head_sha256="ab" * 32)
 
 
 def test_p0_val_lineage_retry_and_deadline(val_run_fixture,
                                            tmp_path, monkeypatch):
-    """334_s P1-3 + the deadline correction: wrong-head first
-    launch refuses; the ledger admission block refuses open and
-    changed-design retries; a past-deadline materialization aborts
-    into an aborted-closed entry that verifies as aborted."""
+    """336_s P1-2/P1-3 + the deadline correction: the LEDGER
+    enforces the manifest's frozen initial parent (wrong-parent
+    direct admission refuses; correct-parent succeeds;
+    identical-design retry succeeds only after an aborted
+    closeout); the registered attempt-root rule binds execution;
+    a past-deadline materialization aborts into an aborted-closed
+    entry that verifies as aborted."""
     fx = val_run_fixture
     # the PRODUCTION lineage parent is the frozen C2 closeout
     assert PRISTINE_VAL_LINEAGE == \
         p0_replay.REPLAY_SOURCE["c2_closeout_entry_sha256"]
-    # a first launch from any other head refuses (fresh ledger,
-    # head != the patched lineage parent)
+    # a first launch from any other head refuses at the runner
     other_ledger = tmp_path / "other-ledger.md"
     other_reserve = _seed_reserve_ledger(other_ledger, tag="other")
     assert other_reserve["entry_sha256"] != fx["reserve_head"]
     with pytest.raises(InfrastructureError, match="FROZEN lineage "
-                       "parent|frozen\s+lineage"):
+                       "parent|frozen\\s+lineage"):
         p0_val.execute_val_run(
             run_dir=tmp_path / "never-prepared",
             expected_manifest_sha256="aa" * 32,
             expected_head_sha256=other_reserve["entry_sha256"],
             question="q", motivating_evidence="m",
             ledger_path=other_ledger)
-    # ledger admission: an OPEN prior attempt blocks
-    manifest = fx["manifest"]
-    open_entry = ledger.admit_and_append_launch(
-        {"kind": "val_materialization", "question": "q",
-         "motivating_evidence": "m",
-         "freeze": {
-             "val_launch_sha256": manifest["manifest_sha256"],
-             "val_config_sha256": p0_val.VAL_CONFIG_SHA256,
-             "val_freeze_sha256": manifest["val_freeze_sha256"],
-             "scientific_design_sha256":
-                 manifest["scientific_design_sha256"]},
-         "parent": other_reserve["entry_sha256"],
-         "budget_allocated_gpu_hours": 0.35,
-         "outcome_informed": False,
-         "cohort_selection": "outcome_blind"},
-        other_reserve["entry_sha256"], other_ledger,
-        launch_manifest=manifest)
-    with pytest.raises(InfrastructureError, match="OPEN"):
+
+    def val_entry(manifest, parent):
+        return {"kind": "val_materialization", "question": "q",
+                "motivating_evidence": "m",
+                "freeze": {
+                    "val_launch_sha256":
+                        manifest["manifest_sha256"],
+                    "val_config_sha256": p0_val.VAL_CONFIG_SHA256,
+                    "val_freeze_sha256":
+                        manifest["val_freeze_sha256"],
+                    "scientific_design_sha256":
+                        manifest["scientific_design_sha256"]},
+                "parent": parent,
+                "budget_allocated_gpu_hours": 0.35,
+                "outcome_informed": False,
+                "cohort_selection": "outcome_blind"}
+
+    # 336_s P1-2: the FX manifest binds the FX lineage parent —
+    # direct ledger admission on the foreign head REFUSES
+    with pytest.raises(InfrastructureError, match="frozen initial "
+                       "parent"):
         ledger.admit_and_append_launch(
-            {"kind": "val_materialization", "question": "q",
-             "motivating_evidence": "m",
-             "freeze": {
-                 "val_launch_sha256": manifest["manifest_sha256"],
-                 "val_config_sha256": p0_val.VAL_CONFIG_SHA256,
-                 "val_freeze_sha256": manifest["val_freeze_sha256"],
-                 "scientific_design_sha256":
-                     manifest["scientific_design_sha256"]},
+            val_entry(fx["manifest"],
+                      other_reserve["entry_sha256"]),
+            other_reserve["entry_sha256"], other_ledger,
+            launch_manifest=fx["manifest"])
+    # a manifest built FOR this ledger admits on the correct parent
+    mp = pytest.MonkeyPatch()
+    _patch_val_lineage(mp, other_reserve["entry_sha256"])
+    try:
+        manifest_other = p0_val.build_val_launch_manifest(
+            declaration=_val_declaration(),
+            environment_manifest=_env_manifest(),
+            execution_root=tmp_path / "other-root")
+        open_entry = ledger.admit_and_append_launch(
+            val_entry(manifest_other,
+                      other_reserve["entry_sha256"]),
+            other_reserve["entry_sha256"], other_ledger,
+            launch_manifest=manifest_other)
+        # an OPEN prior attempt blocks any new val launch
+        with pytest.raises(InfrastructureError, match="OPEN"):
+            ledger.admit_and_append_launch(
+                val_entry(manifest_other,
+                          open_entry["entry_sha256"]),
+                open_entry["entry_sha256"], other_ledger,
+                launch_manifest=manifest_other)
+        aborted_close = ledger.append_ledger_entry(
+            {"kind": "closeout", "question": "q",
+             "motivating_evidence": "aborted",
+             "freeze": {"val_launch_sha256":
+                        manifest_other["manifest_sha256"],
+                        "partial_artifact_hashes": {}},
              "parent": open_entry["entry_sha256"],
-             "budget_allocated_gpu_hours": 0.35,
-             "outcome_informed": False,
-             "cohort_selection": "outcome_blind"},
-            open_entry["entry_sha256"], other_ledger,
-            launch_manifest=manifest)
-    # abort-close it, then a CHANGED-design retry refuses
-    aborted_close = ledger.append_ledger_entry(
-        {"kind": "closeout", "question": "q",
-         "motivating_evidence": "aborted",
-         "freeze": {"val_launch_sha256":
-                    manifest["manifest_sha256"],
-                    "partial_artifact_hashes": {}},
-         "parent": open_entry["entry_sha256"],
-         "budget_allocated_gpu_hours": 0.0,
-         "budget_consumed_gpu_hours": 0.01,
-         "closes_entry_sha256": open_entry["entry_sha256"],
-         "terminal_status": "aborted", "outcome_informed": False,
-         "outcome_pointer": "x"},
-        open_entry["entry_sha256"], other_ledger)
-    changed = dict(manifest)
-    changed_design = _resign(changed, search_cap=89)
-    with pytest.raises(InfrastructureError, match="preserve the "
-                       "scientific design"):
-        ledger.admit_and_append_launch(
-            {"kind": "val_materialization", "question": "q",
-             "motivating_evidence": "m",
-             "freeze": {
-                 "val_launch_sha256":
-                     changed_design["manifest_sha256"],
-                 "val_config_sha256": p0_val.VAL_CONFIG_SHA256,
-                 "val_freeze_sha256":
-                     changed_design["val_freeze_sha256"],
-                 "scientific_design_sha256":
-                     changed_design["scientific_design_sha256"]},
-             "parent": aborted_close["entry_sha256"],
-             "budget_allocated_gpu_hours": 0.35,
-             "outcome_informed": False,
-             "cohort_selection": "outcome_blind"},
+             "budget_allocated_gpu_hours": 0.0,
+             "budget_consumed_gpu_hours": 0.01,
+             "closes_entry_sha256": open_entry["entry_sha256"],
+             "terminal_status": "aborted",
+             "outcome_informed": False, "outcome_pointer": "x"},
+            open_entry["entry_sha256"], other_ledger)
+        # 336_s: an IDENTICAL-design retry admits after the abort
+        retried = ledger.admit_and_append_launch(
+            val_entry(manifest_other,
+                      aborted_close["entry_sha256"]),
             aborted_close["entry_sha256"], other_ledger,
-            launch_manifest=changed_design)
+            launch_manifest=manifest_other)
+        retry_close = ledger.append_ledger_entry(
+            {"kind": "closeout", "question": "q",
+             "motivating_evidence": "aborted",
+             "freeze": {"val_launch_sha256":
+                        manifest_other["manifest_sha256"],
+                        "partial_artifact_hashes": {}},
+             "parent": retried["entry_sha256"],
+             "budget_allocated_gpu_hours": 0.0,
+             "budget_consumed_gpu_hours": 0.01,
+             "closes_entry_sha256": retried["entry_sha256"],
+             "terminal_status": "aborted",
+             "outcome_informed": False, "outcome_pointer": "x"},
+            retried["entry_sha256"], other_ledger)
+        # ... but a CHANGED-design retry refuses
+        changed_design = _resign(dict(manifest_other),
+                                 search_cap=89)
+        with pytest.raises(InfrastructureError, match="preserve "
+                           "the scientific design"):
+            ledger.admit_and_append_launch(
+                val_entry(changed_design,
+                          retry_close["entry_sha256"]),
+                retry_close["entry_sha256"], other_ledger,
+                launch_manifest=changed_design)
+    finally:
+        mp.undo()
+
     # the deadline: a materialization finishing past the ceiling
-    # ABORTS and verifies as aborted (no val lock)
+    # ABORTS and verifies as aborted (no val lock); the registered
+    # attempt-root rule is exercised on the way
     abort_tmp = tmp_path / "deadline"
-    abort_run = abort_tmp / "run"
+    abort_run = abort_tmp / "runs/routing-dev/val-surface-v1"
     abort_ledger = abort_tmp / "ledger.md"
     abort_tmp.mkdir()
     abort_reserve = _seed_reserve_ledger(abort_ledger,
@@ -6147,6 +6240,24 @@ def test_p0_val_lineage_retry_and_deadline(val_run_fixture,
     mp = pytest.MonkeyPatch()
     _patch_val_lineage(mp, abort_reserve["entry_sha256"])
     try:
+        # a prepared launch under a NON-registered root refuses
+        wrong_root = abort_tmp / "wrongname"
+        wrong_manifest = p0_val.prepare_val_launch(
+            run_dir=wrong_root,
+            _runtime_factory=lambda: val_fake_rt(abort_tmp),
+            _environment_builder=_env_manifest)
+        with pytest.raises(InfrastructureError, match="registered "
+                           "attempt root"):
+            p0_val.execute_val_run(
+                run_dir=wrong_root,
+                expected_manifest_sha256=wrong_manifest[
+                    "manifest_sha256"],
+                expected_head_sha256=abort_reserve["entry_sha256"],
+                question="q", motivating_evidence="m",
+                ledger_path=abort_ledger,
+                _runtime_factory=lambda: val_fake_rt(abort_tmp),
+                _environment_builder=lambda: _env_manifest(
+                    git_commit="feedbeef"))
         manifest2 = p0_val.prepare_val_launch(
             run_dir=abort_run,
             _runtime_factory=lambda: val_fake_rt(abort_tmp),
@@ -6173,10 +6284,12 @@ def test_p0_val_lineage_retry_and_deadline(val_run_fixture,
         tail = ledger.read_ledger(abort_ledger)[-1]
         assert tail["kind"] == "closeout"
         assert tail["terminal_status"] == "aborted"
-        # the aborted-run verifier: partial hashes verify, and an
-        # aborted run never carries a val lock
+        # the aborted-run verifier: the closeout authenticated from
+        # the chain; partial hashes verify; no val lock
         assert p0_val.verify_val_run(
-            abort_run, expected_val_lock_sha256=None,
-            closeout=tail)["terminal_status"] == "aborted"
+            abort_run, ledger_path=abort_ledger,
+            expected_head_sha256=tail["entry_sha256"],
+            expected_val_lock_sha256=None
+        )["terminal_status"] == "aborted"
     finally:
         mp.undo()
