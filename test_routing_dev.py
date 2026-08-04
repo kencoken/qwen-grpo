@@ -6099,6 +6099,81 @@ def test_p0_val_terminal_verifier_bites(val_run_fixture, tmp_path):
         encoding="utf-8")
     with pytest.raises(InfrastructureError):
         verify(run_copy)
+    # 338_s P1-2: a forged surface_dir refuses at the SEMANTIC
+    # record binding (checked before the closeout file hashes)
+    shutil.copytree(fx["run_dir"], run_copy, dirs_exist_ok=True)
+    forged_record = json.loads(
+        (run_copy / "run_record.json").read_text("utf-8"))
+    forged_record["surface_dir"] = "/elsewhere/surface"
+    (run_copy / "run_record.json").write_text(
+        json.dumps(forged_record, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="does not bind "
+                       "the authenticated"):
+        verify(run_copy)
+    # 338_s P1-2: synthetic rehashed chains — an aborted closeout
+    # naming the WRONG manifest, and a closeout whose parent is not
+    # the launch it closes, both refuse. (The seeded ledger is
+    # deterministic, so the same tag reproduces the fixture's
+    # reserve head and the fx manifest admits.)
+    def _forged_chain(tmp_name, *, closeout_overrides):
+        forged_ledger = tmp_path / tmp_name
+        reserve = _seed_reserve_ledger(forged_ledger)
+        launch = ledger.admit_and_append_launch(
+            {"kind": "val_materialization", "question": "q",
+             "motivating_evidence": "m",
+             "freeze": {
+                 "val_launch_sha256":
+                     fx["manifest"]["manifest_sha256"],
+                 "val_config_sha256": p0_val.VAL_CONFIG_SHA256,
+                 "val_freeze_sha256":
+                     fx["manifest"]["val_freeze_sha256"],
+                 "scientific_design_sha256":
+                     fx["manifest"]["scientific_design_sha256"]},
+             "parent": reserve["entry_sha256"],
+             "budget_allocated_gpu_hours": 0.35,
+             "outcome_informed": False,
+             "cohort_selection": "outcome_blind"},
+            reserve["entry_sha256"], forged_ledger,
+            launch_manifest=fx["manifest"])
+        closeout_entry = {
+            "kind": "closeout", "question": "q",
+            "motivating_evidence": "aborted",
+            "freeze": {"val_launch_sha256":
+                       fx["manifest"]["manifest_sha256"],
+                       "partial_artifact_hashes":
+                       p0_val._hash_directory(fx["run_dir"])},
+            "parent": launch["entry_sha256"],
+            "budget_allocated_gpu_hours": 0.0,
+            "budget_consumed_gpu_hours": 0.01,
+            "closes_entry_sha256": launch["entry_sha256"],
+            "terminal_status": "aborted",
+            "outcome_informed": False, "outcome_pointer": "x"}
+        closeout_entry.update(closeout_overrides)
+        tail = ledger.append_ledger_entry(
+            closeout_entry, launch["entry_sha256"], forged_ledger)
+        return forged_ledger, tail
+    wrong_manifest_ledger, tail1 = _forged_chain(
+        "forged-manifest.md",
+        closeout_overrides={"freeze": {
+            "val_launch_sha256": "ff" * 32,
+            "partial_artifact_hashes":
+                p0_val._hash_directory(fx["run_dir"])}})
+    with pytest.raises(InfrastructureError, match="does not name "
+                       "this launch manifest"):
+        p0_val.verify_val_run(
+            fx["run_dir"], ledger_path=wrong_manifest_ledger,
+            expected_head_sha256=tail1["entry_sha256"],
+            expected_val_lock_sha256=None)
+    wrong_parent_ledger, tail2 = _forged_chain(
+        "forged-parent.md",
+        closeout_overrides={"parent": record["ledger_head"]})
+    with pytest.raises(InfrastructureError, match="not the launch "
+                       "it closes"):
+        p0_val.verify_val_run(
+            fx["run_dir"], ledger_path=wrong_parent_ledger,
+            expected_head_sha256=tail2["entry_sha256"],
+            expected_val_lock_sha256=None)
     shutil.copytree(fx["run_dir"], run_copy, dirs_exist_ok=True)
     tampered = json.loads(
         (run_copy / "overlap_report.json").read_text("utf-8"))
@@ -6291,5 +6366,93 @@ def test_p0_val_lineage_retry_and_deadline(val_run_fixture,
             expected_head_sha256=tail["entry_sha256"],
             expected_val_lock_sha256=None
         )["terminal_status"] == "aborted"
+    finally:
+        mp.undo()
+
+
+def test_p0_val_late_abort_and_full_retry(tmp_path, monkeypatch):
+    """338_s P1-1 + the committed full retry: an abort AFTER lock
+    creation closes out with val_lock.json as hashed partial
+    evidence and VERIFIES as aborted (the lock is an unadmitted
+    candidate, never consumable); the identical-design attempt 2
+    then runs the FULL CPU-fake lifecycle under the registered
+    -r2 root and verifies complete."""
+    tmp = tmp_path / "late-abort"
+    tmp.mkdir()
+    run1 = tmp / "runs/routing-dev/val-surface-v1"
+    ledger_path = tmp / "ledger.md"
+    reserve = _seed_reserve_ledger(ledger_path, tag="late")
+    mp = pytest.MonkeyPatch()
+    _patch_val_lineage(mp, reserve["entry_sha256"])
+    try:
+        manifest1 = p0_val.prepare_val_launch(
+            run_dir=run1,
+            _runtime_factory=lambda: val_fake_rt(tmp),
+            _environment_builder=_env_manifest)
+        # force a failure AFTER the val lock is written: the
+        # in-run terminal verifier raises
+        real_verify = p0_val.verify_val_run
+        monkeypatch.setattr(
+            p0_val, "verify_val_run",
+            lambda *a, **k: (_ for _ in ()).throw(
+                InfrastructureError("forced late failure")))
+        with pytest.raises(InfrastructureError, match="forced "
+                           "late failure"):
+            p0_val.execute_val_run(
+                run_dir=run1,
+                expected_manifest_sha256=manifest1[
+                    "manifest_sha256"],
+                expected_head_sha256=reserve["entry_sha256"],
+                question="q", motivating_evidence="m",
+                ledger_path=ledger_path,
+                _runtime_factory=lambda: val_fake_rt(tmp),
+                _environment_builder=lambda: _env_manifest(
+                    git_commit="feedbeef"))
+        monkeypatch.undo()
+        tail = ledger.read_ledger(ledger_path)[-1]
+        assert tail["terminal_status"] == "aborted"
+        assert (run1 / "val_lock.json").exists()
+        # 338_s P1-1: the late-aborted archive VERIFIES, with the
+        # lock recorded as an unadmitted candidate
+        verdict = real_verify(
+            run1, ledger_path=ledger_path,
+            expected_head_sha256=tail["entry_sha256"],
+            expected_val_lock_sha256=None)
+        assert verdict["terminal_status"] == "aborted"
+        assert verdict["unadmitted_val_lock_candidate"] is True
+        # ... and it never verifies AS a lock-bearing run
+        lock_payload = json.loads(
+            (run1 / "val_lock.json").read_text("utf-8"))
+        with pytest.raises(InfrastructureError):
+            real_verify(
+                run1, ledger_path=ledger_path,
+                expected_head_sha256=tail["entry_sha256"],
+                expected_val_lock_sha256=lock_payload[
+                    "record_sha256"])
+        # attempt 2: the FULL identical-design retry under the
+        # registered -r2 root
+        run2 = tmp / "runs/routing-dev/val-surface-v1-r2"
+        manifest2 = p0_val.prepare_val_launch(
+            run_dir=run2,
+            _runtime_factory=lambda: val_fake_rt(tmp),
+            _environment_builder=_env_manifest)
+        assert manifest2["scientific_design_sha256"] == \
+            manifest1["scientific_design_sha256"]
+        assert manifest2["manifest_sha256"] != \
+            manifest1["manifest_sha256"]
+        record = p0_val.execute_val_run(
+            run_dir=run2,
+            expected_manifest_sha256=manifest2["manifest_sha256"],
+            expected_head_sha256=tail["entry_sha256"],
+            question="q", motivating_evidence="m",
+            ledger_path=ledger_path,
+            _runtime_factory=lambda: val_fake_rt(tmp),
+            _environment_builder=lambda: _env_manifest(
+                git_commit="feedbeef"))
+        assert real_verify(
+            run2, ledger_path=ledger_path,
+            expected_head_sha256=record["ledger_head"],
+            expected_val_lock_sha256=record["val_lock_sha256"]
+        )["terminal_status"] == "complete"
     finally:
         mp.undo()

@@ -426,8 +426,10 @@ def cycle_cohort_observations() -> list[dict[str, Any]]:
 def three_way_overlap_reports(
         training_observations: list[Mapping[str, Any]]
         ) -> dict[str, Any]:
-    """332_s: the signed plan's checks across training, validation
-    AND cycle populations — all pairwise intersections empty."""
+    """332_s/338_s: the signed plan's checks across training,
+    validation AND cycle populations — the SEMANTIC intersections
+    must be empty (the hard gate); prompt-template overlap is
+    DISCLOSED with its frozen membership, never gated."""
     val_obs = val_cohort_observations()
     cycle_obs = cycle_cohort_observations()
     return {
@@ -855,7 +857,10 @@ def execute_val_run(*, run_dir: str | Path = VAL_RUN_ROOT,
                                   overlap_report=overlap)
         record = {
             "run": "routing-dev-val-surface-v1",
-            "surface_dir": str(surface_dir),
+            # 338_s P1-2: the ORIGINAL bound absolute surface path
+            # (== manifest execution_root / "surface"), so archived
+            # copies stay portable while the binding is checkable
+            "surface_dir": str(surface_dir.resolve()),
             "val_launch_sha256": manifest["manifest_sha256"],
             "surface_lock_sha256": lock["lock_sha256"],
             "val_lock_sha256": val_lock["record_sha256"],
@@ -1149,20 +1154,42 @@ def verify_val_run(run_dir: str | Path, *,
             "the prelaunch environment does not bind to the "
             "manifest (336_s P1-4)")
 
+    if closeout is not None:
+        # 338_s P1-2: the closeout's semantic parent must be the
+        # launch it closes — its direct predecessor
+        if closeout.get("parent") != launch["entry_sha256"]:
+            raise InfrastructureError(
+                "the closeout's parent is not the launch it "
+                "closes (338_s P1-2)")
     if closeout is not None \
             and closeout.get("terminal_status") == "aborted":
+        # 338_s P1-2: the aborted closeout must name THIS manifest
+        if closeout["freeze"].get("val_launch_sha256") != \
+                manifest["manifest_sha256"]:
+            raise InfrastructureError(
+                "the aborted closeout does not name this launch "
+                "manifest (338_s P1-2)")
         if closeout["freeze"].get("partial_artifact_hashes") \
                 != hashes:
             raise InfrastructureError(
                 "aborted-run evidence does not match the "
                 "closeout's partial hashes (334_s P1-4)")
-        if expected_val_lock_sha256 is not None \
-                or (run_dir / "val_lock.json").exists():
+        # 338_s P1-1: a LATE abort (after lock creation) is
+        # verifiable — val_lock.json may exist as HASHED PARTIAL
+        # EVIDENCE, an UNADMITTED CANDIDATE that is never loaded
+        # and never a consumable V3 lock; nothing may claim it
+        if expected_val_lock_sha256 is not None:
             raise InfrastructureError(
-                "an aborted val run never carries a val lock "
-                "(334_s P1-4)")
+                "an aborted val run never verifies under a val "
+                "lock hash (334_s P1-4)")
+        if closeout["freeze"].get("val_lock_sha256") is not None:
+            raise InfrastructureError(
+                "an aborted closeout never authorizes a val lock "
+                "(338_s P1-1)")
         return {"verdict": "PASS", "terminal_status": "aborted",
-                "launch_entry_sha256": launch["entry_sha256"]}
+                "launch_entry_sha256": launch["entry_sha256"],
+                "unadmitted_val_lock_candidate":
+                    (run_dir / "val_lock.json").exists()}
 
     if expected_val_lock_sha256 is None:
         raise InfrastructureError(
@@ -1226,6 +1253,8 @@ def verify_val_run(run_dir: str | Path, *,
             "run record keys do not match the closed schema "
             "(334_s P1-4)")
     if record["run"] != config["tranche"] \
+            or record["surface_dir"] != \
+            str(Path(manifest["execution_root"]) / "surface") \
             or record["val_launch_sha256"] != \
             manifest["manifest_sha256"] \
             or record["val_lock_sha256"] != \
