@@ -25,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import extension_run, ledger, p0_mixture, p0_mixture_v2, support_run, telemetry, unit_c2_sample, unit_c_sample
+from tasks.routing import extension_run, ledger, p0_c2_equivalence, p0_cap, p0_contract, p0_estimands, p0_launch, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, p0_tables, support_run, telemetry, unit_c2_sample, unit_c_sample
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -4204,3 +4204,1439 @@ def test_c2_report_gates_and_decision(c2_fixture, tmp_path):
     assert unit_c2_sample.verify_unit_c2_run(
         pass_root, identity["manifest_sha256"],
         record["attested_environment_sha256"])["verdict"] == "PASS"
+
+
+# --- P0 spine Unit 1: schema, pinned artifact, frozen projection ---------------
+
+def _sample_contract():
+    return p0_schema.P0ScienceContract(
+        schema_version=p0_schema.SCHEMA_VERSION,
+        input_pins=p0_schema.InputPins(
+            extension_surface_lock_sha256="a" * 64,
+            selection_record_sha256="b" * 64,
+            selection_file_sha256="c" * 64,
+            comparator_record_sha256="d" * 64,
+            pinned_mixture_record_sha256="e" * 64,
+            pinned_mixture_file_sha256="f" * 64,
+            c2_closeout_entry_sha256="1" * 64,
+            c2_actions_file_sha256="2" * 64,
+            c2_report_file_sha256="3" * 64,
+            c2_schedule_file_sha256="4" * 64,
+            c2_record_file_sha256="5" * 64,
+            c2_identity_manifest_sha256="6" * 64,
+            c2_attested_environment_sha256="7" * 64,
+            c2_projection_sha256="8" * 64,
+            c2_projection_file_sha256="9" * 64),
+        scope=p0_schema.ActiveScope(
+            q1_direct_cells=("code_atomic", "fork_join", "math_code"),
+            q2_description="coarse cell-correlated unlocking",
+            q3="out_of_scope",
+            sentinel_cell="math_atomic",
+            sentinel_observation_ids=("x", "y", "z"),
+            sentinel_excluded_from=("direct_q1_gate",
+                                    "sizing_minimum",
+                                    "authorization", "headline_q1"),
+            sentinel_training_exposed=True),
+        q1=p0_schema.Q1Rule(
+            version="q1-v2", population="bridge_rows",
+            event=p0_schema.Q1CountedEvent(
+                rule_id="q1-counted-v1",
+                valid_completions_only=True, same_group=True,
+                high_reward=1.0, high_family_correctness="full",
+                low_reward=0.5,
+                low_family_correctness="strictly_lower"),
+            min_counted_groups_per_cell=2,
+            min_distinct_latents_among_counted=2,
+            sizing_counts=(("code_atomic", 13), ("fork_join", 34),
+                           ("math_code", 13)),
+            sizing_epochs=5),
+        q2=p0_schema.Q2Rule(
+            version="q2-v2",
+            marginal_rule_id="q2-marginal-v1",
+            marginal_min_target_selections=8,
+            marginal_min_distinct_latents=2,
+            marginal_population="valid_q2_composite",
+            marginal_upstream_correctness_required=False,
+            per_direction_targets=(("math_code|w3_favoured", 3),
+                                   ("fork_join|w2_favoured", 2)),
+            eligibility=p0_schema.EligibilityRule(
+                rule_id="c2-eligibility-v1",
+                non_code_routing="family_correct",
+                code_worker_in=(2, 3),
+                malformed_completions="excluded"),
+            conditional_rule_id="q2-conditional-v1",
+            conditional_numerator="c2_optimal",
+            conditional_denominator="c2_eligible",
+            conditional_zero_denominator="undefined",
+            conditional_baselines=(
+                p0_schema.ConditionalBaseline(
+                    direction="fork_join|w2_favoured",
+                    numerator=8, denominator=152),
+                p0_schema.ConditionalBaseline(
+                    direction="math_code|w3_favoured",
+                    numerator=0, denominator=15)),
+            marginal_baselines=(("fork_join|w2_favoured", 73),
+                                ("math_code|w3_favoured", 108))),
+        sizing=p0_schema.SizingRule(
+            target_q1_counted_groups_per_sizing_cell=100,
+            groups_per_epoch=157, nominal_epochs=39,
+            operational_ceiling_hours=10.0,
+            cap=p0_schema.CapRule(
+                rule_id="p0-cap-v1",
+                launch_epochs="min_nominal_capacity",
+                capacity_inputs=(
+                    "operational_ceiling_seconds",
+                    "cumulative_consumed_seconds",
+                    "measured_finalization_reserve_seconds",
+                    "frozen_non_rollout_overhead_seconds",
+                    "measured_whole_epoch_seconds"),
+                capacity_zero_action="stop_reviewed_amendment",
+                under_target_action="disclosed_under_target",
+                spare_capacity_action="no_extra_training")),
+        diagnostics=p0_schema.RequiredDiagnostics(
+            items=("q1_counted_by_cell", "q2_eligibility",
+                   "q2_optimality",
+                   "q2_choice_conditional_on_eligibility",
+                   "q2_marginal_target_selections",
+                   "direct_and_semantic_contrasts",
+                   "sentinel_block", "zero_variance_rate",
+                   "invalid_completion_rate"),
+            sentinel=p0_schema.SentinelDiagnostics(
+                fields_required=(
+                    "worker1_selections", "worker1_completions",
+                    "reward1_completions", "reward_varying_groups",
+                    "q1_counted_groups", "group_denominator",
+                    "completion_denominator", "first_group_indices",
+                    "first_update_indices", "checkpoint_trajectory",
+                    "evaluation_trajectory"))))
+
+
+def test_p0_schema_typed_invariants(tmp_path):
+    import dataclasses
+    contract = _sample_contract()
+    # deep immutability
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        contract.schema_version = "x"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        contract.q1.min_counted_groups_per_cell = 1
+    # 307_s P1-3: booleans cannot pose as integers, from DIRECT
+    # construction
+    with pytest.raises(InfrastructureError, match="non-boolean"):
+        p0_schema.Q1Rule(
+            version="q1-v2", population="bridge_rows",
+            event=contract.q1.event,
+            min_counted_groups_per_cell=True,
+            min_distinct_latents_among_counted=2,
+            sizing_counts=contract.q1.sizing_counts,
+            sizing_epochs=5)
+    # non-finite floats refuse
+    with pytest.raises(InfrastructureError, match="finite"):
+        dataclasses.replace(contract.sizing,
+                            operational_ceiling_hours=float("nan"))
+    # wrong cell sets refuse
+    with pytest.raises(InfrastructureError, match="exactly"):
+        dataclasses.replace(contract.scope,
+                            q1_direct_cells=("code_atomic",))
+    # malformed hashes refuse
+    with pytest.raises(InfrastructureError, match="hex"):
+        dataclasses.replace(contract.input_pins,
+                            c2_closeout_entry_sha256="XYZ")
+    # the marginal gate cannot become conditional
+    with pytest.raises(InfrastructureError, match="UNCONDITIONAL"):
+        dataclasses.replace(
+            contract.q2,
+            marginal_upstream_correctness_required=True)
+    # baselines are numeric records with num <= denom
+    with pytest.raises(InfrastructureError, match="numerator"):
+        p0_schema.ConditionalBaseline(
+            direction="math_code|w3_favoured",
+            numerator=16, denominator=15)
+    # the sentinel diagnostic set is complete and closed
+    with pytest.raises(InfrastructureError, match="exactly"):
+        p0_schema.SentinelDiagnostics(
+            fields_required=("worker1_selections",))
+    # the 301_f diagnostics list is complete, not a menu
+    with pytest.raises(InfrastructureError, match="missing"):
+        p0_schema.RequiredDiagnostics(
+            items=("q1_counted_by_cell",),
+            sentinel=contract.diagnostics.sentinel)
+    # canonical round-trip through the strict loader
+    digest = p0_schema.contract_sha256(contract)
+    path = tmp_path / "contract.json"
+    assert p0_schema.save_contract(contract, path) == digest
+    loaded = p0_schema.load_contract(path, digest)
+    assert loaded == contract
+    # external authentication required; tampered typed field refuses
+    # at CONSTRUCTION inside the loader
+    with pytest.raises(InfrastructureError, match="externally "
+                       "reviewed"):
+        p0_schema.load_contract(path, "0" * 64)
+    payload = json.loads(path.read_text("utf-8"))
+    payload["q1"]["min_counted_groups_per_cell"] = True
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="non-boolean"):
+        p0_schema.load_contract(bad, digest)
+    payload = json.loads(path.read_text("utf-8"))
+    payload["extra"] = 1
+    bad.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="unknown fields"):
+        p0_schema.load_contract(bad, digest)
+
+
+def test_p0_unit1_artifacts_and_replay_source(b2_fixture, tmp_path):
+    """The pinned artifact double-binds and equals a fresh legacy
+    rederivation; the frozen projection carries the exact 302_s
+    values; the replay-source verifier passes and its tamper
+    regressions refuse."""
+    # pinned mixture: rehash + pin + byte-level equality with a
+    # fresh legacy build on the restored surface
+    pinned = p0_replay.load_pinned_mixture()
+    assert pinned["record_sha256"] == \
+        p0_mixture_v2.EXPECTED_MIXTURE_V2_RECORD_SHA256
+    fresh = b2_fixture["mixture"]
+    assert json.loads(json.dumps(fresh)) == pinned
+    # one-time materialization refuses overwrite
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_replay.materialize_pinned_mixture()
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_replay.freeze_projection()
+    # the frozen projection: rehash + the exact frozen values
+    projection = p0_replay.load_projection()
+    assert projection["per_population_draws"] == {
+        "anchor": 75, "bridge": 420,
+        "direct_specialist_control": 25, "goal_first_control": 90,
+        "q2_composite": 160, "sentinel": 15}
+    assert sum(g["counted_groups"]
+               for g in projection["q1_gate"].values()) == 60
+    assert projection["p0_size_derived"]["derived_epochs"] == 39
+    assert projection["p0_size_derived"]["derived_groups"] == 6123
+    assert projection["zero_variance_groups"] == 662
+    assert projection["invalid_completions"] == 38
+    assert projection["valid_completions"] == 6242
+    assert projection["preregistered_decision"] == \
+        "Q1 + Q2 hierarchical-unlocking authorized"
+    assert len(projection["epoch_rows"]) == 157
+    assert len(projection["schedule_rows"]) == 785
+    assert projection["schedule_rows"] == \
+        projection["epoch_rows"] * 5
+    assert projection["mixture_record_sha256"] == \
+        pinned["record_sha256"]
+    # 307_s P1-4: exact mapping parity is IN the projection
+    assert projection["class_assignment"] == \
+        pinned["class_assignment"]
+    assert projection["multiplicities"] == pinned["multiplicities"]
+    assert projection["sentinel_observation_ids"] == \
+        sorted(pinned["sentinel"]["observation_ids"])
+    populations = projection["population_by_observation"]
+    assert len(populations) == 150
+    for oid in projection["sentinel_observation_ids"]:
+        assert populations[oid] == "sentinel"
+    # source pins agree with the module pins
+    assert projection["source"]["report_file_sha256"] == \
+        p0_replay.REPLAY_SOURCE["c2_report_file_sha256"]
+    # the replay-source verifier passes on the committed state
+    assert p0_replay.verify_c2_replay_source()["verdict"] == "PASS"
+    # 307_s P1-1: an INCOMPLETE archive refuses — deleting the
+    # identity manifest (a non-core file under the old check) fails
+    # exact-set equality
+    incomplete = tmp_path / "evidence-incomplete"
+    shutil.copytree(p0_replay.C2_EVIDENCE_DIR, incomplete)
+    (incomplete / "identity_manifest.json").unlink()
+    with pytest.raises(InfrastructureError, match="missing"):
+        p0_replay.verify_c2_replay_source(evidence_dir=incomplete)
+    # an EXTRA file refuses too
+    extra = tmp_path / "evidence-extra"
+    shutil.copytree(p0_replay.C2_EVIDENCE_DIR, extra)
+    (extra / "unbound.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="extra"):
+        p0_replay.verify_c2_replay_source(evidence_dir=extra)
+    # a tampered identity manifest refuses at manifest validation
+    badid = tmp_path / "evidence-badid"
+    shutil.copytree(p0_replay.C2_EVIDENCE_DIR, badid)
+    identity = json.loads(
+        (badid / "identity_manifest.json").read_text("utf-8"))
+    identity["seed"] = "1"
+    body = {k: v for k, v in identity.items()
+            if k != "manifest_sha256"}
+    identity["manifest_sha256"] = charter.content_sha256(body)
+    (badid / "identity_manifest.json").write_text(
+        json.dumps(identity, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    with pytest.raises(InfrastructureError):
+        p0_replay.verify_c2_replay_source(evidence_dir=badid)
+    # tamper regression: a modified evidence byte refuses BEFORE any
+    # replay
+    tampered = tmp_path / "evidence"
+    shutil.copytree(p0_replay.C2_EVIDENCE_DIR, tampered)
+    lines = (tampered / "actions.jsonl").read_text(
+        "utf-8").splitlines()
+    (tampered / "actions.jsonl").write_text(
+        "\n".join(lines[:-1]) + "\n", encoding="utf-8")
+    with pytest.raises(InfrastructureError):
+        p0_replay.verify_c2_replay_source(evidence_dir=tampered)
+    # 307_s P1-2: a tampered source cannot mint a projection —
+    # extraction authenticates the bundle first
+    with pytest.raises(InfrastructureError):
+        p0_replay.extract_projection(evidence_dir=tampered)
+    # 307_s P1-2/P2: a coherently REWRITTEN projection (recomputed
+    # self-hash) refuses at the reviewed file pin; reformatted
+    # pinned-mixture bytes refuse likewise
+    rewritten = tmp_path / "projection.json"
+    body = {k: v for k, v in projection.items()
+            if k != "projection_sha256"}
+    body["preregistered_decision"] = "forged decision"
+    body["projection_sha256"] = charter.content_sha256(body)
+    rewritten.write_text(json.dumps(body, indent=1, sort_keys=True)
+                         + "\n", encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="file"):
+        p0_replay.load_projection(path=rewritten)
+    reformatted = tmp_path / "mixture.json"
+    reformatted.write_text(json.dumps(pinned), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="file"):
+        p0_replay.load_pinned_mixture(path=reformatted)
+
+
+# --- P0 spine Unit 2: the contract instance + strict schedule loader -----------
+
+def test_p0_contract_instance_and_pins(tmp_path):
+    """The frozen instance equals a fresh build from the
+    authoritative sources; it loads only under the externally
+    reviewed pin; tampering refuses."""
+    contract = p0_contract.load_p0_science_contract()
+    rebuilt = p0_contract.build_p0_science_contract()
+    assert contract == rebuilt
+    assert p0_schema.contract_sha256(contract) == \
+        p0_contract.CONTRACT_SHA256
+    # the pins flow from the authoritative sources, not transcription
+    assert contract.input_pins.c2_actions_file_sha256 == \
+        p0_replay.REPLAY_SOURCE["c2_actions_file_sha256"]
+    assert contract.input_pins.pinned_mixture_record_sha256 == \
+        p0_mixture_v2.EXPECTED_MIXTURE_V2_RECORD_SHA256
+    assert contract.input_pins.c2_projection_sha256 == \
+        p0_replay.PROJECTION_SHA256
+    # the sentinel ids are the pinned mixture's
+    pinned = p0_replay.load_pinned_mixture()
+    assert list(contract.scope.sentinel_observation_ids) == \
+        sorted(pinned["sentinel"]["observation_ids"])
+    # the C2-measured values are in the frozen rules
+    assert dict(contract.q1.sizing_counts) == {
+        "code_atomic": 13, "fork_join": 34, "math_code": 13}
+    assert {b.direction: (b.numerator, b.denominator)
+            for b in contract.q2.conditional_baselines} == {
+        "fork_join|w2_favoured": (8, 152),
+        "math_code|w3_favoured": (0, 15)}
+    # one-time freeze refuses overwrite
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_contract.freeze_contract()
+    # a tampered committed contract refuses under the pin
+    tampered = tmp_path / "contract.json"
+    payload = json.loads(Path(
+        p0_contract.CONTRACT_PATH).read_text("utf-8"))
+    payload["sizing"]["nominal_epochs"] = 40
+    tampered.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="externally "
+                       "reviewed"):
+        p0_contract.load_p0_science_contract(path=tampered)
+
+
+def test_p0_contract_cross_checks_the_projection(monkeypatch):
+    """310_s P1: construction MECHANICALLY cross-checks the
+    C2-derived values against the double-bound projection — a
+    projection carrying different values makes the build refuse."""
+    real = p0_replay.load_projection()
+    altered = copy.deepcopy(real)
+    altered["p0_size_derived"]["sizing_cells"]["fork_join"] = 33
+    monkeypatch.setattr(p0_replay, "load_projection",
+                        lambda *a, **k: altered)
+    with pytest.raises(InfrastructureError, match="sizing counts"):
+        p0_contract.build_p0_science_contract()
+    altered = copy.deepcopy(real)
+    altered["q2_blocks"]["fork_join|w2_favoured"][
+        "c2_optimal_completions"] = 9
+    monkeypatch.setattr(p0_replay, "load_projection",
+                        lambda *a, **k: altered)
+    with pytest.raises(InfrastructureError, match="conditional "
+                       "baseline"):
+        p0_contract.build_p0_science_contract()
+    altered = copy.deepcopy(real)
+    altered["q2_cold_start_gate"]["per_direction"][
+        "math_code|w3_favoured"]["target_selections"] = 107
+    monkeypatch.setattr(p0_replay, "load_projection",
+                        lambda *a, **k: altered)
+    with pytest.raises(InfrastructureError, match="marginal "
+                       "baseline"):
+        p0_contract.build_p0_science_contract()
+
+
+def test_p0_schedule_loader_reminders(tmp_path, monkeypatch):
+    """The two 305_f-approval reminders, proven: the loader works
+    with the LEGACY BUILDER DISABLED, and from a
+    CLEAN-CLONE-RESTORED surface."""
+    contract = p0_contract.load_p0_science_contract()
+
+    # reminder 1: the legacy builder is DISABLED — the loader never
+    # touches it
+    def exploding_builder(*a, **k):
+        raise AssertionError(
+            "the schedule loader must never invoke the legacy "
+            "builder")
+
+    monkeypatch.setattr(p0_mixture_v2, "build_mixture_v2",
+                        exploding_builder)
+    epoch = p0_schedule.epoch_schedule(contract)
+    assert len(epoch) == 157
+    s5 = p0_schedule.schedule_for_epochs(contract, 5)
+    assert s5 == epoch * 5
+    # the loaded schedule IS the C2-authorized experiment
+    projection = p0_replay.load_projection()
+    assert epoch == projection["epoch_rows"]
+    assert s5 == projection["schedule_rows"]
+    # bounds: the launch freeze supplies epochs; the loader bounds
+    with pytest.raises(InfrastructureError, match="positive"):
+        p0_schedule.schedule_for_epochs(contract, 0)
+    with pytest.raises(InfrastructureError, match="positive"):
+        p0_schedule.schedule_for_epochs(contract, True)
+    with pytest.raises(InfrastructureError, match="spare capacity"):
+        p0_schedule.schedule_for_epochs(contract, 40)
+    # 310_s P1: population_of loads the AUTHENTICATED mixture
+    # internally — no caller-supplied mapping has a path in
+    for oid in contract.scope.sentinel_observation_ids:
+        assert p0_schedule.population_of(contract, oid) == "sentinel"
+    bridge_oid = next(
+        oid for oid, cls in
+        p0_replay.load_pinned_mixture()["class_assignment"].items()
+        if cls == "bridge")
+    assert p0_schedule.population_of(contract, bridge_oid) \
+        == "bridge"
+    with pytest.raises(InfrastructureError, match="not a scheduled"):
+        p0_schedule.population_of(contract, "foreign:row")
+    # 310_s P1 regression: a one-field population substitution with
+    # a stale record hash cannot enter — the double-bound loader
+    # refuses the forged artifact at both bindings
+    forged = copy.deepcopy(p0_replay.load_pinned_mixture())
+    forged["class_assignment"][bridge_oid] = "q2_composite"
+    forged_path = tmp_path / "forged_mixture.json"
+    forged_path.write_text(
+        json.dumps(forged, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="file"):
+        p0_replay.load_pinned_mixture(path=forged_path)
+    with pytest.raises(InfrastructureError):
+        p0_replay.load_pinned_mixture(
+            path=forged_path,
+            expected_file_sha256=__import__("hashlib").sha256(
+                forged_path.read_bytes()).hexdigest())
+
+    # reminder 2: trainer rows from a CLEAN-CLONE-RESTORED surface
+    # (an isolated replica; the legacy builder still disabled)
+    replica = tmp_path / "surface"
+    support_run.restore_surface_evidence(
+        "plans/conductor/evidence/support_extension_v1/surface",
+        replica)
+    rows = p0_schedule.build_trainer_rows(contract, 1,
+                                          surface_dir=replica)
+    assert len(rows) == 157
+    assert [r["observation_id"] for r in rows] == epoch
+    assert all(r["prompt"][0]["role"] == "system" for r in rows[:3])
+    # 310_s P2: repeated rows do not share mutable prompts
+    dup_oid = next(oid for oid in epoch if epoch.count(oid) > 1)
+    first, second = [i for i, r in enumerate(rows)
+                     if r["observation_id"] == dup_oid][:2]
+    rows[first]["prompt"][0]["content"] = "MUTATED"
+    assert rows[second]["prompt"][0]["content"] != "MUTATED"
+
+
+# --- spine Unit 3: estimands + the exact C2 replay equivalence (312_f) ---------
+
+def test_p0_estimand_rules():
+    """The versioned typed estimand rules, including BOTH 305_f §3
+    counterexamples: a semantic contrast is not a Q1 counted event,
+    and marginal support is not conditional success."""
+    from types import SimpleNamespace
+    contract = p0_contract.load_p0_science_contract()
+    event = contract.q1.event
+    elig = contract.q2.eligibility
+    # family-correct fraction + the frozen reward ladder
+    assert p0_estimands.family_correct_fraction(
+        "fork_join", (0, 2, 1)) == 1.0
+    assert p0_estimands.family_correct_fraction(
+        "fork_join", (0, 2, 0)) == pytest.approx(2 / 3)
+    with pytest.raises(InfrastructureError, match="workers"):
+        p0_estimands.family_correct_fraction("fork_join", (0, 2))
+    assert p0_estimands.reward_level(0.5) == 0.5
+    with pytest.raises(InfrastructureError, match="ladder"):
+        p0_estimands.reward_level(0.75)
+    # the Q1 counted event (valid-only, same-group)
+    assert p0_estimands.q1_counted_event(
+        event, "code_atomic", [1.0, 0.5], [(2,), (0,)])
+    assert not p0_estimands.q1_counted_event(
+        event, "code_atomic", [1.0, 0.5], [None, (0,)])
+    assert not p0_estimands.q1_counted_event(
+        event, "code_atomic", [0.5, 0.5], [(2,), (0,)])
+    # COUNTEREXAMPLE 1: levels 1 and 0.5 co-present (a semantic
+    # contrast) with the 0.5 FULLY family-correct — NOT a Q1 event
+    rewards, assignments = [1.0, 0.5], [(2,), (3,)]
+    assert p0_estimands.group_contrasts(
+        "code_atomic", rewards, assignments, None)[
+        "semantic_contrast"]
+    assert not p0_estimands.q1_counted_event(
+        event, "code_atomic", rewards, assignments)
+    with pytest.raises(InfrastructureError, match="unknown Q1"):
+        p0_estimands.q1_counted_event(SimpleNamespace(
+            rule_id="q1-counted-v99", valid_completions_only=True,
+            same_group=True, high_reward=1.0,
+            high_family_correctness="full", low_reward=0.5,
+            low_family_correctness="strictly_lower"),
+            "code_atomic", [], [])
+    # eligibility (malformed EXCLUDED; specialist pool enforced)
+    assert p0_estimands.c2_eligible_completion(
+        elig, "fork_join", (0, 2, 1))
+    assert not p0_estimands.c2_eligible_completion(
+        elig, "fork_join", (0, 1, 1))
+    assert not p0_estimands.c2_eligible_completion(
+        elig, "fork_join", (1, 2, 1))
+    assert not p0_estimands.c2_eligible_completion(
+        elig, "fork_join", None)
+    # 313_s P1: STRUCTURALLY malformed assignments are excluded
+    # everywhere an estimand accepts an assignment — the reviewer's
+    # reproductions are permanent regressions
+    assert not p0_estimands.valid_assignment(
+        "fork_join", (0, 2, 1, 0))
+    assert not p0_estimands.valid_assignment("fork_join", (0,))
+    assert not p0_estimands.valid_assignment(
+        "fork_join", (0, True, 1))
+    assert not p0_estimands.valid_assignment(
+        "fork_join", (0, 7, 1))
+    assert p0_estimands.valid_assignment("fork_join", (0, 2, 1))
+    assert not p0_estimands.c2_eligible_completion(
+        elig, "fork_join", (0, 2, 1, 0))
+    assert not p0_estimands.marginal_target_selection(
+        "fork_join", (0, 2, 1, 0), 2)
+    assert not p0_estimands.marginal_target_selection(
+        "fork_join", (0,), 2)
+    assert not p0_estimands.q1_counted_event(
+        event, "fork_join", [1.0, 0.5],
+        [(0, 2, 1, 0), (0, 2, 0)])
+    # COUNTEREXAMPLE 2: the target Code worker with a family-WRONG
+    # non-Code slot — a marginal selection that is NOT eligible
+    marginal_only = (1, 2, 1)
+    assert p0_estimands.marginal_target_selection(
+        "fork_join", marginal_only, 2)
+    assert not p0_estimands.c2_eligible_completion(
+        elig, "fork_join", marginal_only)
+    # optimality is defined WITHIN eligibility
+    pair = {"assignment_w2": [0, 2, 1], "assignment_w3": [0, 3, 1],
+            "direction": 2, "distinct_payoff": True}
+    assert p0_estimands.c2_optimal_completion(
+        elig, "fork_join", (0, 2, 1), pair)
+    assert not p0_estimands.c2_optimal_completion(
+        elig, "fork_join", (0, 3, 1), pair)
+    assert not p0_estimands.c2_optimal_completion(
+        elig, "fork_join", (0, 2, 1), {**pair, "direction": None})
+    assert not p0_estimands.c2_optimal_completion(
+        elig, "fork_join", marginal_only, pair)
+    # direct contrast requires BOTH VALID variants in one group
+    assert p0_estimands.group_contrasts(
+        "fork_join", [1.0, 0.5], [(0, 2, 1), (0, 3, 1)],
+        pair)["direct_contrast"]
+    assert not p0_estimands.group_contrasts(
+        "fork_join", [1.0, 0.5], [(0, 2, 1), (0, 2, 1)],
+        pair)["direct_contrast"]
+    assert not p0_estimands.group_contrasts(
+        "fork_join", [1.0, 0.5], [(0, 2, 1), (0, 3, 1, 0)],
+        pair)["direct_contrast"]
+    # the conditional estimand: zero denominator is UNDEFINED
+    assert p0_estimands.conditional_choice(0, 15) == 0.0
+    assert p0_estimands.conditional_choice(0, 0) is None
+    assert p0_estimands.conditional_choice(8, 152) \
+        == pytest.approx(8 / 152)
+    with pytest.raises(InfrastructureError, match="count pair"):
+        p0_estimands.conditional_choice(9, 8)
+    # gates
+    gate, ok = p0_estimands.evaluate_q1_gate(
+        contract.q1, ("code_atomic",),
+        {"code_atomic": {"counted_groups": 2, "latents": {1, 2},
+                         "renderers": {"bound_var"},
+                         "bridge_draws": 5}})
+    assert ok and gate["code_atomic"]["pass"]
+    _, ok = p0_estimands.evaluate_q1_gate(
+        contract.q1, ("code_atomic",),
+        {"code_atomic": {"counted_groups": 2, "latents": {1},
+                         "renderers": {"bound_var"},
+                         "bridge_draws": 5}})
+    assert not ok
+    q2_gate = p0_estimands.evaluate_q2_cold_start_gate(
+        contract.q2,
+        {"math_code|w3_favoured": {"selections": 8,
+                                   "latents": {1, 2}},
+         "fork_join|w2_favoured": {"selections": 7,
+                                   "latents": {1, 2}}})
+    assert q2_gate["per_direction"]["math_code|w3_favoured"]["pass"]
+    assert not q2_gate["per_direction"]["fork_join|w2_favoured"][
+        "pass"]
+    assert not q2_gate["pass"]
+    # sizing + the four-branch decision
+    cap = {"note": "frozen prose"}
+    sized = p0_estimands.derive_sizing(
+        contract.sizing, ("code_atomic", "fork_join", "math_code"),
+        {"code_atomic": 13, "fork_join": 34, "math_code": 13},
+        5, cap)
+    assert sized["derived_epochs"] == 39 \
+        and sized["derived_groups"] == 6123 \
+        and sized["min_cell"] == "code_atomic"
+    stopped = p0_estimands.derive_sizing(
+        contract.sizing, ("code_atomic",), {"code_atomic": 0},
+        5, cap)
+    assert not stopped["derivable"]
+    matrix = p0_mixture_v2.MIXTURE_V2_CONFIG["outcome_contract"][
+        "decision_matrix"]
+    assert p0_estimands.decide_outcome(
+        matrix, q1_pass=True, q2_pass=True) \
+        == "Q1 + Q2 hierarchical-unlocking authorized"
+    assert p0_estimands.decide_outcome(
+        matrix, q1_pass=False, q2_pass=True) == matrix["q1_fail"]
+    assert p0_estimands.decide_outcome(
+        matrix, q1_pass=True, q2_pass=False) \
+        == matrix["q1_pass_q2_fail"]
+    assert p0_estimands.decide_outcome(
+        matrix, q1_pass=True, q2_pass=True,
+        infrastructure_abort=True) == matrix["infrastructure_abort"]
+    with pytest.raises(InfrastructureError, match="branches"):
+        p0_estimands.decide_outcome(
+            {"q1_fail": "x"}, q1_pass=True, q2_pass=True)
+
+
+def test_p0_sentinel_estimand():
+    """The complete per-checkpoint sentinel block: both raw
+    denominators, worker-1 events as the estimand (the [2]/[3]
+    regression retained), firsts in group AND update indices, the
+    contract-bound population, and the exact legacy view shape."""
+    from types import SimpleNamespace
+    contract = p0_contract.load_p0_science_contract()
+    scope, event = contract.scope, contract.q1.event
+    ids = list(scope.sentinel_observation_ids)
+    rows = [
+        {"observation_id": ids[0], "global_group_index": 0,
+         "rewards": [0.0, 0.0], "assignments": [[0], [0]]},
+        {"observation_id":
+         "code_atomic:routing_dev:00008:67774cab:goal_first:private",
+         "global_group_index": 1,
+         "rewards": [1.0], "assignments": [[2]]},
+        # the [2]/[3] regression: different routing, NOT unlocking
+        {"observation_id": ids[1], "global_group_index": 3,
+         "rewards": [0.0, 0.0], "assignments": [[2], [3]]},
+        {"observation_id": ids[2], "global_group_index": 5,
+         "rewards": [1.0, 0.5, 0.0],
+         "assignments": [[1], [0], None]},
+    ]
+    block = p0_estimands.sentinel_checkpoint_block(
+        scope, event, rows, updates_per_group=2)
+    assert block["group_denominator"] == 3
+    assert block["completion_denominator"] == 7
+    assert block["worker1_selections"] == 1
+    assert block["worker1_completions"] == 1
+    assert block["reward1_completions"] == 1
+    assert block["reward_varying_groups"] == 1
+    assert block["q1_counted_groups"] == 1
+    assert block["first_group_indices"] == {
+        "worker1": 5, "reward1": 5, "varying": 5, "q1_counted": 5}
+    assert block["first_update_indices"]["worker1"] == 10
+    # the legacy view carries the exact frozen C2 field shape
+    frozen_sentinel = p0_replay.load_projection()["sentinel_block"]
+    view = p0_estimands.sentinel_legacy_view(block)
+    assert set(view) == set(frozen_sentinel)
+    assert view["groups"] == 3 and view["first_worker1_group_index"] \
+        == 5 and view["first_worker1_update_index"] == 10
+    # population bound: ids outside the sentinel cell refuse
+    bad = SimpleNamespace(
+        sentinel_observation_ids=("code_atomic:x:y",),
+        sentinel_cell="math_atomic", sentinel_training_exposed=True)
+    with pytest.raises(InfrastructureError, match="outside the "
+                       "contract"):
+        p0_estimands.sentinel_checkpoint_block(bad, event, [])
+    empty = SimpleNamespace(
+        sentinel_observation_ids=(), sentinel_cell="math_atomic",
+        sentinel_training_exposed=True)
+    with pytest.raises(InfrastructureError, match="empty sentinel"):
+        p0_estimands.sentinel_checkpoint_block(empty, event, [])
+    with pytest.raises(InfrastructureError, match="positive "
+                       "non-boolean"):
+        p0_estimands.sentinel_checkpoint_block(
+            scope, event, [], updates_per_group=True)
+    # 313_s: a forged group index refuses inside the sentinel block
+    with pytest.raises(InfrastructureError, match="non-negative "
+                       "non-boolean"):
+        p0_estimands.sentinel_checkpoint_block(scope, event, [
+            {"observation_id": ids[0], "global_group_index": True,
+             "rewards": [0.0], "assignments": [[0]]}])
+
+
+@pytest.fixture(scope="module")
+def c2_replay_ctx():
+    contract = p0_contract.load_p0_science_contract()
+    mixture = p0_replay.load_pinned_mixture()
+    surface_dir = p0_replay.restore_extension_surface_if_absent()
+    loaded = dev_support.load_dev_surface(
+        surface_dir,
+        expected_lock_sha256=contract.input_pins
+        .extension_surface_lock_sha256)
+    selection = p0_mixture_v2.load_frozen_selection_v2()
+    trace_rows = resume_validation.read_trace(
+        Path("plans/conductor/evidence/unit_c2_v1/actions.jsonl"))
+    return {"contract": contract, "mixture": mixture,
+            "loaded": loaded,
+            "disclosure": selection["public_factor_disclosure"],
+            "trace_rows": trace_rows,
+            "frozen": p0_replay.load_projection()}
+
+
+def test_p0_c2_replay_equivalence(c2_replay_ctx):
+    """The oracle (303_f §3): the raw-trace rederivation reproduces
+    the frozen projection EXACTLY — derived under guards proving the
+    evaluator never invokes the legacy report builder, never reads
+    the source report's values, and never consumes the frozen
+    projection (305_f §2)."""
+    frozen = c2_replay_ctx["frozen"]
+    real_read_text = Path.read_text
+
+    def guarded_read_text(self, *args, **kwargs):
+        if "exposure_report" in str(self):
+            raise AssertionError(
+                "the evaluator read the source report")
+        return real_read_text(self, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            unit_c2_sample, "build_exposure_report",
+            lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError("legacy report builder invoked")))
+        mp.setattr(
+            p0_c2_equivalence, "load_projection",
+            lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError(
+                    "the evaluator consumed the frozen projection")))
+        mp.setattr(Path, "read_text", guarded_read_text)
+        derived = p0_c2_equivalence.derive_c2_projection()
+    assert derived == frozen
+    assert derived["projection_sha256"] == \
+        p0_replay.PROJECTION_SHA256
+    result = p0_c2_equivalence.verify_c2_equivalence()
+    assert result["verdict"] == "PASS"
+    assert result["fields_compared"] == len(frozen)
+
+
+def test_p0_c2_replay_sensitivity(c2_replay_ctx):
+    """The 305_f sensitivity set: row reorder; a population
+    substitution that alters the projection MAPPING comparison; the
+    CARRIED REMINDER — a COHERENT VALID alternative action that
+    changes a scientific result (and, as the contrast, a corrupted
+    redundant field refuses as corruption, never scoring as an
+    alternative result)."""
+    kwargs = {key: c2_replay_ctx[key]
+              for key in ("contract", "mixture", "loaded",
+                          "disclosure")}
+    trace = c2_replay_ctx["trace_rows"]
+    frozen = c2_replay_ctx["frozen"]
+    contract = kwargs["contract"]
+    # (a) row reorder refuses at the pinned-schedule identity
+    swapped = list(trace)
+    swapped[0], swapped[1] = swapped[1], swapped[0]
+    with pytest.raises(InfrastructureError, match="pinned schedule"):
+        p0_c2_equivalence.derive_from_trace(swapped, **kwargs)
+    # 313_s P1: scheduled ids repeat — swapping two COMPLETE rows
+    # for the SAME observation preserves the id sequence and must
+    # refuse at the physical-position binding
+    by_oid = {}
+    for position, row in enumerate(trace):
+        by_oid.setdefault(row["observation_id"], []).append(position)
+    dup_first, dup_second = next(
+        positions[:2] for positions in by_oid.values()
+        if len(positions) > 1)
+    same_id_swap = list(trace)
+    same_id_swap[dup_first], same_id_swap[dup_second] = \
+        same_id_swap[dup_second], same_id_swap[dup_first]
+    assert [r["observation_id"] for r in same_id_swap] \
+        == [r["observation_id"] for r in trace]
+    with pytest.raises(InfrastructureError,
+                       match="physical row position"):
+        p0_c2_equivalence.derive_from_trace(same_id_swap, **kwargs)
+    # a forged index on a non-sentinel row likewise refuses
+    forged_index = copy.deepcopy(trace[:3]) + list(trace[3:])
+    forged_index[1]["global_group_index"] = 999999
+    with pytest.raises(InfrastructureError,
+                       match="physical row position"):
+        p0_c2_equivalence.derive_from_trace(forged_index, **kwargs)
+    # (b) a one-observation population substitution alters the
+    # projection mapping comparison (and the per-population draws)
+    doctored = copy.deepcopy(c2_replay_ctx["mixture"])
+    sub_oid = next(oid for oid, cls in
+                   doctored["class_assignment"].items()
+                   if cls == "goal_first_control")
+    doctored["class_assignment"][sub_oid] = "anchor"
+    derived = p0_c2_equivalence.derive_from_trace(
+        trace, **{**kwargs, "mixture": doctored})
+    diff = p0_c2_equivalence.compare_projections(derived, frozen)
+    assert "population_by_observation" in diff
+    assert "per_population_draws" in diff
+    assert "class_assignment" in diff
+    # (c) CARRIED REMINDER: replace the single reward-1.0 fully
+    # family-correct completion of a counted bridge group with a
+    # COPY of a coherent 0.5 completion from the same group — every
+    # consistency check passes, and a scientific result changes
+    population = frozen["population_by_observation"]
+    disclosure = kwargs["disclosure"]
+    found = None
+    for preferred in contract.scope.q1_direct_cells:
+        for idx, row in enumerate(trace):
+            oid = row["observation_id"]
+            if population[oid] != "bridge":
+                continue
+            cell = disclosure[oid]["cell_id"]
+            if cell != preferred:
+                continue
+            pairs = list(zip(row["rewards"], row["assignments"]))
+            highs = [i for i, (r, a) in enumerate(pairs)
+                     if r == 1.0 and a is not None
+                     and p0_estimands.family_correct_fraction(
+                         cell, a) == 1.0]
+            lows = [i for i, (r, a) in enumerate(pairs)
+                    if r == 0.5 and a is not None
+                    and p0_estimands.family_correct_fraction(
+                        cell, a) < 1.0]
+            if len(highs) == 1 and lows:
+                found = (idx, cell, highs[0], lows[0])
+                break
+        if found:
+            break
+    assert found is not None
+    idx, cell, high_i, low_j = found
+    altered = copy.deepcopy(trace)
+    for key in ("completions", "actions", "assignments", "rewards"):
+        altered[idx][key][high_i] = copy.deepcopy(
+            altered[idx][key][low_j])
+    derived = p0_c2_equivalence.derive_from_trace(altered, **kwargs)
+    diff = p0_c2_equivalence.compare_projections(derived, frozen)
+    assert "q1_gate" in diff
+    assert "q1_counted_per_epoch_measured" in diff
+    assert derived["q1_gate"][cell]["counted_groups"] \
+        == frozen["q1_gate"][cell]["counted_groups"] - 1
+    if cell == "code_atomic":
+        # the sizing minimum moved: the derived experiment changes
+        assert "p0_size_derived" in diff
+        assert derived["p0_size_derived"]["derived_epochs"] != \
+            frozen["p0_size_derived"]["derived_epochs"]
+    # (d) the contrast: corrupting ONLY the stored reward is
+    # detected as corruption, never scored as an alternative
+    corrupted = copy.deepcopy(trace)
+    corrupted[idx]["rewards"][high_i] = 0.5
+    with pytest.raises(InfrastructureError,
+                       match="corrupted redundant"):
+        p0_c2_equivalence.derive_from_trace(corrupted, **kwargs)
+
+
+# --- spine Unit 4: registered cap arithmetic + generated tables (315_f) --------
+
+def test_p0_cap_arithmetic():
+    """The 305_f §5 record: every cap input + all three values, the
+    closed branches, the min() identity, and exact parity with the
+    frozen legacy formula."""
+    from types import SimpleNamespace
+    contract = p0_contract.load_p0_science_contract()
+    base = {"measured_finalization_reserve_seconds": 0.0,
+            "frozen_non_rollout_overhead_seconds": 0.0,
+            "measured_whole_epoch_seconds": 600.0}
+    # input validation
+    with pytest.raises(InfrastructureError, match="finite"):
+        p0_cap.derive_capacity(
+            contract, cumulative_consumed_seconds=float("nan"),
+            **base)
+    with pytest.raises(InfrastructureError, match="finite"):
+        p0_cap.derive_capacity(
+            contract, cumulative_consumed_seconds=True, **base)
+    with pytest.raises(InfrastructureError, match="non-negative"):
+        p0_cap.derive_capacity(
+            contract, cumulative_consumed_seconds=-1.0, **base)
+    with pytest.raises(InfrastructureError, match="positive"):
+        p0_cap.derive_capacity(
+            contract, cumulative_consumed_seconds=0.0,
+            measured_finalization_reserve_seconds=0.0,
+            frozen_non_rollout_overhead_seconds=0.0,
+            measured_whole_epoch_seconds=0.0)
+    # an unregistered cap rule refuses before any arithmetic
+    forged = SimpleNamespace(sizing=SimpleNamespace(
+        cap=SimpleNamespace(
+            rule_id="p0-cap-v2",
+            launch_epochs="min_nominal_capacity",
+            capacity_inputs=p0_cap.REGISTERED_CAPACITY_INPUTS)))
+    with pytest.raises(InfrastructureError, match="unregistered"):
+        p0_cap.derive_capacity(
+            forged, cumulative_consumed_seconds=0.0, **base)
+    # spare-capacity branch: capacity >= nominal -> run EXACTLY the
+    # nominal; spare is recorded, never trained
+    plan = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=0.0, **base)
+    assert plan["capacity_epochs"] == 60
+    assert plan["nominal_epochs"] == 39
+    assert plan["launch_epochs"] == 39
+    assert plan["branch"] == "no_extra_training"
+    assert plan["spare_epochs_not_trained"] == 21
+    assert plan["launch_epochs"] == min(plan["nominal_epochs"],
+                                        plan["capacity_epochs"])
+    assert tuple(plan["inputs"]) == \
+        p0_cap.REGISTERED_CAPACITY_INPUTS
+    assert p0_cap.require_launchable(contract, plan) is plan
+    # disclosed under-target branch, with quantified projection
+    plan = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=8000.0,
+        measured_finalization_reserve_seconds=1000.0,
+        frozen_non_rollout_overhead_seconds=500.0,
+        measured_whole_epoch_seconds=2000.0)
+    assert plan["capacity_epochs"] == 13
+    assert plan["launch_epochs"] == 13
+    assert plan["branch"] == "disclosed_under_target"
+    assert plan["projected_q1_counted_by_cell"] == {
+        "code_atomic": 33.8, "fork_join": 88.4, "math_code": 33.8}
+    assert plan["target_q1_counted_groups_per_sizing_cell"] == 100
+    assert plan["launch_epochs"] == min(plan["nominal_epochs"],
+                                        plan["capacity_epochs"])
+    # stop branch: capacity <= 0 is never a launch
+    plan = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=36000.0, **base)
+    assert plan["capacity_epochs"] == 0
+    assert plan["launch_epochs"] == 0
+    assert plan["branch"] == "stop_reviewed_amendment"
+    assert not plan["launchable"]
+    with pytest.raises(InfrastructureError, match="reviewed scope "
+                       "amendment"):
+        p0_cap.require_launchable(contract, plan)
+    # 316_s P1: the boundary REDERIVES the plan from its persisted
+    # inputs — the reviewer's forged plans are permanent regressions
+    forged_stop = dict(plan)
+    forged_stop["launchable"] = True
+    forged_stop["launch_epochs"] = 1
+    forged_stop["branch"] = "disclosed_under_target"
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_cap.require_launchable(contract, forged_stop)
+    capacity_one = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=0.0,
+        measured_finalization_reserve_seconds=0.0,
+        frozen_non_rollout_overhead_seconds=0.0,
+        measured_whole_epoch_seconds=30000.0)
+    assert capacity_one["capacity_epochs"] == 1
+    forged_epochs = dict(capacity_one)
+    forged_epochs["launch_epochs"] = 999
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_cap.require_launchable(contract, forged_epochs)
+    forged_bool = dict(capacity_one)
+    forged_bool["launch_epochs"] = True
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_cap.require_launchable(contract, forged_bool)
+    forged_nan = dict(capacity_one)
+    forged_nan["available_generation_seconds"] = float("nan")
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_cap.require_launchable(contract, forged_nan)
+    forged_ceiling = dict(capacity_one)
+    forged_ceiling["inputs"] = dict(capacity_one["inputs"])
+    forged_ceiling["inputs"]["operational_ceiling_seconds"] = 1e9
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_cap.require_launchable(contract, forged_ceiling)
+    with pytest.raises(InfrastructureError, match="registered "
+                       "input record"):
+        p0_cap.require_launchable(contract, {"launchable": True,
+                                             "launch_epochs": 5})
+    assert p0_cap.require_launchable(contract, capacity_one) \
+        is capacity_one
+    # 318_s P1: a genuine plan survives the repository's canonical
+    # sorted-key JSON round-trip (key order is NOT identity)
+    round_tripped = json.loads(json.dumps(capacity_one,
+                                          sort_keys=True))
+    assert list(round_tripped["inputs"]) \
+        != list(capacity_one["inputs"])
+    assert p0_cap.require_launchable(contract, round_tripped) \
+        is round_tripped
+    # ... while missing or extra input keys still refuse
+    missing_key = json.loads(json.dumps(capacity_one))
+    del missing_key["inputs"]["measured_whole_epoch_seconds"]
+    with pytest.raises(InfrastructureError, match="registered "
+                       "input record"):
+        p0_cap.require_launchable(contract, missing_key)
+    extra_key = json.loads(json.dumps(capacity_one))
+    extra_key["inputs"]["bonus_seconds"] = 0.0
+    with pytest.raises(InfrastructureError, match="registered "
+                       "input record"):
+        p0_cap.require_launchable(contract, extra_key)
+    extra_top = json.loads(json.dumps(capacity_one))
+    extra_top["bonus_field"] = 1
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_cap.require_launchable(contract, extra_top)
+    # exact parity with the frozen legacy formula on shared inputs
+    for consumed, reserve, overhead, whole in (
+            (0.0, 0.0, 0.0, 600.0),
+            (8000.0, 1000.0, 500.0, 2000.0),
+            (30000.0, 3000.0, 2999.9, 700.0),
+            (36000.0, 0.0, 0.0, 100.0),
+            (35990.0, 5.0, 4.9, 1.0)):
+        legacy = p0_mixture_v2.derive_p0_cap_v2(
+            cumulative_consumed_seconds=consumed,
+            measured_finalization_reserve_seconds=reserve,
+            frozen_non_rollout_overhead_seconds=overhead,
+            measured_whole_epoch_seconds=whole)
+        mine = p0_cap.derive_capacity(
+            contract, cumulative_consumed_seconds=consumed,
+            measured_finalization_reserve_seconds=reserve,
+            frozen_non_rollout_overhead_seconds=overhead,
+            measured_whole_epoch_seconds=whole)
+        assert mine["capacity_epochs"] == legacy["capped_epochs"]
+        assert mine["available_generation_seconds"] == \
+            legacy["available_generation_seconds"]
+
+
+def test_p0_traceability_appendix(tmp_path, monkeypatch):
+    """303_f §8: the committed appendix is byte-equal to a fresh
+    generation from the authenticated artifacts — an edited number
+    or a diverging artifact value is mechanically detected."""
+    result = p0_tables.verify_appendix()
+    assert result["verdict"] == "PASS"
+    assert result["bytes"] == \
+        Path(p0_tables.APPENDIX_PATH).stat().st_size
+    committed = Path(p0_tables.APPENDIX_PATH).read_text("utf-8")
+    # 316_s P1: the signed traceability matrix and the complete
+    # sentinel obligation set are present
+    assert "## 8. Signed traceability matrix" in committed
+    assert "| requirement | field | enforcement | regression | " \
+        "artifact |" in committed
+    contract = p0_contract.load_p0_science_contract()
+    for field in contract.diagnostics.sentinel.fields_required:
+        assert f"`{field}`" in committed
+    # the Unit-5 obligations are now NAMED with their implemented
+    # enforcement (no dangling deferred rows)
+    assert "DEFERRED to Unit 5" not in committed
+    assert "p0_launch.build_p0_launch_freeze" in committed
+    assert "p0_launch.assemble_sentinel_trajectories" in committed
+    assert "p0_launch.prepare_p0_dataset" in committed
+    # 321_s: launch admission is EXPLICITLY deferred, never marked
+    # complete before the precursor artifacts exist
+    assert "Launch admission (execution + precursor binding)" \
+        in committed
+    assert "**DEFERRED** to the post-merge unit" in committed
+    # every reviewed identity and headline value is in the tables
+    assert p0_contract.CONTRACT_SHA256 in committed
+    assert p0_replay.PROJECTION_SHA256 in committed
+    assert p0_replay.PINNED_MIXTURE_FILE_SHA256 in committed
+    assert "| derived groups | 6123 |" in committed
+    assert "0/15" in committed and "8/152" in committed
+    assert "**Q1 + Q2 hierarchical-unlocking authorized**" \
+        in committed
+    # an edited number diverges
+    tampered = tmp_path / "appendix.md"
+    tampered.write_text(
+        committed.replace("| derived groups | 6123 |",
+                          "| derived groups | 6124 |"),
+        encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="diverges"):
+        p0_tables.verify_appendix(tampered)
+    # 316_s P2: verification is BYTE-exact — a CRLF rewrite with
+    # identical text refuses
+    crlf = tmp_path / "appendix_crlf.md"
+    crlf.write_bytes(
+        committed.replace("\n", "\r\n").encode("utf-8"))
+    assert crlf.read_text("utf-8").replace("\r\n", "\n") \
+        == committed
+    with pytest.raises(InfrastructureError, match="diverges"):
+        p0_tables.verify_appendix(crlf)
+    # a diverging artifact value changes the generation (the
+    # numbers COME from the artifacts, not from prose)
+    altered = copy.deepcopy(p0_replay.load_projection())
+    altered["zero_variance_groups"] = 663
+    monkeypatch.setattr(p0_tables, "load_projection",
+                        lambda *a, **k: altered)
+    assert p0_tables.generate_traceability_appendix() != committed
+    with pytest.raises(InfrastructureError, match="diverges"):
+        p0_tables.verify_appendix()
+
+
+# --- spine Unit 5: P0LaunchFreeze schema + the first real consumer (320_f) -----
+
+def _launch_runtime_fields():
+    import hashlib as _hashlib
+    from tasks.conductor.stage1 import prompt_fewshot
+    return {
+        "model_id": "Qwen/Qwen2.5-3B-Instruct",
+        "model_revision":
+            "aa8e72537993ba99e69dfaafa59ed015b17504d1",
+        "quantization": "nf4",
+        "lora_adapter_dtype": "float32",
+        "lora_key_set_sha256":
+            "e44ecb9caf0be396aaaceae6802dbaab9209677103ba263c89"
+            "ca9a7ea65f6215",
+        "prompt_sha256": _hashlib.sha256(
+            prompt_fewshot().encode("utf-8")).hexdigest(),
+        "runtime_profile_sha256":
+            p0_launch.P0_RUNTIME_PROFILE_SHA256,
+        "group_size": 8,
+        "seed": 20260901,
+        "temperature": 1.0,
+        "learning_rate": 1e-5,
+        "beta": 1e-3,
+        "policy_max_new_tokens": 128,
+        "attested_environment_sha256":
+            p0_replay.REPLAY_SOURCE["attested_environment_sha256"],
+    }
+
+
+_LAUNCH_PRECURSORS = {
+    "routing_dev_val_lock_sha256": "1a" * 32,
+    "cycle_record_sha256": "2b" * 32,
+    "r_cycle_record_sha256": "3c" * 32,
+    "beta_smoke_record_sha256": "4d" * 32,
+}
+
+
+def test_p0_launch_freeze_schema(tmp_path):
+    """The p0-launch-freeze-v1 schema: verbatim plan persistence,
+    the unfreezable stop branch, closed fields (no execution-
+    manifest hash, no terminal hashes), and the strict loader
+    REQUIRING the externally reviewed hash."""
+    import dataclasses
+    contract = p0_contract.load_p0_science_contract()
+    runtime = _launch_runtime_fields()
+    plan = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=8000.0,
+        measured_finalization_reserve_seconds=1000.0,
+        frozen_non_rollout_overhead_seconds=500.0,
+        measured_whole_epoch_seconds=2000.0)
+    assert plan["branch"] == "disclosed_under_target"
+    freeze = p0_launch.build_p0_launch_freeze(
+        plan_record=plan, precursors=_LAUNCH_PRECURSORS,
+        runtime=runtime, contract=contract)
+    # verbatim persistence: the typed plan round-trips exactly
+    assert p0_cap._strict_equal(freeze.launch_plan.to_record(),
+                                plan)
+    assert freeze.science_contract_sha256 == \
+        p0_contract.CONTRACT_SHA256
+    # the closed schema carries NO execution-manifest / terminal
+    # hash field (305_f §1)
+    names = {f.name for f in dataclasses.fields(freeze)}
+    assert names == {"schema_version", "science_contract_sha256",
+                     "precursors", "launch_plan", "runtime"}
+    # save + load under the REQUIRED reviewed hash
+    out = tmp_path / "launch_freeze.json"
+    digest = p0_launch.save_launch_freeze(freeze, out)
+    assert digest == p0_launch.freeze_sha256(freeze)
+    loaded = p0_launch.load_p0_launch_freeze(out, digest)
+    assert loaded == freeze
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_launch.save_launch_freeze(freeze, out)
+    with pytest.raises(InfrastructureError, match="reviewed"):
+        p0_launch.load_p0_launch_freeze(out, "0" * 64)
+    tampered = json.loads(out.read_text("utf-8"))
+    tampered["launch_plan"]["launch_epochs"] = 14
+    bad = tmp_path / "tampered.json"
+    bad.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="reviewed"):
+        p0_launch.load_p0_launch_freeze(bad, digest)
+    extra = json.loads(out.read_text("utf-8"))
+    extra["execution_manifest_sha256"] = "9e" * 32
+    payload = {k: v for k, v in extra.items()
+               if k != "freeze_sha256"}
+    extra["freeze_sha256"] = charter.content_sha256(payload)
+    bad2 = tmp_path / "extra.json"
+    bad2.write_text(json.dumps(extra), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="closed schema"):
+        p0_launch.load_p0_launch_freeze(bad2,
+                                        extra["freeze_sha256"])
+    # the stop branch is UNFREEZABLE
+    stop = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=36000.0,
+        measured_finalization_reserve_seconds=0.0,
+        frozen_non_rollout_overhead_seconds=0.0,
+        measured_whole_epoch_seconds=600.0)
+    with pytest.raises(InfrastructureError, match="reviewed scope "
+                       "amendment"):
+        p0_launch.build_p0_launch_freeze(
+            plan_record=stop, precursors=_LAUNCH_PRECURSORS,
+            runtime=runtime, contract=contract)
+    # a forged plan refuses at the Unit-4 boundary
+    forged = json.loads(json.dumps(plan))
+    forged["launch_epochs"] = 39
+    with pytest.raises(InfrastructureError, match="forged plan"):
+        p0_launch.build_p0_launch_freeze(
+            plan_record=forged, precursors=_LAUNCH_PRECURSORS,
+            runtime=runtime, contract=contract)
+    # branch-inconsistent typed plans refuse at construction
+    with pytest.raises(InfrastructureError, match="under-target "
+                       "branch"):
+        record = json.loads(json.dumps(plan))
+        del record["projected_q1_counted_by_cell"]
+        record["spare_epochs_not_trained"] = 3
+        p0_launch.LaunchPlan.from_record(record)
+    # runtime validation: bool seed, NaN lr, wrong construction
+    with pytest.raises(InfrastructureError, match="seed"):
+        p0_launch.RuntimeIdentity(
+            **{**runtime, "seed": True})
+    with pytest.raises(InfrastructureError, match="finite"):
+        p0_launch.RuntimeIdentity(
+            **{**runtime, "learning_rate": float("nan")})
+    with pytest.raises(InfrastructureError, match="REAL training"):
+        p0_launch.RuntimeIdentity(
+            **{**runtime, "learning_rate": 0.0})
+    # 321_s: the runtime must BIND to the canonical profile and the
+    # ACTUAL prompt — the reviewer's reproductions refuse at build
+    with pytest.raises(InfrastructureError, match="frozen"):
+        p0_launch.build_p0_launch_freeze(
+            plan_record=plan, precursors=_LAUNCH_PRECURSORS,
+            runtime={**runtime, "beta": 0.04}, contract=contract)
+    with pytest.raises(InfrastructureError, match="ACTUAL"):
+        p0_launch.build_p0_launch_freeze(
+            plan_record=plan, precursors=_LAUNCH_PRECURSORS,
+            runtime={**runtime, "prompt_sha256": "0" * 64},
+            contract=contract)
+    with pytest.raises(InfrastructureError, match="canonical"):
+        p0_launch.build_p0_launch_freeze(
+            plan_record=plan, precursors=_LAUNCH_PRECURSORS,
+            runtime={**runtime,
+                     "runtime_profile_sha256": "9f" * 32},
+            contract=contract)
+    with pytest.raises(InfrastructureError, match="validated "
+                       "construction"):
+        p0_launch.RuntimeIdentity(
+            **{**runtime, "quantization": "int8"})
+    with pytest.raises(InfrastructureError, match="40-hex"):
+        p0_launch.RuntimeIdentity(
+            **{**runtime, "model_revision": "aa8e"})
+    with pytest.raises(InfrastructureError, match="precursors"):
+        p0_launch.PrecursorOutputs(
+            **{**_LAUNCH_PRECURSORS,
+               "cycle_record_sha256": "zz" * 32})
+
+
+def test_p0_sentinel_trajectories():
+    """321_s P1: trajectory assembly enforces the exact frozen
+    index sets (checkpoint zero + final mandatory; truncation and
+    emptiness refuse), semantic counter/denominator/first-index
+    validation, deep-copied immutability, and EXPLICIT
+    infrastructure-abort prefix handling."""
+    import copy as _copy
+    contract = p0_contract.load_p0_science_contract()
+    scope, event = contract.scope, contract.q1.event
+    ids = list(scope.sentinel_observation_ids)
+    quiet_rows = [{"observation_id": ids[0],
+                   "global_group_index": 0,
+                   "rewards": [0.0] * 8,
+                   "assignments": [[0]] * 8}]
+    block = p0_estimands.sentinel_checkpoint_block(
+        scope, event, quiet_rows)
+    event_rows = [{"observation_id": ids[0],
+                   "global_group_index": 3,
+                   "rewards": [1.0, 0.5] + [0.0] * 6,
+                   "assignments": [[1], [0]] + [None] * 6}]
+    active = p0_estimands.sentinel_checkpoint_block(
+        scope, event, event_rows)
+
+    def assemble(ckpts, evals, **kw):
+        kw.setdefault("expected_checkpoint_indices", (0, 157, 314))
+        kw.setdefault("expected_evaluation_indices", (0, 314))
+        return p0_launch.assemble_sentinel_trajectories(
+            contract, ckpts, evals, **kw)
+
+    result = assemble([(0, block), (157, active), (314, block)],
+                      [(0, block), (314, block)])
+    assert result["status"] == "complete"
+    assert result["checkpoint_trajectory"][1][0] == 157
+    # deep copy: mutating the source block cannot reach the result
+    block["worker1_selections"] = 999999
+    assert result["checkpoint_trajectory"][0][1][
+        "worker1_selections"] == 0
+    block = p0_estimands.sentinel_checkpoint_block(
+        scope, event, quiet_rows)
+    # empty and truncated COMPLETE trajectories refuse (321_s)
+    with pytest.raises(InfrastructureError, match="not complete"):
+        assemble([], [(0, block), (314, block)])
+    with pytest.raises(InfrastructureError, match="not complete"):
+        assemble([(0, block), (157, block)],
+                 [(0, block), (314, block)])
+    # the expected sets themselves are validated: checkpoint zero
+    # is mandatory; empty expected refuses
+    with pytest.raises(InfrastructureError, match="checkpoint "
+                       "zero"):
+        assemble([(157, block)], [(0, block)],
+                 expected_checkpoint_indices=(157,))
+    with pytest.raises(InfrastructureError, match="empty"):
+        assemble([], [], expected_checkpoint_indices=())
+    # 323_s: checkpoint zero PLUS a positive final are mandatory —
+    # a single-element expected set refuses
+    with pytest.raises(InfrastructureError, match="positive final"):
+        assemble([(0, block)], [(0, block), (314, block)],
+                 expected_checkpoint_indices=(0,))
+    # infrastructure abort: EXPLICIT, disclosed, strict prefix
+    aborted = assemble([(0, block)], [(0, block)],
+                       status="infrastructure_abort",
+                       expected_evaluation_indices=(0, 314))
+    assert aborted["status"] == "infrastructure_abort"
+    assert aborted["disclosed_truncation"] == {
+        "checkpoints_observed": 1, "checkpoints_expected": 3,
+        "evaluations_observed": 1, "evaluations_expected": 2}
+    with pytest.raises(InfrastructureError, match="PREFIX"):
+        assemble([(157, block)], [(0, block)],
+                 status="infrastructure_abort")
+    # 323_s: an abort BETWEEN streams — one stream complete, the
+    # other a strict prefix — is a valid disclosed abort
+    between = assemble([(0, block), (157, block), (314, block)],
+                       [(0, block)],
+                       status="infrastructure_abort")
+    assert between["disclosed_truncation"] == {
+        "checkpoints_observed": 3, "checkpoints_expected": 3,
+        "evaluations_observed": 1, "evaluations_expected": 2}
+    # ... but BOTH streams complete is not an abort
+    with pytest.raises(InfrastructureError, match="not an abort"):
+        assemble([(0, block), (157, block), (314, block)],
+                 [(0, block), (314, block)],
+                 status="infrastructure_abort")
+    with pytest.raises(InfrastructureError, match="unknown "
+                       "trajectory status"):
+        assemble([(0, block)], [(0, block)], status="partial")
+    # semantic validation (the 321_s reproductions)
+    def broken(**changes):
+        bad = _copy.deepcopy(block)
+        bad.update(changes)
+        return [(0, bad), (157, bad), (314, bad)]
+
+    evals = [(0, block), (314, block)]
+    with pytest.raises(InfrastructureError, match="exposure"):
+        assemble(broken(training_exposed=False), evals)
+    with pytest.raises(InfrastructureError, match="non-negative "
+                       "non-boolean"):
+        assemble(broken(group_denominator=-1), evals)
+    with pytest.raises(InfrastructureError, match="impossible "
+                       "count"):
+        assemble(broken(worker1_selections=999), evals)
+    with pytest.raises(InfrastructureError, match="non-negative "
+                       "non-boolean"):
+        assemble(broken(completion_denominator=True), evals)
+    bad_first = _copy.deepcopy(block)
+    bad_first["first_group_indices"] = {
+        **bad_first["first_group_indices"], "worker1": True}
+    with pytest.raises(InfrastructureError, match="first index"):
+        assemble([(0, bad_first), (157, bad_first),
+                  (314, bad_first)], evals)
+    # count/index consistency: a positive counter with a None
+    # first index (and the reverse) refuse
+    with pytest.raises(InfrastructureError, match="count/index "
+                       "consistency"):
+        assemble(broken(worker1_selections=1,
+                        worker1_completions=1), evals)
+    stale_first = _copy.deepcopy(active)
+    stale_first["worker1_selections"] = 0
+    stale_first["worker1_completions"] = 0
+    with pytest.raises(InfrastructureError, match="count/index "
+                       "consistency"):
+        assemble([(0, stale_first), (157, stale_first),
+                  (314, stale_first)], evals)
+    with pytest.raises(InfrastructureError, match="counted cannot "
+                       "exceed varying"):
+        assemble(broken(q1_counted_groups=1), evals)
+    # 323_s: the PRODUCER invariants — states the block producer
+    # cannot emit refuse
+    with pytest.raises(InfrastructureError, match="emits them "
+                       "identically"):
+        assemble(broken(worker1_selections=2,
+                        worker1_completions=1), evals)
+    seven_rows = [{"observation_id": ids[0],
+                   "global_group_index": 0,
+                   "rewards": [0.0] * 7,
+                   "assignments": [[0]] * 7}]
+    seven = p0_estimands.sentinel_checkpoint_block(
+        scope, event, seven_rows)
+    with pytest.raises(InfrastructureError, match="frozen group "
+                       "size"):
+        assemble([(0, seven), (157, seven), (314, seven)], evals)
+    drifted = _copy.deepcopy(active)
+    drifted["first_update_indices"] = {
+        **drifted["first_update_indices"], "worker1": 999}
+    with pytest.raises(InfrastructureError, match="binds the two "
+                       "index spaces"):
+        assemble([(0, drifted), (157, drifted), (314, drifted)],
+                 evals)
+    incomplete = _copy.deepcopy(block)
+    del incomplete["completion_denominator"]
+    with pytest.raises(InfrastructureError, match="COMPLETE"):
+        assemble([(0, incomplete), (157, incomplete),
+                  (314, incomplete)], evals)
+    foreign = _copy.deepcopy(block)
+    foreign["observation_ids"] = ["math_atomic:x:y"]
+    with pytest.raises(InfrastructureError, match="frozen "
+                       "sentinel"):
+        assemble([(0, foreign), (157, foreign), (314, foreign)],
+                 evals)
+
+
+def test_p0_first_consumer_prepare(tmp_path, monkeypatch):
+    """The first real consumer end-to-end: every input through a
+    reviewed pin, the plan rederived at admission, the standing
+    oracles invoked FRESH, the dataset from the strict loader."""
+    contract = p0_contract.load_p0_science_contract()
+    plan = p0_cap.derive_launch_plan(
+        contract, cumulative_consumed_seconds=0.0,
+        measured_finalization_reserve_seconds=0.0,
+        frozen_non_rollout_overhead_seconds=0.0,
+        measured_whole_epoch_seconds=30000.0)
+    assert plan["capacity_epochs"] == 1
+    freeze = p0_launch.build_p0_launch_freeze(
+        plan_record=plan, precursors=_LAUNCH_PRECURSORS,
+        runtime=_launch_runtime_fields(), contract=contract)
+    out = tmp_path / "launch_freeze.json"
+    digest = p0_launch.save_launch_freeze(freeze, out)
+    calls = {"equivalence": 0, "appendix": 0}
+    real_equivalence = p0_c2_equivalence.verify_c2_equivalence
+    real_appendix = p0_tables.verify_appendix
+
+    def counting_equivalence(*args, **kwargs):
+        calls["equivalence"] += 1
+        return real_equivalence(*args, **kwargs)
+
+    def counting_appendix(*args, **kwargs):
+        calls["appendix"] += 1
+        return real_appendix(*args, **kwargs)
+
+    monkeypatch.setattr(p0_c2_equivalence, "verify_c2_equivalence",
+                        counting_equivalence)
+    monkeypatch.setattr(p0_tables, "verify_appendix",
+                        counting_appendix)
+    bundle = p0_launch.prepare_p0_dataset(out, digest)
+    assert calls == {"equivalence": 1, "appendix": 1}
+    assert bundle["launch_epochs"] == 1
+    assert bundle["groups_total"] == 157
+    assert bundle["gates"] == {"launch_plan": "REDERIVED",
+                               "runtime_binding": "BOUND",
+                               "c2_equivalence": "PASS",
+                               "appendix": "PASS"}
+    # 321_s: dataset preparation NEVER authorizes an execution —
+    # launch admission is explicitly deferred with its outstanding
+    # obligations named
+    assert bundle["launch_admission"]["status"] == "DEFERRED"
+    assert len(bundle["launch_admission"]["outstanding"]) == 4
+    assert [r["observation_id"] for r in bundle["trainer_rows"]] \
+        == bundle["schedule"]
+    assert bundle["runtime"].seed == 20260901
+    # a freeze pinning a DIFFERENT contract refuses
+    import dataclasses
+    forged = dataclasses.replace(
+        freeze, science_contract_sha256="ab" * 32)
+    out2 = tmp_path / "forged_freeze.json"
+    digest2 = p0_launch.save_launch_freeze(forged, out2)
+    with pytest.raises(InfrastructureError, match="different "
+                       "science contract"):
+        p0_launch.prepare_p0_dataset(out2, digest2)
+    # 321_s reproduction: a hand-crafted freeze DECLARING a forged
+    # prompt loads structurally but refuses at preparation — the
+    # freeze must bind the execution it authorizes
+    forged_prompt = dataclasses.replace(
+        freeze, runtime=dataclasses.replace(
+            freeze.runtime, prompt_sha256="0" * 64))
+    out3 = tmp_path / "forged_prompt.json"
+    digest3 = p0_launch.save_launch_freeze(forged_prompt, out3)
+    assert p0_launch.load_p0_launch_freeze(out3, digest3) \
+        == forged_prompt
+    with pytest.raises(InfrastructureError, match="ACTUAL"):
+        p0_launch.prepare_p0_dataset(out3, digest3)

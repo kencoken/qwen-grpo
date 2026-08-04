@@ -1,0 +1,173 @@
+{
+ "diagnostics": {
+  "items": [
+   "q1_counted_by_cell",
+   "q2_eligibility",
+   "q2_optimality",
+   "q2_choice_conditional_on_eligibility",
+   "q2_marginal_target_selections",
+   "direct_and_semantic_contrasts",
+   "sentinel_block",
+   "zero_variance_rate",
+   "invalid_completion_rate"
+  ],
+  "sentinel": {
+   "fields_required": [
+    "worker1_selections",
+    "worker1_completions",
+    "reward1_completions",
+    "reward_varying_groups",
+    "q1_counted_groups",
+    "group_denominator",
+    "completion_denominator",
+    "first_group_indices",
+    "first_update_indices",
+    "checkpoint_trajectory",
+    "evaluation_trajectory"
+   ]
+  }
+ },
+ "input_pins": {
+  "c2_actions_file_sha256": "8e705317676134df447b25a72532151c8068bb238a239facc266c1fb5525af34",
+  "c2_attested_environment_sha256": "372f958f5e5aa30805222d338f2e90d665cf8188a7c2ac8d559d231b3f53cd42",
+  "c2_closeout_entry_sha256": "2bf50c1e5b31a7acf28dc9391ea4fc021a82cacb20906692558cf36174266fbe",
+  "c2_identity_manifest_sha256": "7b19aeb9a642478785db1aa0d24e9126cf6d6ad3358c46b6c6a44b4dd82514af",
+  "c2_projection_file_sha256": "41f15c5d27ee1c9867bc82833bd088319c5644f1c0a86096844442b4306446c3",
+  "c2_projection_sha256": "f1912078fb27e67c489705737295bac461033324d58600825d944b5a12bf6355",
+  "c2_record_file_sha256": "cc42c16bd925282477746644e5959a5d5848c47e18308a8fc69a437fac8e27b6",
+  "c2_report_file_sha256": "03152f0eaa7e83b34110dc6e53be550f0f761d6141861246a70f55f5587e3abe",
+  "c2_schedule_file_sha256": "c2687919cd8a00768d9f5b148957f2c2013eb1b0a636f13ecb585d6bd5598b25",
+  "comparator_record_sha256": "9220c2c7a7efe890c60e5abbdcc3b84eecbbb971e75fa69e313e6d61888e5f1f",
+  "extension_surface_lock_sha256": "ccb1c3e2db2422a82919292144c0bdecc21d2cc89cb7a3a2c69bec17a2ce6d1b",
+  "pinned_mixture_file_sha256": "b305d9c808d21ba8ced0c21b01076497160527ba8164d588df35e20417a7deb6",
+  "pinned_mixture_record_sha256": "135a72bf4deb77048371074636d88ffebf6bd07d1c00ae349b6fcee221975b3f",
+  "selection_file_sha256": "e0bbb75d61aa0405c86a9a69a0e68957d5db995a389d1b34f353fe1dce546724",
+  "selection_record_sha256": "c6c087757eb4673c42ad37121f9037ca57ce9488e65c4d339d78b37d07fbee34"
+ },
+ "q1": {
+  "event": {
+   "high_family_correctness": "full",
+   "high_reward": 1.0,
+   "low_family_correctness": "strictly_lower",
+   "low_reward": 0.5,
+   "rule_id": "q1-counted-v1",
+   "same_group": true,
+   "valid_completions_only": true
+  },
+  "min_counted_groups_per_cell": 2,
+  "min_distinct_latents_among_counted": 2,
+  "population": "bridge_rows",
+  "sizing_counts": [
+   [
+    "code_atomic",
+    13
+   ],
+   [
+    "fork_join",
+    34
+   ],
+   [
+    "math_code",
+    13
+   ]
+  ],
+  "sizing_epochs": 5,
+  "version": "q1-v2"
+ },
+ "q2": {
+  "conditional_baselines": [
+   {
+    "denominator": 152,
+    "direction": "fork_join|w2_favoured",
+    "numerator": 8
+   },
+   {
+    "denominator": 15,
+    "direction": "math_code|w3_favoured",
+    "numerator": 0
+   }
+  ],
+  "conditional_denominator": "c2_eligible",
+  "conditional_numerator": "c2_optimal",
+  "conditional_rule_id": "q2-conditional-v1",
+  "conditional_zero_denominator": "undefined",
+  "eligibility": {
+   "code_worker_in": [
+    2,
+    3
+   ],
+   "malformed_completions": "excluded",
+   "non_code_routing": "family_correct",
+   "rule_id": "c2-eligibility-v1"
+  },
+  "marginal_baselines": [
+   [
+    "fork_join|w2_favoured",
+    73
+   ],
+   [
+    "math_code|w3_favoured",
+    108
+   ]
+  ],
+  "marginal_min_distinct_latents": 2,
+  "marginal_min_target_selections": 8,
+  "marginal_population": "valid_q2_composite",
+  "marginal_rule_id": "q2-marginal-v1",
+  "marginal_upstream_correctness_required": false,
+  "per_direction_targets": [
+   [
+    "math_code|w3_favoured",
+    3
+   ],
+   [
+    "fork_join|w2_favoured",
+    2
+   ]
+  ],
+  "version": "q2-v2"
+ },
+ "schema_version": "p0-science-contract-v2",
+ "scope": {
+  "q1_direct_cells": [
+   "code_atomic",
+   "fork_join",
+   "math_code"
+  ],
+  "q2_description": "coarse, cell-correlated hierarchical unlocking (301_f: authorized to be TRAINED, not shown learned; asymmetric starting conditions disclosed)",
+  "q3": "out_of_scope",
+  "sentinel_cell": "math_atomic",
+  "sentinel_excluded_from": [
+   "direct_q1_gate",
+   "sizing_minimum",
+   "authorization",
+   "headline_q1"
+  ],
+  "sentinel_observation_ids": [
+   "math_atomic:routing_dev:00000:a2799752:bound_var:private",
+   "math_atomic:routing_dev:00000:a2799752:goal_first:private",
+   "math_atomic:routing_dev:00000:a2799752:resource_first:private"
+  ],
+  "sentinel_training_exposed": true
+ },
+ "sizing": {
+  "cap": {
+   "capacity_inputs": [
+    "operational_ceiling_seconds",
+    "cumulative_consumed_seconds",
+    "measured_finalization_reserve_seconds",
+    "frozen_non_rollout_overhead_seconds",
+    "measured_whole_epoch_seconds"
+   ],
+   "capacity_zero_action": "stop_reviewed_amendment",
+   "launch_epochs": "min_nominal_capacity",
+   "rule_id": "p0-cap-v1",
+   "spare_capacity_action": "no_extra_training",
+   "under_target_action": "disclosed_under_target"
+  },
+  "groups_per_epoch": 157,
+  "nominal_epochs": 39,
+  "operational_ceiling_hours": 10.0,
+  "target_q1_counted_groups_per_sizing_cell": 100
+ }
+}
