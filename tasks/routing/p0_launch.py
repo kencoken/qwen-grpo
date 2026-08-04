@@ -609,8 +609,8 @@ LAUNCH_ADMISSION_OUTSTANDING = (
     "environment-manifest attestation against "
     "runtime.attested_environment_sha256",
     "checkpoint/evaluation cadence, evaluation decoding, and "
-    "telemetry identity (frozen with the real P0LaunchFreeze "
-    "instance)",
+    "telemetry identity (bound through the authenticated "
+    "P0ExecutionIdentity)",
 )
 
 
@@ -664,7 +664,8 @@ def prepare_p0_dataset(freeze_path: str | Path,
             "status": "DEFERRED",
             "deferred_to": "the post-merge P0 launch-admission "
                            "unit (the real P0LaunchFreeze "
-                           "instance)",
+                           "instance and its authenticated "
+                           "P0ExecutionIdentity)",
             "outstanding": LAUNCH_ADMISSION_OUTSTANDING,
         },
     }
