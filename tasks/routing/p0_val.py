@@ -1,0 +1,643 @@
+"""P0 precursors, Unit V — the `routing_dev_val` outcome-blind
+cohort freeze, the val surface tranche, and the val lock (the
+SIGNED precursors plan 326_f/328_f/330_f §1).
+
+V1 (CPU): the outcome-blind cohort — six cells equally, the
+DETERMINISTIC latent prefix 0–4 per cell, ALL THREE renderers (90
+observations) under the frozen natural-mixture definition — plus
+the COMPLETE evaluation identity: common-random-number seed
+derivation (330_f §1: NO checkpoint index), the canonical-profile
+decoding, the ordered observation list, batching, and the
+latent-level descriptive framing. `val_tranche_freeze()` is the
+preregistered record the reviewer signs BEFORE any GPU launch.
+
+V2 (GPU, <= 0.35 GPU-h): `prepare_val_launch` /
+`execute_val_run` — the two-phase support-run pattern with a
+VAL-specific launch manifest (no probe rule; the outcome-blind
+prefix check retained), ledger admission on the verified head,
+`materialize_dev_support` for the complete authenticated 4^S
+surface, and the post-run semantic-overlap gate.
+
+V3 (CPU): `build_val_lock` — the record binding the cohort, the
+natural-mixture weights, the complete evaluation identity, and
+the surface-lock hashes; its `record_sha256` is the
+`routing_dev_val_lock_sha256` pin the `P0LaunchFreeze` consumes.
+
+Never-trained-on is STRUCTURAL: the P0 trainer consumes only the
+pinned mixture schedule (`135a72bf…`); `routing_dev_val` appears
+in no training schedule. All val evidence is development-only."""
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+from pathlib import Path
+from typing import Any, Callable, Mapping
+
+from tasks.conductor.types import (
+    RENDERER_IDS,
+    InfrastructureError,
+)
+
+from . import dev_support
+from .charter import content_sha256, routing_execution_digest
+from .ledger import (
+    LEDGER_PATH,
+    admit_and_append_launch,
+    append_ledger_entry,
+)
+from .p0_launch import P0_RUNTIME_PROFILE_SHA256
+from .support_run import (
+    _default_environment,
+    _default_runtime,
+    _hash_directory,
+    _persist_verified,
+    _sha_file,
+    attest_environment,
+)
+
+DRIVER = "tasks/routing/p0_val.py"
+VAL_RUN_ROOT = "runs/routing-dev/val-surface-v1"
+VAL_LAUNCH_KIND = "routing-dev-val-launch-v1"
+VAL_LOCK_KIND = "routing-dev-val-lock-v1"
+
+VAL_CELLS = ("code_atomic", "fork_join", "lookup_atomic",
+             "lookup_math", "math_atomic", "math_code")
+
+VAL_CONFIG: dict[str, Any] = {
+    "tranche": "routing-dev-val-surface-v1",
+    "namespace": "routing_dev_val",
+    # the outcome-blind DETERMINISTIC prefix — no selection function
+    "cohort": {cell: [0, 1, 2, 3, 4] for cell in VAL_CELLS},
+    "renderers": list(RENDERER_IDS),
+    "visibility": "private",
+    "natural_mixture": {
+        "cells": "equal",
+        "latent_clusters_within_cell": "equal",
+        "renderers_within_latent": "equal",
+        "definition": "the frozen 211_f natural-mixture definition; "
+                      "unchanged across all within-cycle comparisons",
+    },
+    "evaluation": {
+        "domain": "p0_val_eval",
+        "base_seed": 20260804,
+        "seed_rule": ("sha256(domain || base_seed || observation_id "
+                      "|| completion_slot) mod 2^31 — NO checkpoint "
+                      "index (common random numbers, 330_f §1); the "
+                      "checkpoint lives in provenance only"),
+        "decoding": {"temperature": 1.0,
+                     "policy_max_new_tokens": 128,
+                     "group_size": 8},
+        "runtime_profile_sha256": P0_RUNTIME_PROFILE_SHA256,
+        "batching": ("canonical (cell, latent index, renderer) "
+                     "order; one 8-completion group per observation "
+                     "per checkpoint; the ordered observation list "
+                     "is bound in the val lock"),
+        "framing": ("paired latent-level DESCRIPTIVE evidence "
+                    "(5 clusters per cell) — never completion-level "
+                    "precision claims"),
+    },
+    "never_trained_on": ("structural — the P0 trainer consumes only "
+                         "the pinned mixture schedule 135a72bf…; "
+                         "routing_dev_val appears in no training "
+                         "schedule"),
+    "development_only": True,
+    "search_cap": 90,
+    "budget_gpu_hours": 0.35,
+    "run_root": VAL_RUN_ROOT,
+    "predictions": {
+        "identity_intersection_all_namespaces": 0,
+        "normalized_semantic_overlap": 0,
+        "rendered_prompt_overlap": 0,
+        "complete_4S_surfaces": ("every observation's full 4^S "
+                                 "assignment space authenticated"),
+        "measured_cost_gpu_hours": ("0.05-0.15 (calibration: the "
+                                    "extension materialized 864 "
+                                    "observations in 0.4934)"),
+    },
+    "lineage": {
+        "parent_entry_sha256":
+            "2bf50c1e5b31a7acf28dc9391ea4fc021a82cacb20906692558c"
+            "f36174266fbe",
+        "outcome_informed": False,
+        "motivating_evidence": "330_f-signed precursors plan Unit V",
+    },
+}
+VAL_CONFIG_SHA256 = \
+    "4d717337e5d765b2186a67a994e46eb7f5d89adc9f8b22ac802387e0943d1818"
+
+_VAL_DESIGN_FIELDS = (
+    "declaration_sha256", "namespace", "worker_visible_fingerprint",
+    "runtime_profile_fingerprint", "worker_pool_fingerprint",
+    "request_contract", "cache_identity", "val_config_sha256",
+    "search_cap",
+)
+
+
+def _validated_config() -> dict[str, Any]:
+    if content_sha256(VAL_CONFIG) != VAL_CONFIG_SHA256:
+        raise InfrastructureError(
+            "VAL_CONFIG was mutated after import")
+    return VAL_CONFIG
+
+
+# --- V1: the outcome-blind cohort + evaluation identity ------------------------
+
+def val_cohort_observations() -> list[dict[str, Any]]:
+    """The cohort regenerated from the frozen generator in canonical
+    (cell, index, renderer) order — 90 observations."""
+    config = _validated_config()
+    return dev_support.dev_cohort_observations(
+        config["namespace"], config["cohort"], config["renderers"],
+        config["visibility"])
+
+
+def seed_for_completion(observation_id: str, completion_slot: int,
+                        *, domain: str | None = None,
+                        base_seed: int | None = None) -> int:
+    """The frozen common-random-number derivation (330_f §1): the
+    same (observation, slot) draws at EVERY checkpoint — the
+    checkpoint index is provenance, never RNG input."""
+    config = _validated_config()
+    evaluation = config["evaluation"]
+    domain = domain or evaluation["domain"]
+    base = base_seed if base_seed is not None \
+        else evaluation["base_seed"]
+    if not isinstance(completion_slot, int) \
+            or isinstance(completion_slot, bool) \
+            or completion_slot < 0:
+        raise InfrastructureError(
+            "completion_slot must be a non-negative non-boolean "
+            "integer")
+    payload = f"{domain}||{base}||{observation_id}" \
+              f"||{completion_slot}".encode("utf-8")
+    return int.from_bytes(hashlib.sha256(payload).digest()[:4],
+                          "big") % (2 ** 31)
+
+
+# identity-only fields normalized away (330_f §5); `public_params`
+# is the non-serializable factor OBJECT whose content is already
+# fully present in `params`/`factor_assignment`/`public_manifest`
+_LATENT_NONSEMANTIC_FIELDS = frozenset({
+    "latent_program_id", "namespace", "latent_index", "seed",
+    "public_params"})
+
+
+def normalized_latent_semantics(latent: Mapping[str, Any]) -> str:
+    """The latent's SEMANTIC content with namespace/identity-only
+    fields removed (identity-derived `seed` included) — so an empty
+    cross-population intersection is substantive, not tautological
+    (330_f §5)."""
+    body = {k: v for k, v in latent.items()
+            if k not in _LATENT_NONSEMANTIC_FIELDS}
+    return content_sha256(body)
+
+
+def semantic_overlap_report(
+        observations: list[Mapping[str, Any]],
+        reference_observations: list[Mapping[str, Any]]
+        ) -> dict[str, Any]:
+    """The substantive zero-overlap checks (330_f §5) between a
+    candidate population and a reference population: (a) normalized
+    latent semantics; (b) rendered policy prompts (which carry no
+    identity strings — verified here). Both intersections must be
+    empty; both sides must be non-empty (the check must have
+    teeth)."""
+    from tasks.conductor import program
+    from tasks.conductor.policy import policy_messages
+
+    def _prompt_of(obs: Mapping[str, Any]) -> str:
+        latent = obs["latent"]
+        inst = obs.get("instance") or program.render_instance(
+            latent, obs["renderer_id"],
+            obs["observation_id"].split(":")[5])
+        steps = [{"subtask": s["subtask"], "resource": s["resource"],
+                  "access": s["access"]}
+                 for s in program.workflow_steps(latent)]
+        prompt = policy_messages(inst, steps)[1]["content"]
+        oid = obs["observation_id"]
+        if oid in prompt or latent["namespace"] in prompt:
+            raise InfrastructureError(
+                f"{oid}: the rendered prompt embeds an identity "
+                "string — the prompt-overlap check would be "
+                "tautological")
+        return prompt
+
+    semantics = {normalized_latent_semantics(o["latent"])
+                 for o in observations}
+    reference_semantics = {normalized_latent_semantics(o["latent"])
+                           for o in reference_observations}
+    prompts = {_prompt_of(o) for o in observations}
+    reference_prompts = {_prompt_of(o)
+                         for o in reference_observations}
+    if not (semantics and reference_semantics and prompts
+            and reference_prompts):
+        raise InfrastructureError(
+            "semantic-overlap check requires non-empty populations")
+    report = {
+        "semantic_intersection":
+            len(semantics & reference_semantics),
+        "prompt_intersection": len(prompts & reference_prompts),
+        "candidate_semantics": len(semantics),
+        "reference_semantics": len(reference_semantics),
+    }
+    if report["semantic_intersection"] != 0 \
+            or report["prompt_intersection"] != 0:
+        raise InfrastructureError(
+            f"population overlap is not empty: {report} — the val "
+            "cohort must be semantically disjoint (330_f §5)")
+    return report
+
+
+def val_tranche_freeze() -> dict[str, Any]:
+    """The preregistered V1 record the reviewer signs BEFORE any
+    GPU launch: the config, the regenerated cohort identities, the
+    planned execution volume, and the falsifiable predictions."""
+    from tasks.conductor import oracle
+    config = _validated_config()
+    observations = val_cohort_observations()
+    planned = sum(
+        len(oracle.enumerate_assignments(obs["num_nodes"]))
+        * obs["num_nodes"] for obs in observations)
+    body = {
+        "kind": "p0_val_tranche",
+        "question": ("Unit V: the outcome-blind routing_dev_val "
+                     "cohort — natural mixture, never trained on — "
+                     "with complete authenticated 4^S surfaces, "
+                     "locked as the P0 checkpoint-evaluation "
+                     "population"),
+        "motivation": "330_f-signed precursors plan §1",
+        "config": config,
+        "config_sha256": VAL_CONFIG_SHA256,
+        "observation_ids": [obs["observation_id"]
+                            for obs in observations],
+        "observations_total": len(observations),
+        "planned_step_executions": planned,
+        "development_only": True,
+    }
+    body["freeze_sha256"] = content_sha256(body)
+    return body
+
+
+# --- V2: the launch (two-phase, val-specific manifest) -------------------------
+
+def build_val_launch_manifest(*, declaration: Mapping[str, Any],
+                              environment_manifest: Mapping[str, Any]
+                              ) -> dict[str, Any]:
+    """The ONE pre-launch record for the val tranche: no probe rule
+    (nothing is selected from this surface); the outcome-blind
+    prefix check is retained; the manifest binds the frozen
+    VAL_CONFIG identity, the declaration, the driver digest, the
+    environment bytes, the search cap, and the budget."""
+    config = _validated_config()
+    dev_support.validate_dev_cohort(
+        declaration["namespace"], declaration["cohort"],
+        declaration["renderers"], declaration["visibility"])
+    if declaration["namespace"] != config["namespace"] \
+            or declaration["cohort"] != config["cohort"] \
+            or declaration["renderers"] != config["renderers"] \
+            or declaration["visibility"] != config["visibility"]:
+        raise InfrastructureError(
+            "the declaration is not the frozen val cohort")
+    for cell, indices in declaration["cohort"].items():
+        if sorted(indices) != list(range(len(indices))):
+            raise InfrastructureError(
+                f"{cell}: declared indices are not the "
+                "outcome-blind prefix 0..k-1 (211_f §4)")
+    total = len(declaration["observations"])
+    if total > config["search_cap"]:
+        raise InfrastructureError(
+            f"declaration screens {total} rendered observations, "
+            f"above the frozen cap {config['search_cap']}")
+    digest = routing_execution_digest(DRIVER)
+    manifest = {
+        "kind": VAL_LAUNCH_KIND,
+        "declaration_sha256": content_sha256(dict(declaration)),
+        "namespace": declaration["namespace"],
+        "worker_visible_fingerprint":
+            declaration["worker_visible_fingerprint"],
+        "runtime_profile_fingerprint":
+            declaration["runtime_profile_fingerprint"],
+        "worker_pool_fingerprint":
+            declaration["worker_pool_fingerprint"],
+        "request_contract": declaration["request_contract"],
+        "cache_identity": declaration["cache_identity"],
+        "val_config_sha256": VAL_CONFIG_SHA256,
+        "search_cap": config["search_cap"],
+        "budget_gpu_hours": config["budget_gpu_hours"],
+        "driver": DRIVER,
+        "routing_source_sha256": digest["routing_source_sha256"],
+        "environment_manifest_sha256":
+            dev_support.validate_environment_manifest_binding(
+                environment_manifest),
+        "support": config["tranche"],
+    }
+    manifest["scientific_design_sha256"] = content_sha256(
+        {field: manifest[field] for field in _VAL_DESIGN_FIELDS})
+    manifest["manifest_sha256"] = content_sha256(
+        {k: v for k, v in manifest.items()
+         if k != "manifest_sha256"})
+    return manifest
+
+
+def validate_val_launch_manifest(manifest: Mapping[str, Any],
+                                 declaration: Mapping[str, Any]
+                                 ) -> dict[str, Any]:
+    """The strict revalidation boundary `materialize_dev_support`
+    consumes: rebuild-and-compare against the declaration."""
+    if manifest.get("kind") != VAL_LAUNCH_KIND:
+        raise InfrastructureError(
+            f"unknown val launch kind {manifest.get('kind')!r}")
+    body = {k: v for k, v in manifest.items()
+            if k != "manifest_sha256"}
+    if content_sha256(body) != manifest.get("manifest_sha256"):
+        raise InfrastructureError("val launch manifest does not "
+                                  "rehash")
+    if manifest["declaration_sha256"] != \
+            content_sha256(dict(declaration)):
+        raise InfrastructureError(
+            "val launch manifest does not bind this declaration")
+    if manifest["val_config_sha256"] != VAL_CONFIG_SHA256:
+        raise InfrastructureError(
+            "val launch manifest does not bind the frozen "
+            "VAL_CONFIG")
+    if manifest["scientific_design_sha256"] != content_sha256(
+            {field: manifest[field]
+             for field in _VAL_DESIGN_FIELDS}):
+        raise InfrastructureError(
+            "val scientific-design identity does not recompute")
+    return dict(manifest)
+
+
+def prepare_val_launch(*, run_dir: str | Path = VAL_RUN_ROOT,
+                       _runtime_factory: Callable[[], Any]
+                       | None = None,
+                       _environment_builder:
+                       Callable[[], dict[str, Any]] | None = None
+                       ) -> dict[str, Any]:
+    """Phase 1: build and persist every prelaunch input exactly
+    once."""
+    config = _validated_config()
+    run_dir = Path(run_dir)
+    prelaunch = run_dir / "prelaunch"
+    if prelaunch.exists():
+        raise InfrastructureError(
+            f"{prelaunch} exists; a launch is prepared exactly once")
+    rt = (_runtime_factory or _default_runtime)()
+    try:
+        declaration = dev_support.build_dev_declaration(
+            rt, tag=config["tranche"], namespace=config["namespace"],
+            cohort=config["cohort"], renderers=config["renderers"],
+            visibility=config["visibility"])
+    finally:
+        rt.close()
+    environment = (_environment_builder or _default_environment)()
+    manifest = build_val_launch_manifest(
+        declaration=declaration, environment_manifest=environment)
+    prelaunch.mkdir(parents=True)
+    for name, payload in (("declaration.json", declaration),
+                          ("env_manifest.json", environment),
+                          ("val_launch.json", manifest),
+                          ("val_freeze.json", val_tranche_freeze())):
+        (prelaunch / name).write_text(
+            json.dumps(payload, indent=1, sort_keys=True) + "\n",
+            encoding="utf-8")
+    return manifest
+
+
+def execute_val_run(*, run_dir: str | Path = VAL_RUN_ROOT,
+                    expected_manifest_sha256: str,
+                    expected_head_sha256: str | None,
+                    question: str, motivating_evidence: str,
+                    ledger_path: str | Path = LEDGER_PATH,
+                    _runtime_factory: Callable[[], Any]
+                    | None = None,
+                    _environment_builder:
+                    Callable[[], dict[str, Any]] | None = None
+                    ) -> dict[str, Any]:
+    """Phase 2: full validation BEFORE the irreversible admission;
+    materialization + lock + the post-run semantic-overlap gate
+    under an abort handler; verified outputs before the success
+    closeout. Retry rule (330_f §5): a partial materialization can
+    never be locked; an identical-design retry receives a NEW
+    execution identity and cumulative accounting."""
+    config = _validated_config()
+    run_dir = Path(run_dir)
+    prelaunch = run_dir / "prelaunch"
+    declaration = json.loads(
+        (prelaunch / "declaration.json").read_text("utf-8"))
+    frozen_env = json.loads(
+        (prelaunch / "env_manifest.json").read_text("utf-8"))
+    manifest = json.loads(
+        (prelaunch / "val_launch.json").read_text("utf-8"))
+
+    # --- 1. full pre-admission validation --------------------------
+    manifest = validate_val_launch_manifest(manifest, declaration)
+    if manifest["manifest_sha256"] != expected_manifest_sha256:
+        raise InfrastructureError(
+            "prepared val-launch manifest is not the externally "
+            "frozen one")
+    if dev_support.validate_environment_manifest_binding(frozen_env) \
+            != manifest["environment_manifest_sha256"]:
+        raise InfrastructureError(
+            "persisted environment manifest is not the one the "
+            "manifest binds")
+    live_env = (_environment_builder or _default_environment)()
+    dev_support.validate_environment_manifest_binding(live_env)
+    attest_environment(frozen_env, live_env)
+    surface_dir = run_dir / "surface"
+    outputs = [surface_dir, run_dir / "run_record.json",
+               run_dir / "val_lock.json",
+               run_dir / "overlap_report.json",
+               run_dir / "execute_env_manifest.json"]
+    for path in outputs:
+        if path.exists():
+            raise InfrastructureError(
+                f"{path} exists — outputs are preflighted before "
+                "admission")
+
+    # --- 2. ADMIT (irreversible from here) -------------------------
+    entry = {
+        "kind": "support_materialization",
+        "question": question,
+        "motivating_evidence": motivating_evidence,
+        "freeze": {
+            "val_launch_sha256": manifest["manifest_sha256"],
+            "val_config_sha256": VAL_CONFIG_SHA256,
+            "scientific_design_sha256":
+                manifest["scientific_design_sha256"],
+        },
+        "parent": None,
+        "budget_allocated_gpu_hours": manifest["budget_gpu_hours"],
+        "outcome_informed": False,
+        "cohort_selection": "outcome_blind",
+    }
+    admitted = admit_and_append_launch(entry, expected_head_sha256,
+                                       ledger_path,
+                                       launch_manifest=manifest)
+    head = admitted["entry_sha256"]
+    started = time.monotonic()
+
+    try:
+        _persist_verified(run_dir / "execute_env_manifest.json",
+                          live_env)
+        rt = (_runtime_factory or _default_runtime)()
+        try:
+            dev_support.materialize_dev_support(
+                rt, declaration, surface_dir,
+                launch_manifest=manifest,
+                environment_manifest=frozen_env,
+                expected_manifest_sha256=expected_manifest_sha256,
+                ledger_path=ledger_path, expected_head_sha256=head,
+                _launch_validator=validate_val_launch_manifest,
+                _admitted_kind="support_materialization",
+                _admitted_manifest_key="val_launch_sha256")
+        finally:
+            rt.close()
+        lock = dev_support.build_surface_lock(surface_dir)
+        loaded = dev_support.load_dev_surface(
+            surface_dir, expected_lock_sha256=lock["lock_sha256"])
+        # the post-run semantic-overlap gate against the LOCKED
+        # extension (training) surface — predictions falsified here
+        from .p0_replay import restore_extension_surface_if_absent
+        from .unit_c2_sample import UNIT_C2_CONFIG
+        training = dev_support.load_dev_surface(
+            restore_extension_surface_if_absent(),
+            expected_lock_sha256=UNIT_C2_CONFIG[
+                "extension_surface_lock_sha256"])
+        val_obs = val_cohort_observations()
+        overlap = semantic_overlap_report(
+            val_obs,
+            [{**obs, "latent": _regenerate_latent(obs)}
+             for obs in training["observations"]])
+        val_lock = build_val_lock(surface_dir)
+        record = {
+            "run": "routing-dev-val-surface-v1",
+            "surface_dir": str(surface_dir),
+            "val_launch_sha256": manifest["manifest_sha256"],
+            "surface_lock_sha256": lock["lock_sha256"],
+            "val_lock_sha256": val_lock["record_sha256"],
+            "launch_entry_sha256": head,
+            "overlap_report": overlap,
+            "development_only": True,
+        }
+        for name, payload in (("overlap_report.json", overlap),
+                              ("run_record.json", record)):
+            _persist_verified(run_dir / name, payload)
+    except BaseException as error:
+        measured = round((time.monotonic() - started) / 3600.0, 4)
+        append_ledger_entry(
+            {"kind": "closeout", "question": question,
+             "motivating_evidence": "val run ABORTED",
+             "freeze": {
+                 "val_launch_sha256": manifest["manifest_sha256"],
+                 "partial_artifact_hashes":
+                     _hash_directory(run_dir)},
+             "parent": head,
+             "budget_allocated_gpu_hours": 0.0,
+             "budget_consumed_gpu_hours": measured,
+             "closes_entry_sha256": head,
+             "terminal_status": "aborted",
+             "interpretation": f"{type(error).__name__}: {error}",
+             "outcome_informed": False,
+             "outcome_pointer": str(run_dir)},
+            head, ledger_path)
+        raise
+
+    measured = round((time.monotonic() - started) / 3600.0, 4)
+    closeout = append_ledger_entry(
+        {"kind": "closeout", "question": question,
+         "motivating_evidence": "measured val-surface cost",
+         "freeze": {
+             "surface_lock_sha256": lock["lock_sha256"],
+             "val_lock_sha256": val_lock["record_sha256"],
+             "val_lock_file_sha256":
+                 _sha_file(run_dir / "val_lock.json"),
+             "run_record_file_sha256":
+                 _sha_file(run_dir / "run_record.json"),
+             "execute_env_file_sha256":
+                 _sha_file(run_dir / "execute_env_manifest.json"),
+             "terminal_artifact_hashes": _hash_directory(run_dir),
+             "rendered_observations": len(loaded["observations"]),
+         },
+         "parent": head,
+         "budget_allocated_gpu_hours": 0.0,
+         "budget_consumed_gpu_hours": measured,
+         "closes_entry_sha256": head,
+         "terminal_status": "complete",
+         "outcome_informed": False,
+         "outcome_pointer": str(run_dir / "run_record.json")},
+        head, ledger_path)
+    return {**record, "measured_gpu_hours": measured,
+            "closeout_entry_sha256": closeout["entry_sha256"],
+            "ledger_head": closeout["entry_sha256"]}
+
+
+def _regenerate_latent(obs: Mapping[str, Any]) -> dict[str, Any]:
+    from tasks.conductor import program
+    from tasks.conductor.profiles import DEFAULT_PROFILE
+    oid = obs["observation_id"]
+    return program.generate_latent(
+        obs["cell_id"], oid.split(":")[1], int(oid.split(":")[2]),
+        DEFAULT_PROFILE).latent
+
+
+# --- V3: the val lock ----------------------------------------------------------
+
+def build_val_lock(surface_dir: str | Path) -> dict[str, Any]:
+    """The V3 record: cohort + natural-mixture weights + the
+    COMPLETE evaluation identity + the surface-lock binding.
+    `record_sha256` is the `routing_dev_val_lock_sha256` pin.
+    Written once as `val_lock.json` beside the run."""
+    config = _validated_config()
+    surface_dir = Path(surface_dir)
+    lock_path = surface_dir.parent / "val_lock.json"
+    if lock_path.exists():
+        raise InfrastructureError(
+            f"{lock_path} exists; the val lock is written exactly "
+            "once")
+    surface_lock = json.loads(
+        (surface_dir / "surface_lock.json").read_text("utf-8"))
+    observations = val_cohort_observations()
+    record = {
+        "kind": VAL_LOCK_KIND,
+        "val_config_sha256": VAL_CONFIG_SHA256,
+        "namespace": config["namespace"],
+        "cohort": config["cohort"],
+        "renderers": config["renderers"],
+        "visibility": config["visibility"],
+        "natural_mixture": config["natural_mixture"],
+        "evaluation": config["evaluation"],
+        "ordered_observation_ids": [obs["observation_id"]
+                                    for obs in observations],
+        "surface_lock_sha256": surface_lock["lock_sha256"],
+        "surface_lock_file_sha256":
+            _sha_file(surface_dir / "surface_lock.json"),
+        "never_trained_on": config["never_trained_on"],
+        "development_only": True,
+        "framing": config["evaluation"]["framing"],
+    }
+    record["record_sha256"] = content_sha256(record)
+    lock_path.write_text(
+        json.dumps(record, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    return record
+
+
+def load_val_lock(path: str | Path,
+                  expected_sha256: str) -> dict[str, Any]:
+    """The strict consuming loader: the externally reviewed hash is
+    REQUIRED (a self-hash is never authentication)."""
+    payload = json.loads(Path(path).read_text("utf-8"))
+    body = {k: v for k, v in payload.items()
+            if k != "record_sha256"}
+    if content_sha256(body) != payload.get("record_sha256") \
+            or payload["record_sha256"] != expected_sha256:
+        raise InfrastructureError(
+            "val lock does not rehash to the externally reviewed "
+            "value")
+    if payload.get("kind") != VAL_LOCK_KIND \
+            or payload.get("val_config_sha256") != VAL_CONFIG_SHA256:
+        raise InfrastructureError(
+            "val lock is not the frozen Unit-V record")
+    return payload

@@ -25,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import extension_run, ledger, p0_c2_equivalence, p0_cap, p0_contract, p0_estimands, p0_launch, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, p0_tables, support_run, telemetry, unit_c2_sample, unit_c_sample
+from tasks.routing import extension_run, ledger, p0_c2_equivalence, p0_cap, p0_contract, p0_estimands, p0_launch, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, p0_tables, p0_val, support_run, telemetry, unit_c2_sample, unit_c_sample
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -5640,3 +5640,157 @@ def test_p0_first_consumer_prepare(tmp_path, monkeypatch):
         == forged_prompt
     with pytest.raises(InfrastructureError, match="ACTUAL"):
         p0_launch.prepare_p0_dataset(out3, digest3)
+
+
+# --- precursors Unit V: the routing_dev_val freeze (331_f) ---------------------
+
+def test_p0_val_cohort_and_seeds(monkeypatch):
+    """V1: the outcome-blind cohort, identity disjointness, the
+    common-random-number seed derivation, and the preregistered
+    freeze record."""
+    obs = p0_val.val_cohort_observations()
+    assert len(obs) == 90
+    assert {o["cell_id"] for o in obs} == set(p0_val.VAL_CELLS)
+    for o in obs:
+        parts = o["observation_id"].split(":")
+        assert parts[1] == "routing_dev_val"
+        assert int(parts[2]) in range(5)
+    # canonical (cell, index, renderer) order
+    keys = [(o["cell_id"], int(o["observation_id"].split(":")[2]),
+             o["renderer_id"]) for o in obs]
+    assert keys == sorted(keys, key=lambda k: (k[0], k[1]))
+    # identity disjointness across namespaces is BY CONSTRUCTION:
+    # the same (cell, index, renderer) in other namespaces yields
+    # different ids
+    val_ids = {o["observation_id"] for o in obs}
+    for namespace in ("routing_dev", "routing_dev_cycle"):
+        other = dev_support.dev_cohort_observations(
+            namespace,
+            {cell: [0, 1, 2, 3, 4] for cell in p0_val.VAL_CELLS},
+            p0_val.VAL_CONFIG["renderers"], "private")
+        assert val_ids & {o["observation_id"] for o in other} \
+            == set()
+    # the preregistered freeze: 90 observations, the reviewer's
+    # 4,020 planned step executions, config bound by hash
+    freeze = p0_val.val_tranche_freeze()
+    assert freeze["observations_total"] == 90
+    assert freeze["planned_step_executions"] == 4020
+    assert freeze["config_sha256"] == p0_val.VAL_CONFIG_SHA256
+    assert freeze["development_only"] is True
+    # a mutated config refuses everywhere
+    monkeypatch.setitem(p0_val.VAL_CONFIG, "search_cap", 91)
+    with pytest.raises(InfrastructureError, match="mutated"):
+        p0_val.val_cohort_observations()
+    monkeypatch.undo()
+    # CRN seeds: deterministic; distinct across slot/observation/
+    # domain; the signature has NO checkpoint parameter (330_f §1)
+    import inspect
+    signature = inspect.signature(p0_val.seed_for_completion)
+    assert "checkpoint" not in str(signature)
+    a = p0_val.seed_for_completion(obs[0]["observation_id"], 0)
+    assert a == p0_val.seed_for_completion(
+        obs[0]["observation_id"], 0)
+    assert a != p0_val.seed_for_completion(
+        obs[0]["observation_id"], 1)
+    assert a != p0_val.seed_for_completion(
+        obs[1]["observation_id"], 0)
+    assert a != p0_val.seed_for_completion(
+        obs[0]["observation_id"], 0, domain="cycle_eval")
+    with pytest.raises(InfrastructureError, match="non-negative"):
+        p0_val.seed_for_completion(obs[0]["observation_id"], True)
+
+
+def test_p0_val_semantic_overlap_gate():
+    """330_s §5: the normalized zero-overlap checks are substantive
+    (non-empty populations, identity fields normalized away) and
+    bite on a forged collision."""
+    obs = p0_val.val_cohort_observations()
+    training = dev_support.load_dev_surface(
+        p0_replay.restore_extension_surface_if_absent(),
+        expected_lock_sha256=unit_c2_sample.UNIT_C2_CONFIG[
+            "extension_surface_lock_sha256"])
+    reference = [{**o, "latent": p0_val._regenerate_latent(o)}
+                 for o in training["observations"]]
+    report = p0_val.semantic_overlap_report(obs, reference)
+    assert report["semantic_intersection"] == 0
+    assert report["prompt_intersection"] == 0
+    assert report["candidate_semantics"] == 30
+    assert report["reference_semantics"] > 0
+    # a forged collision (a val latent smuggled into the reference)
+    # refuses — the check has teeth
+    with pytest.raises(InfrastructureError, match="overlap is not "
+                       "empty"):
+        p0_val.semantic_overlap_report(obs, reference + [obs[0]])
+    with pytest.raises(InfrastructureError, match="non-empty"):
+        p0_val.semantic_overlap_report(obs, [])
+
+
+def test_p0_val_launch_manifest_and_lock(tmp_path):
+    """V2/V3 CPU boundaries: the val launch manifest (no probe
+    rule; outcome-blind prefix retained; config-bound) and the val
+    lock with its strict loader."""
+    config = p0_val.VAL_CONFIG
+    observations = p0_val.val_cohort_observations()
+    from tasks.conductor import oracle
+    declaration = {
+        "support": config["tranche"],
+        "namespace": config["namespace"],
+        "cohort": {cell: sorted(config["cohort"][cell])
+                   for cell in sorted(config["cohort"])},
+        "renderers": config["renderers"],
+        "visibility": config["visibility"],
+        "observations": [
+            {"observation_id": o["observation_id"],
+             "cell_id": o["cell_id"],
+             "renderer_id": o["renderer_id"],
+             "num_nodes": o["num_nodes"],
+             "assignments": len(oracle.enumerate_assignments(
+                 o["num_nodes"]))}
+            for o in observations],
+        "worker_visible_fingerprint": "wv" * 8,
+        "runtime_profile_fingerprint": "rp" * 8,
+        "worker_pool_fingerprint": "wp" * 8,
+        "request_contract": "rc-test",
+        "cache_identity": "worker_completions/slw/rc-test",
+    }
+    environment = _env_manifest()
+    manifest = p0_val.build_val_launch_manifest(
+        declaration=declaration, environment_manifest=environment)
+    assert manifest["kind"] == p0_val.VAL_LAUNCH_KIND
+    assert manifest["val_config_sha256"] == p0_val.VAL_CONFIG_SHA256
+    assert manifest["budget_gpu_hours"] == 0.35
+    assert "probe_rule_sha256" not in manifest
+    validated = p0_val.validate_val_launch_manifest(manifest,
+                                                    declaration)
+    assert validated["manifest_sha256"] == \
+        manifest["manifest_sha256"]
+    tampered = dict(manifest)
+    tampered["search_cap"] = 200
+    with pytest.raises(InfrastructureError, match="rehash"):
+        p0_val.validate_val_launch_manifest(tampered, declaration)
+    curated = copy.deepcopy(declaration)
+    curated["cohort"]["fork_join"] = [0, 1, 2, 3, 7]
+    with pytest.raises(InfrastructureError, match="not the frozen "
+                       "val cohort"):
+        p0_val.build_val_launch_manifest(
+            declaration=curated, environment_manifest=environment)
+    # V3: the val lock binds cohort + evaluation identity + surface
+    run_dir = tmp_path / "val-run"
+    surface_dir = run_dir / "surface"
+    surface_dir.mkdir(parents=True)
+    stub_lock = {"lock": "stub", "lock_sha256": "ab" * 32}
+    (surface_dir / "surface_lock.json").write_text(
+        json.dumps(stub_lock), encoding="utf-8")
+    record = p0_val.build_val_lock(surface_dir)
+    assert record["kind"] == p0_val.VAL_LOCK_KIND
+    assert record["surface_lock_sha256"] == "ab" * 32
+    assert len(record["ordered_observation_ids"]) == 90
+    assert record["evaluation"]["base_seed"] == 20260804
+    assert record["development_only"] is True
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_val.build_val_lock(surface_dir)
+    loaded = p0_val.load_val_lock(run_dir / "val_lock.json",
+                                  record["record_sha256"])
+    assert loaded == record
+    with pytest.raises(InfrastructureError, match="reviewed"):
+        p0_val.load_val_lock(run_dir / "val_lock.json", "0" * 64)
