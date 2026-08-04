@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -47,7 +48,11 @@ from tasks.conductor.types import (
 )
 
 from . import dev_support
-from .charter import content_sha256, routing_execution_digest
+from .charter import (
+    canonical_json,
+    content_sha256,
+    routing_execution_digest,
+)
 from .ledger import (
     LEDGER_PATH,
     admit_and_append_launch,
@@ -109,6 +114,14 @@ VAL_CONFIG: dict[str, Any] = {
         "framing": ("paired latent-level DESCRIPTIVE evidence "
                     "(5 clusters per cell) — never completion-level "
                     "precision claims"),
+        "held_out_meaning": (
+            "validation tests HELD-OUT LATENT/RESOURCE INSTANCES, "
+            "not template-disjoint prompts (334_s): "
+            "alpha-normalized latent/resource semantics are the "
+            "HARD disjointness requirement; alpha-normalized "
+            "prompt-template overlap with the training population "
+            "is DISCLOSED, and repeated-template vs novel-template "
+            "results MAY be reported descriptively"),
     },
     "never_trained_on": (
         "structural — the P0 trainer consumes only the pinned "
@@ -121,8 +134,12 @@ VAL_CONFIG: dict[str, Any] = {
     "run_root": VAL_RUN_ROOT,
     "predictions": {
         "identity_intersection_all_namespaces": 0,
-        "normalized_semantic_overlap": 0,
-        "rendered_prompt_overlap": 0,
+        "alpha_normalized_semantic_overlap": 0,
+        "alpha_normalized_prompt_overlap_disclosed": (
+            "measured pre-launch: 21 unique val-training template "
+            "collisions affecting 39/90 val observations; 15 "
+            "val-cycle affecting 30/90; 30 cycle-training — "
+            "DISCLOSED, not gated (334_s)"),
         "complete_4S_surfaces": ("every observation's full 4^S "
                                  "assignment space authenticated"),
         "measured_cost_gpu_hours": ("0.05-0.15 (calibration: the "
@@ -138,7 +155,7 @@ VAL_CONFIG: dict[str, Any] = {
     },
 }
 VAL_CONFIG_SHA256 = \
-    "cd555009667f1778a03dbb064132c5a05c1ac822daa1dd15f6b75a453fee9242"
+    "73376e07cf83197bb210093bb31a38f5dbf4e17101eb6d61cc273b899a6deccf"
 
 # the complete frozen 720-seed schedule identity (332_s P1-4):
 # content hash over [(observation_id, slot, seed)] in canonical
@@ -151,9 +168,9 @@ _VAL_LAUNCH_KEYS = frozenset({
     "worker_visible_fingerprint", "runtime_profile_fingerprint",
     "worker_pool_fingerprint", "request_contract", "cache_identity",
     "val_config_sha256", "val_freeze_sha256", "search_cap",
-    "budget_gpu_hours", "driver", "routing_source_sha256",
-    "environment_manifest_sha256", "support",
-    "scientific_design_sha256",
+    "budget_gpu_hours", "driver", "run_root",
+    "routing_source_sha256", "environment_manifest_sha256",
+    "support", "scientific_design_sha256",
 })
 
 _VAL_DESIGN_FIELDS = (
@@ -232,15 +249,37 @@ _LATENT_NONSEMANTIC_FIELDS = frozenset({
     "latent_program_id", "namespace", "latent_index", "seed",
     "public_params"})
 
+# 334_s P1-1: opaque resource handles (R-8V9 style) are
+# identity-only ALIASES — they must be canonicalized before any
+# overlap claim is substantive
+_RESOURCE_HANDLE_RE = re.compile(r"R-[0-9A-Z]{3}")
+
+
+def alpha_normalize(text: str) -> str:
+    """Replace each opaque resource handle consistently with R0,
+    R1, ... in order of first appearance (334_s P1-1)."""
+    mapping: dict[str, str] = {}
+
+    def _sub(match: re.Match) -> str:
+        handle = match.group(0)
+        if handle not in mapping:
+            mapping[handle] = f"R{len(mapping)}"
+        return mapping[handle]
+
+    return _RESOURCE_HANDLE_RE.sub(_sub, text)
+
 
 def normalized_latent_semantics(latent: Mapping[str, Any]) -> str:
     """The latent's SEMANTIC content with namespace/identity-only
-    fields removed (identity-derived `seed` included) — so an empty
-    cross-population intersection is substantive, not tautological
-    (330_f §5)."""
+    fields removed (identity-derived `seed` included) AND resource
+    handles ALPHA-NORMALIZED (334_s P1-1) — so an empty
+    cross-population intersection is substantive, not an artifact
+    of random handle names."""
     body = {k: v for k, v in latent.items()
             if k not in _LATENT_NONSEMANTIC_FIELDS}
-    return content_sha256(body)
+    return hashlib.sha256(
+        alpha_normalize(canonical_json(body)).encode("utf-8")
+    ).hexdigest()
 
 
 def semantic_overlap_report(
@@ -277,25 +316,34 @@ def semantic_overlap_report(
                  for o in observations}
     reference_semantics = {normalized_latent_semantics(o["latent"])
                            for o in reference_observations}
-    prompts = {_prompt_of(o) for o in observations}
-    reference_prompts = {_prompt_of(o)
+    prompts = [alpha_normalize(_prompt_of(o))
+               for o in observations]
+    reference_prompts = {alpha_normalize(_prompt_of(o))
                          for o in reference_observations}
     if not (semantics and reference_semantics and prompts
             and reference_prompts):
         raise InfrastructureError(
             "semantic-overlap check requires non-empty populations")
+    collisions = set(prompts) & reference_prompts
     report = {
+        # the HARD requirement (334_s): alpha-normalized
+        # latent/resource semantics are disjoint
         "semantic_intersection":
             len(semantics & reference_semantics),
-        "prompt_intersection": len(prompts & reference_prompts),
+        # DISCLOSED, not gated (334_s): validation tests held-out
+        # latent/resource instances, not template-disjoint prompts
+        "alpha_prompt_collisions": len(collisions),
+        "alpha_prompt_affected_candidates":
+            sum(1 for p in prompts if p in reference_prompts),
+        "candidate_observations": len(prompts),
         "candidate_semantics": len(semantics),
         "reference_semantics": len(reference_semantics),
     }
-    if report["semantic_intersection"] != 0 \
-            or report["prompt_intersection"] != 0:
+    if report["semantic_intersection"] != 0:
         raise InfrastructureError(
             f"population overlap is not empty: {report} — the val "
-            "cohort must be semantically disjoint (330_f §5)")
+            "cohort must be semantically disjoint under alpha "
+            "normalization (330_f §5; 334_s)")
     return report
 
 
@@ -368,15 +416,12 @@ def val_tranche_freeze() -> dict[str, Any]:
 
 # --- V2: the launch (two-phase, val-specific manifest) -------------------------
 
-def build_val_launch_manifest(*, declaration: Mapping[str, Any],
-                              environment_manifest: Mapping[str, Any]
-                              ) -> dict[str, Any]:
-    """The ONE pre-launch record for the val tranche: no probe rule
-    (nothing is selected from this surface); the outcome-blind
-    prefix check is retained; the manifest binds the frozen
-    VAL_CONFIG identity, the SIGNED tranche-freeze hash (332_s
-    P1-7), the declaration, the driver digest, the environment
-    bytes, the search cap, and the budget."""
+def _require_frozen_cohort_declaration(
+        declaration: Mapping[str, Any]) -> None:
+    """334_s P1-2: the ONE cohort validator, shared by the builder
+    AND the revalidation boundary — the declaration must BE the
+    frozen val cohort, down to the regenerated observation rows."""
+    from tasks.conductor import oracle
     config = _validated_config()
     dev_support.validate_dev_cohort(
         declaration["namespace"], declaration["cohort"],
@@ -392,11 +437,36 @@ def build_val_launch_manifest(*, declaration: Mapping[str, Any],
             raise InfrastructureError(
                 f"{cell}: declared indices are not the "
                 "outcome-blind prefix 0..k-1 (211_f §4)")
+    expected_rows = [
+        {"observation_id": o["observation_id"],
+         "cell_id": o["cell_id"],
+         "renderer_id": o["renderer_id"],
+         "num_nodes": o["num_nodes"],
+         "assignments": len(oracle.enumerate_assignments(
+             o["num_nodes"]))}
+        for o in val_cohort_observations()]
+    if declaration["observations"] != expected_rows:
+        raise InfrastructureError(
+            "the declaration's observation rows are not the "
+            "regenerated frozen cohort (334_s P1-2)")
     total = len(declaration["observations"])
     if total > config["search_cap"]:
         raise InfrastructureError(
             f"declaration screens {total} rendered observations, "
             f"above the frozen cap {config['search_cap']}")
+
+
+def build_val_launch_manifest(*, declaration: Mapping[str, Any],
+                              environment_manifest: Mapping[str, Any]
+                              ) -> dict[str, Any]:
+    """The ONE pre-launch record for the val tranche: no probe rule
+    (nothing is selected from this surface); the outcome-blind
+    prefix check is retained; the manifest binds the frozen
+    VAL_CONFIG identity, the SIGNED tranche-freeze hash (332_s
+    P1-7), the declaration, the driver digest, the environment
+    bytes, the search cap, and the budget."""
+    config = _validated_config()
+    _require_frozen_cohort_declaration(declaration)
     digest = routing_execution_digest(DRIVER)
     manifest = {
         "kind": VAL_LAUNCH_KIND,
@@ -415,6 +485,7 @@ def build_val_launch_manifest(*, declaration: Mapping[str, Any],
         "search_cap": config["search_cap"],
         "budget_gpu_hours": config["budget_gpu_hours"],
         "driver": DRIVER,
+        "run_root": config["run_root"],
         "routing_source_sha256": digest["routing_source_sha256"],
         "environment_manifest_sha256":
             dev_support.validate_environment_manifest_binding(
@@ -470,7 +541,24 @@ def validate_val_launch_manifest(manifest: Mapping[str, Any],
         raise InfrastructureError(
             "val launch manifest does not bind the signed "
             "tranche freeze (332_s)")
-    for key in ("namespace", "worker_visible_fingerprint",
+    # 334_s P1-2: every configuration-owned field is REDERIVED from
+    # the frozen config — a correctly re-signed manifest carrying a
+    # different budget/cap/driver/root/tag refuses here
+    config = _validated_config()
+    for key, frozen_value in (
+            ("budget_gpu_hours", config["budget_gpu_hours"]),
+            ("search_cap", config["search_cap"]),
+            ("support", config["tranche"]),
+            ("driver", DRIVER),
+            ("run_root", config["run_root"]),
+            ("namespace", config["namespace"])):
+        if manifest[key] != frozen_value:
+            raise InfrastructureError(
+                f"val launch manifest {key} = {manifest[key]!r} "
+                f"diverges from the frozen configuration value "
+                f"{frozen_value!r} (334_s P1-2)")
+    _require_frozen_cohort_declaration(declaration)
+    for key in ("worker_visible_fingerprint",
                 "runtime_profile_fingerprint",
                 "worker_pool_fingerprint", "request_contract",
                 "cache_identity"):
@@ -531,7 +619,6 @@ def execute_val_run(*, run_dir: str | Path = VAL_RUN_ROOT,
                     expected_head_sha256: str | None,
                     question: str, motivating_evidence: str,
                     ledger_path: str | Path = LEDGER_PATH,
-                    lineage_parent_sha256: str | None = "frozen",
                     _runtime_factory: Callable[[], Any]
                     | None = None,
                     _environment_builder:
@@ -541,20 +628,40 @@ def execute_val_run(*, run_dir: str | Path = VAL_RUN_ROOT,
     (kind `val_materialization`, 332_s P0-1); materialization under
     the ENFORCED budget deadline (332_s P1-6); the surface lock;
     the three-way overlap gate; the val lock; the terminal
-    verifier; then the success closeout. `lineage_parent_sha256`
-    defaults to the frozen C2 closeout — the production launch
-    must run on exactly that head (332_s P1-7); tests supply their
-    own ledger explicitly."""
+    verifier; then the success closeout. The FIRST launch is
+    admitted only on the frozen C2 lineage parent; a retry only
+    after an aborted-closed identical-design attempt (334_s P1-3;
+    the ledger admission block enforces the same rules
+    authoritatively)."""
     config = _validated_config()
-    if lineage_parent_sha256 == "frozen":
-        lineage_parent_sha256 = \
-            config["lineage"]["parent_entry_sha256"]
-    if lineage_parent_sha256 is not None \
-            and expected_head_sha256 != lineage_parent_sha256:
-        raise InfrastructureError(
-            "the val launch is admitted on the FROZEN lineage "
-            "parent (the C2 closeout head) — a different head "
-            "refuses (332_s P1-7)")
+    # --- 0. lineage + retry admission state (334_s P1-3), BEFORE
+    # any file access: first launch ONLY from the frozen C2 head;
+    # never after an open or completed attempt. (Design equality
+    # for an aborted retry is checked after the manifest loads;
+    # the ledger admission block re-enforces everything.)
+    from .ledger import verify_ledger_head
+    chain = verify_ledger_head(expected_head_sha256, ledger_path)
+    prior = [e for e in chain if e["kind"] == "val_materialization"]
+    if not prior:
+        if expected_head_sha256 != \
+                config["lineage"]["parent_entry_sha256"]:
+            raise InfrastructureError(
+                "the FIRST val launch is admitted on the frozen "
+                "lineage parent (the C2 closeout head) — a "
+                "different head refuses (334_s P1-3)")
+    else:
+        closed = {e.get("closes_entry_sha256"): e for e in chain
+                  if e["kind"] == "closeout"}
+        for attempt in prior:
+            closeout = closed.get(attempt["entry_sha256"])
+            if closeout is None:
+                raise InfrastructureError(
+                    "a prior val attempt is OPEN — no new launch "
+                    "(334_s P1-3)")
+            if closeout.get("terminal_status") == "complete":
+                raise InfrastructureError(
+                    "a completed val materialization exists — a "
+                    "second launch is never a retry (334_s P1-3)")
     run_dir = Path(run_dir)
     prelaunch = run_dir / "prelaunch"
     declaration = json.loads(
@@ -589,7 +696,15 @@ def execute_val_run(*, run_dir: str | Path = VAL_RUN_ROOT,
                 f"{path} exists — outputs are preflighted before "
                 "admission")
 
-    # --- 2. ADMIT (irreversible from here) -------------------------
+    # --- 2. aborted-retry design equality (334_s P1-3) -------------
+    for attempt in prior:
+        if attempt["freeze"].get("scientific_design_sha256") \
+                != manifest["scientific_design_sha256"]:
+            raise InfrastructureError(
+                "an aborted-val retry must preserve the "
+                "scientific design (334_s P1-3)")
+
+    # --- 3. ADMIT (irreversible from here) -------------------------
     entry = {
         "kind": "val_materialization",
         "question": question,
@@ -601,7 +716,8 @@ def execute_val_run(*, run_dir: str | Path = VAL_RUN_ROOT,
             "scientific_design_sha256":
                 manifest["scientific_design_sha256"],
         },
-        "parent": None,
+        # 334_s P1-3: the ACTUAL lineage parent is persisted
+        "parent": expected_head_sha256,
         "budget_allocated_gpu_hours": manifest["budget_gpu_hours"],
         "outcome_informed": False,
         "cohort_selection": "outcome_blind",
@@ -630,6 +746,12 @@ def execute_val_run(*, run_dir: str | Path = VAL_RUN_ROOT,
                 deadline_monotonic=deadline)
         finally:
             rt.close()
+        # 334_s: the final observation must not finish past the
+        # ceiling and still close successfully
+        if time.monotonic() > deadline:
+            raise InfrastructureError(
+                "materialization finished past the 0.35 GPU-h "
+                "budget deadline — the run aborts (334_s)")
         lock = dev_support.build_surface_lock(surface_dir)
         loaded = dev_support.load_dev_surface(
             surface_dir, expected_lock_sha256=lock["lock_sha256"])
@@ -769,14 +891,21 @@ def build_val_lock(surface_dir: str | Path, *,
             "the materialized surface is not the frozen val cohort")
     required = {"val_vs_training", "val_vs_cycle",
                 "cycle_vs_training"}
+    disclosure_fields = {"semantic_intersection",
+                         "alpha_prompt_collisions",
+                         "alpha_prompt_affected_candidates",
+                         "candidate_observations",
+                         "candidate_semantics",
+                         "reference_semantics"}
     if not isinstance(overlap_report, Mapping) \
             or set(overlap_report) != required or any(
-                overlap_report[key]["semantic_intersection"] != 0
-                or overlap_report[key]["prompt_intersection"] != 0
+                set(overlap_report[key]) != disclosure_fields
+                or overlap_report[key]["semantic_intersection"] != 0
                 for key in required):
         raise InfrastructureError(
-            "the val lock requires the passing three-way overlap "
-            "report (332_s)")
+            "the val lock requires the three-way overlap report: "
+            "the HARD alpha-normalized semantic gate at zero and "
+            "the complete prompt-overlap DISCLOSURE (334_s)")
     record = {
         "kind": VAL_LOCK_KIND,
         "val_config_sha256": VAL_CONFIG_SHA256,
@@ -805,16 +934,16 @@ def build_val_lock(surface_dir: str | Path, *,
 
 
 def load_val_lock(path: str | Path, expected_sha256: str, *,
-                  surface_dir: str | Path | None = None
-                  ) -> dict[str, Any]:
-    """The strict consuming loader (332_s P1-3): the externally
-    reviewed hash is REQUIRED; the schema is CLOSED; the cohort,
-    evaluation identity, weights, and seed-schedule pin are
+                  surface_dir: str | Path) -> dict[str, Any]:
+    """The strict consuming loader (332_s P1-3; 334_s P1-4): the
+    externally reviewed hash is REQUIRED; the schema is CLOSED; the
+    cohort, evaluation identity, weights, and seed-schedule pin are
     REDERIVED from the frozen config (a rehashed record carrying a
     different base seed refuses HERE, not only at the hash); the
-    overlap result must be the passing three-way shape; and with
-    `surface_dir` the underlying surface BYTES are authenticated
-    under the bound lock."""
+    overlap result must carry the hard zero semantic gate and the
+    complete disclosure; and the underlying surface BYTES are
+    ALWAYS authenticated under the bound lock — the scientific
+    consuming boundary never accepts an unauthenticated surface."""
     config = _validated_config()
     payload = json.loads(Path(path).read_text("utf-8"))
     if not isinstance(payload, dict) \
@@ -852,57 +981,168 @@ def load_val_lock(path: str | Path, expected_sha256: str, *,
                 "the frozen config (332_s P1-3)")
     required = {"val_vs_training", "val_vs_cycle",
                 "cycle_vs_training"}
+    disclosure_fields = {"semantic_intersection",
+                         "alpha_prompt_collisions",
+                         "alpha_prompt_affected_candidates",
+                         "candidate_observations",
+                         "candidate_semantics",
+                         "reference_semantics"}
     if set(payload["overlap_report"]) != required or any(
-            payload["overlap_report"][key][
-                "semantic_intersection"] != 0
+            set(payload["overlap_report"][key]) != disclosure_fields
             or payload["overlap_report"][key][
-                "prompt_intersection"] != 0
+                "semantic_intersection"] != 0
             for key in required):
         raise InfrastructureError(
-            "val lock does not bind a passing three-way overlap "
-            "result (332_s)")
-    if surface_dir is not None:
-        surface_dir = Path(surface_dir)
-        if _sha_file(surface_dir / "surface_lock.json") != \
-                payload["surface_lock_file_sha256"]:
-            raise InfrastructureError(
-                "surface lock bytes do not match the val lock "
-                "binding")
-        dev_support.load_dev_surface(
-            surface_dir,
-            expected_lock_sha256=payload["surface_lock_sha256"])
+            "val lock does not bind the hard-gated, fully "
+            "disclosed three-way overlap result (334_s)")
+    surface_dir = Path(surface_dir)
+    if _sha_file(surface_dir / "surface_lock.json") != \
+            payload["surface_lock_file_sha256"]:
+        raise InfrastructureError(
+            "surface lock bytes do not match the val lock binding")
+    dev_support.load_dev_surface(
+        surface_dir,
+        expected_lock_sha256=payload["surface_lock_sha256"])
     return payload
 
 
 def verify_val_run(run_dir: str | Path, *,
-                   expected_val_lock_sha256: str) -> dict[str, Any]:
-    """The val-specific terminal verifier (332_s P1-7), run BEFORE
-    the success closeout and available post-hoc: the surface
-    authenticates under its lock; the val lock loads, rederives,
-    and binds those surface bytes; the persisted overlap report
-    matches the lock's bound result; the run record is
-    consistent."""
+                   expected_val_lock_sha256: str | None,
+                   closeout: Mapping[str, Any] | None = None
+                   ) -> dict[str, Any]:
+    """The val-specific TERMINAL verifier (334_s P1-4), mirroring
+    the established pattern: exact inventory (in-run: the complete
+    expected file set, nothing missing, nothing extra; post-hoc: the
+    closeout's bound terminal/partial hashes byte-for-byte); the
+    execution environment validated and attested against the
+    prelaunch environment; the launch manifest revalidated with its
+    admission cross-bindings; the surface authenticated at the
+    consuming boundary; the run record under a CLOSED schema; the
+    three-way overlap RECOMPUTED fresh and compared to both the
+    persisted report and the lock's bound result. An ABORTED
+    closeout verifies its partial hashes and must NOT carry a val
+    lock claim (`expected_val_lock_sha256=None`)."""
     run_dir = Path(run_dir)
+    hashes = _hash_directory(run_dir)
+
+    if closeout is not None:
+        freeze = closeout.get("freeze", {})
+        if closeout.get("terminal_status") == "aborted":
+            if freeze.get("partial_artifact_hashes") != hashes:
+                raise InfrastructureError(
+                    "aborted-run evidence does not match the "
+                    "closeout's partial hashes (334_s P1-4)")
+            if expected_val_lock_sha256 is not None \
+                    or (run_dir / "val_lock.json").exists():
+                raise InfrastructureError(
+                    "an aborted val run never carries a val lock "
+                    "(334_s P1-4)")
+            return {"verdict": "PASS", "terminal_status": "aborted"}
+        if freeze.get("terminal_artifact_hashes") != hashes:
+            raise InfrastructureError(
+                "terminal evidence does not match the closeout's "
+                "bound inventory byte-for-byte (334_s P1-4)")
+
+    if expected_val_lock_sha256 is None:
+        raise InfrastructureError(
+            "a complete val run verifies under its reviewed val "
+            "lock hash (334_s P1-4)")
+
+    # --- exact in-run inventory ------------------------------------
     surface_dir = run_dir / "surface"
+    expected_files = {
+        "prelaunch/declaration.json", "prelaunch/env_manifest.json",
+        "prelaunch/val_launch.json", "prelaunch/val_freeze.json",
+        "surface/payoffs.jsonl", "surface/manifest.json",
+        "surface/declaration.json", "surface/support_launch.json",
+        "surface/env_manifest.json", "surface/surface_lock.json",
+        "surface/traces/traces/manifest.json",
+        "surface/traces/traces/steps.jsonl",
+        "execute_env_manifest.json", "overlap_report.json",
+        "run_record.json", "val_lock.json",
+    }
+    if set(hashes) != expected_files:
+        missing = sorted(expected_files - set(hashes))
+        extra = sorted(set(hashes) - expected_files)
+        raise InfrastructureError(
+            f"run inventory is not exactly the expected file set: "
+            f"missing {missing[:3]}, extra {extra[:3]} (334_s "
+            "P1-4)")
+
+    # --- environment + launch manifest cross-bindings ----------------
+    prelaunch_env = json.loads(
+        (run_dir / "prelaunch" / "env_manifest.json")
+        .read_text("utf-8"))
+    execute_env = json.loads(
+        (run_dir / "execute_env_manifest.json").read_text("utf-8"))
+    dev_support.validate_env_self_hash(execute_env)
+    attest_environment(prelaunch_env, execute_env)
+    declaration = json.loads(
+        (run_dir / "prelaunch" / "declaration.json")
+        .read_text("utf-8"))
+    manifest = validate_val_launch_manifest(
+        json.loads((run_dir / "prelaunch" / "val_launch.json")
+                   .read_text("utf-8")),
+        declaration, recompute=False)
+    persisted_manifest = json.loads(
+        (surface_dir / "support_launch.json").read_text("utf-8"))
+    if persisted_manifest.get("manifest_sha256") != \
+            manifest["manifest_sha256"]:
+        raise InfrastructureError(
+            "the surface's persisted launch manifest is not the "
+            "prelaunch manifest (334_s P1-4)")
+
+    # --- the lock, the surface, the record ---------------------------
     lock = load_val_lock(run_dir / "val_lock.json",
                          expected_val_lock_sha256,
                          surface_dir=surface_dir)
-    overlap = json.loads(
-        (run_dir / "overlap_report.json").read_text("utf-8"))
-    bound = {key: {k: overlap[key][k]
-                   for k in lock["overlap_report"][key]}
-             for key in lock["overlap_report"]}
-    if bound != lock["overlap_report"]:
-        raise InfrastructureError(
-            "persisted overlap report does not match the val "
-            "lock's bound result")
     record = json.loads(
         (run_dir / "run_record.json").read_text("utf-8"))
-    if record.get("val_lock_sha256") != expected_val_lock_sha256 \
-            or record.get("surface_lock_sha256") != \
-            lock["surface_lock_sha256"]:
+    expected_record_keys = {
+        "run", "surface_dir", "val_launch_sha256",
+        "surface_lock_sha256", "val_lock_sha256",
+        "launch_entry_sha256", "overlap_report",
+        "development_only"}
+    if set(record) != expected_record_keys:
         raise InfrastructureError(
-            "run record does not bind the verified locks")
+            "run record keys do not match the closed schema "
+            "(334_s P1-4)")
+    if record["val_launch_sha256"] != manifest["manifest_sha256"] \
+            or record["val_lock_sha256"] != \
+            expected_val_lock_sha256 \
+            or record["surface_lock_sha256"] != \
+            lock["surface_lock_sha256"] \
+            or record["development_only"] is not True:
+        raise InfrastructureError(
+            "run record does not bind the verified manifest and "
+            "locks (334_s P1-4)")
+    if closeout is not None and closeout.get("freeze", {}).get(
+            "val_lock_sha256") != expected_val_lock_sha256:
+        raise InfrastructureError(
+            "the closeout does not bind the verified val lock")
+    if closeout is not None and \
+            closeout.get("closes_entry_sha256") != \
+            record["launch_entry_sha256"]:
+        raise InfrastructureError(
+            "the closeout does not close the recorded launch entry")
+
+    # --- the overlap gate, RECOMPUTED fresh --------------------------
+    from .p0_replay import restore_extension_surface_if_absent
+    from .unit_c2_sample import UNIT_C2_CONFIG
+    training = dev_support.load_dev_surface(
+        restore_extension_surface_if_absent(),
+        expected_lock_sha256=UNIT_C2_CONFIG[
+            "extension_surface_lock_sha256"])
+    fresh = three_way_overlap_reports(
+        [{**obs, "latent": _regenerate_latent(obs)}
+         for obs in training["observations"]])
+    persisted = json.loads(
+        (run_dir / "overlap_report.json").read_text("utf-8"))
+    if fresh != persisted or fresh != lock["overlap_report"] \
+            or fresh != record["overlap_report"]:
+        raise InfrastructureError(
+            "the freshly recomputed three-way overlap does not "
+            "match the persisted/bound results (334_s P1-4)")
     return {"verdict": "PASS",
             "val_lock_sha256": expected_val_lock_sha256,
             "surface_lock_sha256": lock["surface_lock_sha256"]}

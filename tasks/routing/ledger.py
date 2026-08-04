@@ -558,6 +558,38 @@ def admit_and_append_launch(entry: Mapping[str, Any],
             raise InfrastructureError(
                 "the val entry's freeze must carry the signed "
                 "tranche-freeze hash the manifest binds (332_s)")
+        # 334_s P1-3: the registered retry semantics, enforced at
+        # THE admission boundary — a retry only after an
+        # aborted-closed attempt with the IDENTICAL scientific
+        # design; never after an open or completed attempt; the
+        # entry persists the actual lineage parent (the verified
+        # head it is admitted on).
+        if entry.get("parent") != (entries[-1]["entry_sha256"]
+                                   if entries else None):
+            raise InfrastructureError(
+                "a val entry must persist the ACTUAL lineage "
+                "parent — the verified head it is admitted on "
+                "(334_s P1-3)")
+        val_closeouts = {e.get("closes_entry_sha256"): e
+                         for e in entries if e["kind"] == "closeout"}
+        for attempt in (e for e in entries
+                        if e["kind"] == "val_materialization"):
+            closeout = val_closeouts.get(attempt["entry_sha256"])
+            if closeout is None:
+                raise InfrastructureError(
+                    "a prior val attempt is OPEN — no new val "
+                    "launch (334_s P1-3)")
+            if closeout.get("terminal_status") == "complete":
+                raise InfrastructureError(
+                    "a completed val materialization exists — a "
+                    "second val launch is never a retry (334_s "
+                    "P1-3)")
+            if attempt["freeze"].get("scientific_design_sha256") \
+                    != entry["freeze"].get(
+                        "scientific_design_sha256"):
+                raise InfrastructureError(
+                    "an aborted-val retry must preserve the "
+                    "scientific design (334_s P1-3)")
     state = envelope_state(entries, CYCLE_ENVELOPE_GPU_HOURS)
     remaining = state["remaining_gpu_hours"]
     reserve = state["reserve"]
