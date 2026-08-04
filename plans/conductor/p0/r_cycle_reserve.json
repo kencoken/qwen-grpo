@@ -1,0 +1,41 @@
+{
+ "cycle_record_sha256": "c1caf158cbac0ec8e1daf75a3b9330df1a1304d814053c036871ee7b9f76bb8f",
+ "development_only": true,
+ "itemized_closure_ceiling": {
+  "ceiling_gpu_hours": 1.0,
+  "items": [
+   {
+    "gpu_hours": 0.0637,
+    "obligation": "cycle_surface_materialization",
+    "source": "the MEASURED Unit-V cost for the identical 90-observation shape (closeout 929e1724\u2026, 342_f) \u2014 the direct calibrator"
+   },
+   {
+    "gpu_hours": 0.2325,
+    "obligation": "two_checkpoint_inference",
+    "source": "2 checkpoints \u00d7 90 evaluation groups \u00d7 4.65 s/group (the C2-measured generation rate, 299_f)"
+   },
+   {
+    "gpu_hours": 0.05,
+    "obligation": "verification_traces_archival",
+    "source": "conservative margin: terminal verification (~minutes CPU), trace flush, deterministic-gzip archival (the Unit-V closure measured well under this)"
+   }
+  ],
+  "total_gpu_hours": 0.3462
+ },
+ "kind": "routing-dev-r-cycle-final-v1",
+ "r_cycle_gpu_hours": 1.0,
+ "record_sha256": "dd924326eb15695c417941009bcb0b31af9aeefabd7431687c3c3563ea5209a8",
+ "registered_basis": {
+  "assumed_cohort_size": 90,
+  "ceiling_gpu_hours": 1.0,
+  "evaluation_multiplier": 2.0,
+  "implied_hours": 0.122,
+  "measured_seconds_per_observation": 2.44,
+  "measured_support_gpu_hours": 0.0732,
+  "rendered_observations": 108,
+  "rounding": "ceil_to_whole_gpu_hours",
+  "support_closeout_sha256": "6506f117180c9b2a2fafbd745ca9b19082b18e2c63d49a71e0a2dbce4da4c283"
+ },
+ "replaces": "the provisional 5.0 GPU-h reserve (264066e6\u2026, 231_f)",
+ "rule": "R_cycle_final = max(registered basis ceiling, itemized closure ceiling) \u2014 both derivations persisted (330_f \u00a73); the coincidence of equal roundings is exposed, not concealed (329_s)"
+}

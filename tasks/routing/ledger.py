@@ -191,10 +191,26 @@ def validate_reserve(reserve: Any) -> None:
                      * reserve["measured_seconds_per_observation"]
                      / 3600.0)
     expected = float(math.ceil(implied_hours))
+    itemized = reserve.get("itemized_ceiling_gpu_hours")
+    if reserve["status"] == "final":
+        # 330_f §3 (Unit Y): a FINAL reserve carries BOTH
+        # derivations — the registered basis AND the independent
+        # itemized closure ceiling; the reserve is their rounded
+        # maximum, recomputed exactly.
+        if not _finite_number(itemized) or itemized <= 0 \
+                or itemized != float(math.ceil(itemized)):
+            raise InfrastructureError(
+                "a final reserve must carry a whole-valued "
+                "itemized_ceiling_gpu_hours (330_f §3)")
+        expected = max(expected, float(itemized))
+    elif itemized is not None:
+        raise InfrastructureError(
+            "itemized_ceiling_gpu_hours belongs to FINAL reserves "
+            "(330_f §3)")
     if reserve["r_cycle_gpu_hours"] != expected:
         raise InfrastructureError(
             f"r_cycle_gpu_hours {reserve['r_cycle_gpu_hours']} != "
-            f"ceil({implied_hours:.6f}) = {expected} — the reserve "
+            f"the recomputed reserve {expected} — the reserve "
             "must recompute exactly under the frozen rounding policy")
 
 
@@ -368,15 +384,41 @@ def _append(entry: Mapping[str, Any],
                 f"exactly from the closeout: "
                 f"{target['budget_consumed_gpu_hours']} h × 3600 / "
                 f"{rendered} = {derived!r} (226_s F1)")
-        # 226_s F1 / 228_s F2: FINAL reserves are refused
-        # UNCONDITIONALLY — enabling them requires the real
-        # cycle-cohort and evaluation-rule validators, not truthy
-        # strings; until those exist every reserve is provisional.
+        # 226_s F1 / 228_s F2 as amended by Unit Y (330_f §3):
+        # a FINAL reserve is admitted only through the REAL
+        # cycle-cohort and evaluation-rule validators — its freeze
+        # must bind the committed cycle record and the final
+        # reserve record (whose loaders REDERIVE the cohort, the
+        # checkpoint rule, and both derivations from the frozen
+        # sources); truthy strings still refuse.
         if entry["reserve"]["status"] == "final":
-            raise InfrastructureError(
-                "final reserve authorization is not yet enabled — it "
-                "awaits the real cycle-cohort and evaluation-rule "
-                "validators; record a provisional reserve (228_s F2)")
+            for field in ("cycle_record_sha256",
+                          "r_cycle_record_sha256",
+                          "r_cycle_record_file_sha256"):
+                value = entry["freeze"].get(field)
+                if not isinstance(value, str) \
+                        or len(value) != 64:
+                    raise InfrastructureError(
+                        f"a final reserve's freeze must bind "
+                        f"{field} (330_f §3 — the real validators, "
+                        "not truthy strings)")
+            from .p0_cycle import (
+                load_cycle_record,
+                load_r_cycle_reserve_record,
+            )
+            cycle = load_cycle_record(
+                expected_sha256=entry["freeze"][
+                    "cycle_record_sha256"])
+            final = load_r_cycle_reserve_record(
+                expected_sha256=entry["freeze"][
+                    "r_cycle_record_sha256"])
+            if final["cycle_record_sha256"] != \
+                    cycle["record_sha256"] \
+                    or final["r_cycle_gpu_hours"] != \
+                    entry["reserve"]["r_cycle_gpu_hours"]:
+                raise InfrastructureError(
+                    "the final reserve entry does not match the "
+                    "validated reserve record (330_f §3)")
     record = dict(entry)
     record["previous_entry_sha256"] = (
         existing[-1]["entry_sha256"] if existing else None)

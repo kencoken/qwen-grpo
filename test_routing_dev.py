@@ -25,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import extension_run, ledger, p0_c2_equivalence, p0_cap, p0_contract, p0_estimands, p0_launch, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, p0_tables, p0_val, support_run, telemetry, unit_c2_sample, unit_c_sample
+from tasks.routing import extension_run, ledger, p0_c2_equivalence, p0_cap, p0_contract, p0_cycle, p0_estimands, p0_launch, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, p0_tables, p0_val, support_run, telemetry, unit_c2_sample, unit_c_sample
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -1164,8 +1164,10 @@ def test_reserve_consumes_the_verified_terminal_run(
             undersized, run_dir=run_copy, question="q",
             motivating_evidence="m", expected_head_sha256=head,
             ledger_path=ledger_copy)
-    # 228_s F2: final reserves refuse UNCONDITIONALLY
-    with pytest.raises(InfrastructureError, match="not yet enabled"):
+    # 228_s F2 as amended by Unit Y (330_f §3): a final reserve
+    # without BOTH derivations (and the cycle-record bindings)
+    # still refuses — the provisional boundary can never mint one
+    with pytest.raises(InfrastructureError, match="whole-valued"):
         support_run.record_provisional_reserve(
             _derived_reserve(fx, status="final"), run_dir=run_copy,
             question="q", motivating_evidence="m",
@@ -6489,3 +6491,161 @@ def test_p0_val_evidence_restores_clean_clone(tmp_path,
                        "overwrite"):
         p0_val.restore_val_evidence(
             target_run_dir=tmp_path / "restored")
+
+
+# --- precursors Unit Y: the cycle record + the final R_cycle (343_f) -----------
+
+def test_p0_cycle_record(monkeypatch):
+    """Y1: the committed cycle record — outcome-blind cohort, CRN
+    seeds distinct from val, the fixed zero+final checkpoint rule,
+    authenticated execution identities and overlap re-assertion,
+    strict rederiving loader. PRISTINE val config pinned (the val
+    fixture patches the lineage)."""
+    monkeypatch.setitem(p0_val.VAL_CONFIG["lineage"],
+                        "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
+    monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
+                        PRISTINE_VAL_CONFIG_SHA256)
+    obs = p0_cycle.cycle_cohort_observations()
+    assert len(obs) == 90
+    for o in obs:
+        assert o["observation_id"].split(":")[1] == \
+            "routing_dev_cycle"
+    schedule = p0_cycle.cycle_seed_schedule()
+    assert len(schedule) == 720
+    assert len({seed for _, _, seed in schedule}) == 720
+    # the cycle seeds are DISTINCT from the val seeds at the same
+    # coordinates (different namespace ids, domain, and base seed)
+    val_first = p0_val.val_cohort_observations()[0]
+    assert p0_val.seed_for_completion(
+        val_first["observation_id"], 0) != \
+        p0_cycle.cycle_seed_for_completion(
+            obs[0]["observation_id"], 0)
+    assert p0_cycle.CYCLE_CONFIG["evaluation"]["base_seed"] == \
+        20260805 != p0_val.VAL_CONFIG["evaluation"]["base_seed"]
+    # the committed record loads under its pin and rederives
+    record = p0_cycle.load_cycle_record()
+    assert record["record_sha256"] == p0_cycle.CYCLE_RECORD_SHA256
+    assert record["ordered_observation_ids"] == [
+        o["observation_id"] for o in obs]
+    assert record["checkpoint_rule"]["evaluate"] == [
+        "checkpoint_zero", "final_checkpoint"]
+    assert record["val_lock_sha256"] == p0_val.VAL_LOCK_SHA256
+    weights = dict(map(tuple, record["natural_mixture_weights"]))
+    assert all(abs(w - 1 / 90) < 1e-12 for w in weights.values())
+    # execution identities come from the AUTHENTICATED val
+    # evidence manifest
+    manifest = json.loads(Path(
+        p0_val.VAL_EVIDENCE_DIR,
+        "prelaunch/val_launch.json").read_text("utf-8"))
+    for field, value in record["execution_identities"].items():
+        assert manifest[field] == value
+    # overlap re-assertion binds the val lock's frozen numbers
+    assert record["overlap_reassertion"]["val_vs_cycle"][
+        "alpha_prompt_collisions"] == 15
+    assert record["overlap_reassertion"]["cycle_vs_training"][
+        "alpha_prompt_affected_candidates"] == 45
+    # a rehashed record with a different seed refuses at the
+    # REDERIVATION, not only the hash
+    forged = copy.deepcopy(record)
+    forged["evaluation"]["base_seed"] = 999
+    body = {k: v for k, v in forged.items()
+            if k != "record_sha256"}
+    forged["record_sha256"] = charter.content_sha256(body)
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".json",
+                                     delete=False) as handle:
+        json.dump(forged, handle)
+        forged_path = handle.name
+    with pytest.raises(InfrastructureError, match="rederive"):
+        p0_cycle.load_cycle_record(
+            forged_path, expected_sha256=forged["record_sha256"])
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_cycle.freeze_cycle_record()
+
+
+def test_p0_r_cycle_final_reserve(tmp_path, monkeypatch):
+    """Y2: both derivations recompute; the max rule; the closure
+    proof; the validator-gated ledger final path — rehearsed on a
+    COPY of the REAL ledger. PRISTINE val config pinned."""
+    import shutil
+    monkeypatch.setitem(p0_val.VAL_CONFIG["lineage"],
+                        "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
+    monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
+                        PRISTINE_VAL_CONFIG_SHA256)
+    record = p0_cycle.load_r_cycle_reserve_record()
+    assert record["r_cycle_gpu_hours"] == 1.0
+    basis = record["registered_basis"]
+    assert basis["measured_seconds_per_observation"] == \
+        basis["measured_support_gpu_hours"] * 3600.0 \
+        / basis["rendered_observations"]
+    assert basis["ceiling_gpu_hours"] == 1.0
+    itemized = record["itemized_closure_ceiling"]
+    assert itemized["total_gpu_hours"] == round(sum(
+        item["gpu_hours"] for item in itemized["items"]), 4)
+    assert itemized["total_gpu_hours"] <= \
+        record["r_cycle_gpu_hours"]
+    assert record["cycle_record_sha256"] == \
+        p0_cycle.CYCLE_RECORD_SHA256
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_cycle.freeze_r_cycle_reserve_record()
+    # validate_reserve: the final max-of-two rule
+    final_reserve = {
+        "status": "final", "r_cycle_gpu_hours": 2.0,
+        "assumed_cohort_size": 90, "evaluation_multiplier": 2.0,
+        "measured_seconds_per_observation": 2.44,
+        "measured_support_gpu_hours": 0.0732,
+        "itemized_ceiling_gpu_hours": 2.0,
+        "rounding": "ceil_to_whole_gpu_hours"}
+    ledger.validate_reserve(final_reserve)
+    with pytest.raises(InfrastructureError, match="recompute "
+                       "exactly"):
+        ledger.validate_reserve(
+            {**final_reserve, "r_cycle_gpu_hours": 1.0})
+    with pytest.raises(InfrastructureError, match="whole-valued"):
+        ledger.validate_reserve(
+            {**final_reserve, "itemized_ceiling_gpu_hours": 1.5,
+             "r_cycle_gpu_hours": 1.5})
+    with pytest.raises(InfrastructureError, match="whole-valued"):
+        ledger.validate_reserve(
+            {k: v for k, v in final_reserve.items()
+             if k != "itemized_ceiling_gpu_hours"})
+    with pytest.raises(InfrastructureError, match="FINAL"):
+        ledger.validate_reserve(
+            {**final_reserve, "status": "provisional",
+             "r_cycle_gpu_hours": 1.0,
+             "itemized_ceiling_gpu_hours": 1.0})
+    # the ledger final path, rehearsed on a COPY of the real ledger
+    ledger_copy = tmp_path / "ledger.md"
+    shutil.copy2(ledger.LEDGER_PATH, ledger_copy)
+    head = ledger.ledger_head(ledger_copy)
+    appended = p0_cycle.record_final_r_cycle(
+        expected_head_sha256=head, ledger_path=ledger_copy)
+    entries = ledger.verify_ledger_head(
+        appended["entry_sha256"], ledger_copy)
+    state = ledger.envelope_state(
+        entries, charter.CYCLE_ENVELOPE_GPU_HOURS)
+    assert state["reserve"]["r_cycle_gpu_hours"] == 1.0
+    assert state["reserve"]["status"] == "final"
+    # a final append WITHOUT the cycle-record bindings refuses
+    with pytest.raises(InfrastructureError, match="must bind"):
+        ledger._append(
+            {"kind": "reserve_update", "question": "q",
+             "motivating_evidence": "m",
+             "freeze": {"support_closeout_sha256":
+                        p0_cycle.SUPPORT_CLOSEOUT_SHA256,
+                        "surface_lock_sha256":
+                        p0_cycle.SUPPORT_SURFACE_LOCK_SHA256},
+             "parent": appended["entry_sha256"],
+             "budget_allocated_gpu_hours": 0.0,
+             "outcome_informed": False,
+             "reserve": {
+                 "status": "final", "r_cycle_gpu_hours": 1.0,
+                 "assumed_cohort_size": 90,
+                 "evaluation_multiplier": 2.0,
+                 "measured_seconds_per_observation": 2.44,
+                 "measured_support_gpu_hours": 0.0732,
+                 "itemized_ceiling_gpu_hours": 1.0,
+                 "rounding": "ceil_to_whole_gpu_hours"}},
+            appended["entry_sha256"], ledger_copy)
+    # the REAL ledger is untouched by the rehearsal
+    assert ledger.ledger_head() == head

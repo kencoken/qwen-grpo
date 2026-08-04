@@ -1,0 +1,674 @@
+{
+ "checkpoint_rule": {
+  "evaluate": [
+   "checkpoint_zero",
+   "final_checkpoint"
+  ],
+  "final_definition": "P0 CLOSES this development cycle: cycle synthesis follows P0 directly; no continuation or fork precedes it",
+  "no_positive_checkpoint": "if no positive-index checkpoint exists, the zero-vs-final comparison is UNDEFINED and recorded as such \u2014 checkpoint zero is never evaluated twice",
+  "one_reveal": "surfaces are materialized only AT cycle synthesis (a cycle_closure ledger launch inside the final R_cycle), evaluated once, archived, and the population permanently retired",
+  "rule_id": "r-cycle-eval-v1",
+  "selection": "FIXED and outcome-blind \u2014 never best-of; exactly two checkpoints, one reveal",
+  "terminally_closed_abort": "after a TERMINALLY CLOSED abort (a closed-out infrastructure-abort closeout, never a resumable interruption), the last COMPLETE checkpoint stands in for the final checkpoint, disclosed as such"
+ },
+ "cohort": {
+  "code_atomic": [
+   0,
+   1,
+   2,
+   3,
+   4
+  ],
+  "fork_join": [
+   0,
+   1,
+   2,
+   3,
+   4
+  ],
+  "lookup_atomic": [
+   0,
+   1,
+   2,
+   3,
+   4
+  ],
+  "lookup_math": [
+   0,
+   1,
+   2,
+   3,
+   4
+  ],
+  "math_atomic": [
+   0,
+   1,
+   2,
+   3,
+   4
+  ],
+  "math_code": [
+   0,
+   1,
+   2,
+   3,
+   4
+  ]
+ },
+ "cycle_config_sha256": "2b404642a06c0441246d5d634889d34e4fede99f48dcfb92bba9e65559d125d6",
+ "development_only": true,
+ "evaluation": {
+  "base_seed": 20260805,
+  "batching": "canonical (cell, latent index, renderer) order; one 8-completion group per observation per evaluated checkpoint",
+  "domain": "cycle_eval",
+  "framing": "paired latent-level DESCRIPTIVE evidence (5 clusters per cell) \u2014 never completion-level precision claims",
+  "runtime_profile_sha256": "202bc3773f9f4d4fa4ccc1842c17199aabd8d8f5c532bda7826c7af53fa08ceb",
+  "sampling": {
+   "do_sample": true,
+   "group_size": 8,
+   "max_new_tokens": 128,
+   "repetition_penalty": 1.0,
+   "temperature": 1.0,
+   "top_k": null,
+   "top_p": 1.0
+  },
+  "seed_rule": "int(sha256(domain || base_seed || observation_id || completion_slot), 16) mod 2^31 over the COMPLETE digest; slots 0..7 only; NO checkpoint index (common random numbers ACROSS THE TWO CYCLE CHECKPOINTS, 330_f \u00a71)"
+ },
+ "execution_identities": {
+  "cache_identity": "worker_completions/slw/worker-blocks-task-last-v1",
+  "request_contract": "worker-blocks-task-last-v1",
+  "runtime_profile_fingerprint": "rtp-8510479a336ee0dc",
+  "worker_pool_fingerprint": "wp-197e286115f56e4a",
+  "worker_visible_fingerprint": "wv-4e196a1c467d108b"
+ },
+ "kind": "routing-dev-cycle-cohort-v1",
+ "lineage": {
+  "motivating_evidence": "330_f-signed precursors plan Unit Y; 342_f Unit-V closure",
+  "outcome_informed": false,
+  "parent_entry_sha256": "929e172415845471f2fe613ef71a36eb57d47492cfa58c4e511e95403a5ed11c"
+ },
+ "materialization_plan": {
+  "budget_source": "the final R_cycle reserve",
+  "ledger_kind": "cycle_closure",
+  "machinery": "the frozen \u00a74 machinery (dev declaration \u2192 materialize_dev_support \u2192 surface lock), validated against THIS record's cohort and execution identities"
+ },
+ "namespace": "routing_dev_cycle",
+ "natural_mixture": {
+  "cells": "equal",
+  "definition": "the frozen 211_f natural-mixture definition (charter.natural_mixture_weights); unchanged across all within-cycle comparisons",
+  "latent_clusters_within_cell": "equal",
+  "renderers_within_latent": "equal"
+ },
+ "natural_mixture_weights": [
+  [
+   "code_atomic:routing_dev_cycle:00000:9cb5dfe6:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00000:9cb5dfe6:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00000:9cb5dfe6:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00001:27fa2fd7:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00001:27fa2fd7:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00001:27fa2fd7:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00002:7fb8823f:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00002:7fb8823f:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00002:7fb8823f:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00003:d85caabb:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00003:d85caabb:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00003:d85caabb:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00004:1f940368:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00004:1f940368:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "code_atomic:routing_dev_cycle:00004:1f940368:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00000:c22b7fa4:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00000:c22b7fa4:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00000:c22b7fa4:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00001:f661d0f6:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00001:f661d0f6:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00001:f661d0f6:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00002:d170319f:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00002:d170319f:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00002:d170319f:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00003:e61b4b94:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00003:e61b4b94:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00003:e61b4b94:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00004:2dd8f738:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00004:2dd8f738:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "fork_join:routing_dev_cycle:00004:2dd8f738:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00000:1c844bb1:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00000:1c844bb1:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00000:1c844bb1:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00001:f1d40cf8:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00001:f1d40cf8:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00001:f1d40cf8:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00002:7e2ae5fb:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00002:7e2ae5fb:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00002:7e2ae5fb:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00003:fe7bd0a6:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00003:fe7bd0a6:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00003:fe7bd0a6:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00004:fb2103aa:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00004:fb2103aa:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_atomic:routing_dev_cycle:00004:fb2103aa:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00000:3d7721a2:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00000:3d7721a2:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00000:3d7721a2:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00001:d957f043:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00001:d957f043:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00001:d957f043:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00002:2ccd3a4f:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00002:2ccd3a4f:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00002:2ccd3a4f:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00003:3e900cdb:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00003:3e900cdb:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00003:3e900cdb:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00004:6b8df595:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00004:6b8df595:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "lookup_math:routing_dev_cycle:00004:6b8df595:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00000:236197c9:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00000:236197c9:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00000:236197c9:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00001:75ef7374:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00001:75ef7374:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00001:75ef7374:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00002:caf22bec:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00002:caf22bec:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00002:caf22bec:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00003:d58276bf:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00003:d58276bf:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00003:d58276bf:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00004:ae44c2f8:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00004:ae44c2f8:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_atomic:routing_dev_cycle:00004:ae44c2f8:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00000:1bbfb452:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00000:1bbfb452:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00000:1bbfb452:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00001:1afb6c7e:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00001:1afb6c7e:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00001:1afb6c7e:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00002:42fa1514:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00002:42fa1514:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00002:42fa1514:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00003:00e88c15:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00003:00e88c15:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00003:00e88c15:bound_var:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00004:b90f184b:resource_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00004:b90f184b:goal_first:private",
+   0.011111111111111112
+  ],
+  [
+   "math_code:routing_dev_cycle:00004:b90f184b:bound_var:private",
+   0.011111111111111112
+  ]
+ ],
+ "never_trained_on": "structural \u2014 the P0 trainer consumes only the pinned mixture schedule (record_sha256 135a72bf4deb77048371074636d88ffebf6bd07d1c00ae349b6fcee221975b3f); routing_dev_cycle appears in no training schedule",
+ "ordered_observation_ids": [
+  "code_atomic:routing_dev_cycle:00000:9cb5dfe6:resource_first:private",
+  "code_atomic:routing_dev_cycle:00000:9cb5dfe6:goal_first:private",
+  "code_atomic:routing_dev_cycle:00000:9cb5dfe6:bound_var:private",
+  "code_atomic:routing_dev_cycle:00001:27fa2fd7:resource_first:private",
+  "code_atomic:routing_dev_cycle:00001:27fa2fd7:goal_first:private",
+  "code_atomic:routing_dev_cycle:00001:27fa2fd7:bound_var:private",
+  "code_atomic:routing_dev_cycle:00002:7fb8823f:resource_first:private",
+  "code_atomic:routing_dev_cycle:00002:7fb8823f:goal_first:private",
+  "code_atomic:routing_dev_cycle:00002:7fb8823f:bound_var:private",
+  "code_atomic:routing_dev_cycle:00003:d85caabb:resource_first:private",
+  "code_atomic:routing_dev_cycle:00003:d85caabb:goal_first:private",
+  "code_atomic:routing_dev_cycle:00003:d85caabb:bound_var:private",
+  "code_atomic:routing_dev_cycle:00004:1f940368:resource_first:private",
+  "code_atomic:routing_dev_cycle:00004:1f940368:goal_first:private",
+  "code_atomic:routing_dev_cycle:00004:1f940368:bound_var:private",
+  "fork_join:routing_dev_cycle:00000:c22b7fa4:resource_first:private",
+  "fork_join:routing_dev_cycle:00000:c22b7fa4:goal_first:private",
+  "fork_join:routing_dev_cycle:00000:c22b7fa4:bound_var:private",
+  "fork_join:routing_dev_cycle:00001:f661d0f6:resource_first:private",
+  "fork_join:routing_dev_cycle:00001:f661d0f6:goal_first:private",
+  "fork_join:routing_dev_cycle:00001:f661d0f6:bound_var:private",
+  "fork_join:routing_dev_cycle:00002:d170319f:resource_first:private",
+  "fork_join:routing_dev_cycle:00002:d170319f:goal_first:private",
+  "fork_join:routing_dev_cycle:00002:d170319f:bound_var:private",
+  "fork_join:routing_dev_cycle:00003:e61b4b94:resource_first:private",
+  "fork_join:routing_dev_cycle:00003:e61b4b94:goal_first:private",
+  "fork_join:routing_dev_cycle:00003:e61b4b94:bound_var:private",
+  "fork_join:routing_dev_cycle:00004:2dd8f738:resource_first:private",
+  "fork_join:routing_dev_cycle:00004:2dd8f738:goal_first:private",
+  "fork_join:routing_dev_cycle:00004:2dd8f738:bound_var:private",
+  "lookup_atomic:routing_dev_cycle:00000:1c844bb1:resource_first:private",
+  "lookup_atomic:routing_dev_cycle:00000:1c844bb1:goal_first:private",
+  "lookup_atomic:routing_dev_cycle:00000:1c844bb1:bound_var:private",
+  "lookup_atomic:routing_dev_cycle:00001:f1d40cf8:resource_first:private",
+  "lookup_atomic:routing_dev_cycle:00001:f1d40cf8:goal_first:private",
+  "lookup_atomic:routing_dev_cycle:00001:f1d40cf8:bound_var:private",
+  "lookup_atomic:routing_dev_cycle:00002:7e2ae5fb:resource_first:private",
+  "lookup_atomic:routing_dev_cycle:00002:7e2ae5fb:goal_first:private",
+  "lookup_atomic:routing_dev_cycle:00002:7e2ae5fb:bound_var:private",
+  "lookup_atomic:routing_dev_cycle:00003:fe7bd0a6:resource_first:private",
+  "lookup_atomic:routing_dev_cycle:00003:fe7bd0a6:goal_first:private",
+  "lookup_atomic:routing_dev_cycle:00003:fe7bd0a6:bound_var:private",
+  "lookup_atomic:routing_dev_cycle:00004:fb2103aa:resource_first:private",
+  "lookup_atomic:routing_dev_cycle:00004:fb2103aa:goal_first:private",
+  "lookup_atomic:routing_dev_cycle:00004:fb2103aa:bound_var:private",
+  "lookup_math:routing_dev_cycle:00000:3d7721a2:resource_first:private",
+  "lookup_math:routing_dev_cycle:00000:3d7721a2:goal_first:private",
+  "lookup_math:routing_dev_cycle:00000:3d7721a2:bound_var:private",
+  "lookup_math:routing_dev_cycle:00001:d957f043:resource_first:private",
+  "lookup_math:routing_dev_cycle:00001:d957f043:goal_first:private",
+  "lookup_math:routing_dev_cycle:00001:d957f043:bound_var:private",
+  "lookup_math:routing_dev_cycle:00002:2ccd3a4f:resource_first:private",
+  "lookup_math:routing_dev_cycle:00002:2ccd3a4f:goal_first:private",
+  "lookup_math:routing_dev_cycle:00002:2ccd3a4f:bound_var:private",
+  "lookup_math:routing_dev_cycle:00003:3e900cdb:resource_first:private",
+  "lookup_math:routing_dev_cycle:00003:3e900cdb:goal_first:private",
+  "lookup_math:routing_dev_cycle:00003:3e900cdb:bound_var:private",
+  "lookup_math:routing_dev_cycle:00004:6b8df595:resource_first:private",
+  "lookup_math:routing_dev_cycle:00004:6b8df595:goal_first:private",
+  "lookup_math:routing_dev_cycle:00004:6b8df595:bound_var:private",
+  "math_atomic:routing_dev_cycle:00000:236197c9:resource_first:private",
+  "math_atomic:routing_dev_cycle:00000:236197c9:goal_first:private",
+  "math_atomic:routing_dev_cycle:00000:236197c9:bound_var:private",
+  "math_atomic:routing_dev_cycle:00001:75ef7374:resource_first:private",
+  "math_atomic:routing_dev_cycle:00001:75ef7374:goal_first:private",
+  "math_atomic:routing_dev_cycle:00001:75ef7374:bound_var:private",
+  "math_atomic:routing_dev_cycle:00002:caf22bec:resource_first:private",
+  "math_atomic:routing_dev_cycle:00002:caf22bec:goal_first:private",
+  "math_atomic:routing_dev_cycle:00002:caf22bec:bound_var:private",
+  "math_atomic:routing_dev_cycle:00003:d58276bf:resource_first:private",
+  "math_atomic:routing_dev_cycle:00003:d58276bf:goal_first:private",
+  "math_atomic:routing_dev_cycle:00003:d58276bf:bound_var:private",
+  "math_atomic:routing_dev_cycle:00004:ae44c2f8:resource_first:private",
+  "math_atomic:routing_dev_cycle:00004:ae44c2f8:goal_first:private",
+  "math_atomic:routing_dev_cycle:00004:ae44c2f8:bound_var:private",
+  "math_code:routing_dev_cycle:00000:1bbfb452:resource_first:private",
+  "math_code:routing_dev_cycle:00000:1bbfb452:goal_first:private",
+  "math_code:routing_dev_cycle:00000:1bbfb452:bound_var:private",
+  "math_code:routing_dev_cycle:00001:1afb6c7e:resource_first:private",
+  "math_code:routing_dev_cycle:00001:1afb6c7e:goal_first:private",
+  "math_code:routing_dev_cycle:00001:1afb6c7e:bound_var:private",
+  "math_code:routing_dev_cycle:00002:42fa1514:resource_first:private",
+  "math_code:routing_dev_cycle:00002:42fa1514:goal_first:private",
+  "math_code:routing_dev_cycle:00002:42fa1514:bound_var:private",
+  "math_code:routing_dev_cycle:00003:00e88c15:resource_first:private",
+  "math_code:routing_dev_cycle:00003:00e88c15:goal_first:private",
+  "math_code:routing_dev_cycle:00003:00e88c15:bound_var:private",
+  "math_code:routing_dev_cycle:00004:b90f184b:resource_first:private",
+  "math_code:routing_dev_cycle:00004:b90f184b:goal_first:private",
+  "math_code:routing_dev_cycle:00004:b90f184b:bound_var:private"
+ ],
+ "overlap_reassertion": {
+  "cycle_vs_training": {
+   "affected_by_cell": {
+    "code_atomic": 12,
+    "lookup_atomic": 3,
+    "math_atomic": 15,
+    "math_code": 15
+   },
+   "affected_candidate_ids": [
+    "code_atomic:routing_dev_cycle:00000:9cb5dfe6:bound_var:private",
+    "code_atomic:routing_dev_cycle:00000:9cb5dfe6:goal_first:private",
+    "code_atomic:routing_dev_cycle:00000:9cb5dfe6:resource_first:private",
+    "code_atomic:routing_dev_cycle:00002:7fb8823f:bound_var:private",
+    "code_atomic:routing_dev_cycle:00002:7fb8823f:goal_first:private",
+    "code_atomic:routing_dev_cycle:00002:7fb8823f:resource_first:private",
+    "code_atomic:routing_dev_cycle:00003:d85caabb:bound_var:private",
+    "code_atomic:routing_dev_cycle:00003:d85caabb:goal_first:private",
+    "code_atomic:routing_dev_cycle:00003:d85caabb:resource_first:private",
+    "code_atomic:routing_dev_cycle:00004:1f940368:bound_var:private",
+    "code_atomic:routing_dev_cycle:00004:1f940368:goal_first:private",
+    "code_atomic:routing_dev_cycle:00004:1f940368:resource_first:private",
+    "lookup_atomic:routing_dev_cycle:00000:1c844bb1:bound_var:private",
+    "lookup_atomic:routing_dev_cycle:00000:1c844bb1:goal_first:private",
+    "lookup_atomic:routing_dev_cycle:00000:1c844bb1:resource_first:private",
+    "math_atomic:routing_dev_cycle:00000:236197c9:bound_var:private",
+    "math_atomic:routing_dev_cycle:00000:236197c9:goal_first:private",
+    "math_atomic:routing_dev_cycle:00000:236197c9:resource_first:private",
+    "math_atomic:routing_dev_cycle:00001:75ef7374:bound_var:private",
+    "math_atomic:routing_dev_cycle:00001:75ef7374:goal_first:private",
+    "math_atomic:routing_dev_cycle:00001:75ef7374:resource_first:private",
+    "math_atomic:routing_dev_cycle:00002:caf22bec:bound_var:private",
+    "math_atomic:routing_dev_cycle:00002:caf22bec:goal_first:private",
+    "math_atomic:routing_dev_cycle:00002:caf22bec:resource_first:private",
+    "math_atomic:routing_dev_cycle:00003:d58276bf:bound_var:private",
+    "math_atomic:routing_dev_cycle:00003:d58276bf:goal_first:private",
+    "math_atomic:routing_dev_cycle:00003:d58276bf:resource_first:private",
+    "math_atomic:routing_dev_cycle:00004:ae44c2f8:bound_var:private",
+    "math_atomic:routing_dev_cycle:00004:ae44c2f8:goal_first:private",
+    "math_atomic:routing_dev_cycle:00004:ae44c2f8:resource_first:private",
+    "math_code:routing_dev_cycle:00000:1bbfb452:bound_var:private",
+    "math_code:routing_dev_cycle:00000:1bbfb452:goal_first:private",
+    "math_code:routing_dev_cycle:00000:1bbfb452:resource_first:private",
+    "math_code:routing_dev_cycle:00001:1afb6c7e:bound_var:private",
+    "math_code:routing_dev_cycle:00001:1afb6c7e:goal_first:private",
+    "math_code:routing_dev_cycle:00001:1afb6c7e:resource_first:private",
+    "math_code:routing_dev_cycle:00002:42fa1514:bound_var:private",
+    "math_code:routing_dev_cycle:00002:42fa1514:goal_first:private",
+    "math_code:routing_dev_cycle:00002:42fa1514:resource_first:private",
+    "math_code:routing_dev_cycle:00003:00e88c15:bound_var:private",
+    "math_code:routing_dev_cycle:00003:00e88c15:goal_first:private",
+    "math_code:routing_dev_cycle:00003:00e88c15:resource_first:private",
+    "math_code:routing_dev_cycle:00004:b90f184b:bound_var:private",
+    "math_code:routing_dev_cycle:00004:b90f184b:goal_first:private",
+    "math_code:routing_dev_cycle:00004:b90f184b:resource_first:private"
+   ],
+   "alpha_prompt_affected_candidates": 45,
+   "alpha_prompt_collisions": 30,
+   "candidate_observations": 90,
+   "candidate_semantics": 30,
+   "reference_semantics": 288,
+   "semantic_intersection": 0
+  },
+  "val_vs_cycle": {
+   "affected_by_cell": {
+    "math_atomic": 15,
+    "math_code": 15
+   },
+   "affected_candidate_ids": [
+    "math_atomic:routing_dev_val:00000:898dbb12:bound_var:private",
+    "math_atomic:routing_dev_val:00000:898dbb12:goal_first:private",
+    "math_atomic:routing_dev_val:00000:898dbb12:resource_first:private",
+    "math_atomic:routing_dev_val:00001:28cfa7a2:bound_var:private",
+    "math_atomic:routing_dev_val:00001:28cfa7a2:goal_first:private",
+    "math_atomic:routing_dev_val:00001:28cfa7a2:resource_first:private",
+    "math_atomic:routing_dev_val:00002:decafdc7:bound_var:private",
+    "math_atomic:routing_dev_val:00002:decafdc7:goal_first:private",
+    "math_atomic:routing_dev_val:00002:decafdc7:resource_first:private",
+    "math_atomic:routing_dev_val:00003:766ead03:bound_var:private",
+    "math_atomic:routing_dev_val:00003:766ead03:goal_first:private",
+    "math_atomic:routing_dev_val:00003:766ead03:resource_first:private",
+    "math_atomic:routing_dev_val:00004:d7ea7ea1:bound_var:private",
+    "math_atomic:routing_dev_val:00004:d7ea7ea1:goal_first:private",
+    "math_atomic:routing_dev_val:00004:d7ea7ea1:resource_first:private",
+    "math_code:routing_dev_val:00000:5808fe97:bound_var:private",
+    "math_code:routing_dev_val:00000:5808fe97:goal_first:private",
+    "math_code:routing_dev_val:00000:5808fe97:resource_first:private",
+    "math_code:routing_dev_val:00001:eb82c614:bound_var:private",
+    "math_code:routing_dev_val:00001:eb82c614:goal_first:private",
+    "math_code:routing_dev_val:00001:eb82c614:resource_first:private",
+    "math_code:routing_dev_val:00002:8ef6dc0f:bound_var:private",
+    "math_code:routing_dev_val:00002:8ef6dc0f:goal_first:private",
+    "math_code:routing_dev_val:00002:8ef6dc0f:resource_first:private",
+    "math_code:routing_dev_val:00003:8112a79f:bound_var:private",
+    "math_code:routing_dev_val:00003:8112a79f:goal_first:private",
+    "math_code:routing_dev_val:00003:8112a79f:resource_first:private",
+    "math_code:routing_dev_val:00004:6bad31db:bound_var:private",
+    "math_code:routing_dev_val:00004:6bad31db:goal_first:private",
+    "math_code:routing_dev_val:00004:6bad31db:resource_first:private"
+   ],
+   "alpha_prompt_affected_candidates": 30,
+   "alpha_prompt_collisions": 15,
+   "candidate_observations": 90,
+   "candidate_semantics": 30,
+   "reference_semantics": 30,
+   "semantic_intersection": 0
+  }
+ },
+ "partial_reveal_rule": "if cycle-surface materialization partially reveals outcomes, only an EXACT design-preserving resume/retry is permitted; otherwise the cohort is retired and cycle evaluation is reported UNAVAILABLE \u2014 never re-selected (330_f \u00a75)",
+ "record_sha256": "c1caf158cbac0ec8e1daf75a3b9330df1a1304d814053c036871ee7b9f76bb8f",
+ "renderers": [
+  "resource_first",
+  "goal_first",
+  "bound_var"
+ ],
+ "seed_schedule_sha256": "89076715ba7bef4d2a8077a75961f6aa4c6785ace98a8a1f48e736b8b26c16c7",
+ "val_lock_sha256": "2aecdf28ad25cae10e494aa9fc1a95138a9feb5a29ab0636314b847987caf19d",
+ "visibility": "private"
+}
