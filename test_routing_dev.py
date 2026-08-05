@@ -7309,18 +7309,71 @@ def test_p0_unit_l_admission(monkeypatch, tmp_path):
             question="q", motivating_evidence="m",
             run_dir=run_dir, ledger_path=ledger_copy,
             _live_environment=live_env)
-    # 360_s P1-1 reproduction: even after an ABORTED closeout the
-    # same freeze refuses — no fresh allocation at zero consumed
-    ledger.append_ledger_entry(
-        {"kind": "closeout", "question": "abort",
-         "motivating_evidence": "360_s reproduction",
-         "freeze": {"partial_artifact_hashes": {}},
-         "parent": bundle["launch_entry_sha256"],
-         "budget_allocated_gpu_hours": 0.0,
-         "budget_consumed_gpu_hours": 2.5,
-         "closes_entry_sha256": bundle["launch_entry_sha256"],
-         "terminal_status": "aborted", "outcome_informed": False},
-        bundle["launch_entry_sha256"], ledger_copy)
+    # assemble the prelaunch directory the runner would have
+    # persisted (the SAME manifest + env + artifact byte copies)
+    prelaunch = run_dir / "prelaunch"
+    prelaunch.mkdir(parents=True)
+    (prelaunch / "p0_launch.json").write_text(
+        json.dumps(manifest, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    (prelaunch / "env_manifest.json").write_text(
+        json.dumps(live_env, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    for name, source in (
+            ("launch_freeze.json", p0_launch.LAUNCH_FREEZE_PATH),
+            ("execution_identity.json",
+             p0_execution.EXECUTION_IDENTITY_PATH)):
+        (prelaunch / name).write_bytes(Path(source).read_bytes())
+    # 363_s F5 reproduction: an impossible EMPTY run refuses at
+    # the exact frozen cadence; a negative runtime refuses too
+    empty_record = {
+        "run": "routing-dev-p0-v1",
+        "p0_launch_manifest_sha256": manifest["manifest_sha256"],
+        "launch_freeze_sha256": manifest["launch_freeze_sha256"],
+        "execution_identity_sha256":
+            manifest["execution_identity_sha256"],
+        "launch_entry_sha256": bundle["launch_entry_sha256"],
+        "cadence_completed": [], "checkpoints": {},
+        "whole_run_seconds": -1.0, "sealed_sha256": {},
+        "development_only": True}
+    (run_dir / "p0_record.json").write_text(
+        json.dumps(empty_record), encoding="utf-8")
+    with pytest.raises(InfrastructureError,
+                       match="eleven-point cadence"):
+        p0_execution.verify_p0_run(
+            run_dir, ledger_path=ledger_copy,
+            expected_head_sha256=bundle["launch_entry_sha256"])
+    cadence = p0_execution.load_p0_execution_identity(
+        expected_sha256=manifest["execution_identity_sha256"]
+    )["cadence"]["update_indices"]
+    negative = dict(empty_record)
+    negative["cadence_completed"] = list(cadence)
+    negative["checkpoints"] = {str(i): {} for i in cadence}
+    (run_dir / "p0_record.json").write_text(
+        json.dumps(negative), encoding="utf-8")
+    with pytest.raises(InfrastructureError,
+                       match="non-negative finite"):
+        p0_execution.verify_p0_run(
+            run_dir, ledger_path=ledger_copy,
+            expected_head_sha256=bundle["launch_entry_sha256"])
+    (run_dir / "p0_record.json").unlink()
+    # 363_s F4: the EXPLICIT terminal abort closes the launch with
+    # the cumulative consumed time; a second abort refuses
+    (run_dir / "interruption.json").write_text(json.dumps(
+        {"cumulative_elapsed_seconds": 9000.0,
+         "interruption_count": 1, "last_error": "X"}),
+        encoding="utf-8")
+    aborted = p0_execution.terminally_abort_p0(
+        run_dir=run_dir, question="q",
+        reason="360_s reproduction (2.5 GPU-h consumed)",
+        ledger_path=ledger_copy)
+    assert aborted["terminal_status"] == "aborted"
+    assert aborted["budget_consumed_gpu_hours"] == 2.5
+    with pytest.raises(InfrastructureError, match="already "
+                       "closed"):
+        p0_execution.terminally_abort_p0(
+            run_dir=run_dir, question="q", reason="again",
+            ledger_path=ledger_copy)
     with pytest.raises(InfrastructureError,
                        match="first-launch-only"):
         p0_execution.admit_p0_execution(
@@ -7390,24 +7443,29 @@ def test_p0_unit_l_admission(monkeypatch, tmp_path):
 
 
 def test_p0_runner_cpu_boundaries(monkeypatch, tmp_path):
-    """The P0 execution runner's CPU boundaries: the frozen eval
-    realization (CRN continuity with the V pinned vector); the
-    exactly-once prelaunch; the cadence callback ordering; the
-    abort rule (seal, RETAIN checkpoints); the closed record
-    schema at the terminal verifier."""
+    """The P0 runner rev2 CPU boundaries: the frozen eval
+    realization (CRN continuity); the exactly-once prelaunch; the
+    cadence callback (save-request at intermediates only, resume
+    skip-list honored); the RESUMABLE interruption record
+    (cumulative, no ledger write, checkpoints retained); the
+    LoRA-key/dtype assertion inputs."""
     from tasks.routing import p0_execution
     monkeypatch.setitem(p0_val.VAL_CONFIG["lineage"],
                         "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
     monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
                         PRISTINE_VAL_CONFIG_SHA256)
     # the executed realization: 90 slot-0 seeds, frozen pin, CRN
-    # continuity (slot-0 of the V pinned vector reproduces)
+    # continuity, and the pin BOUND inside the identity (363_s F2)
     seeds = p0_execution.p0_eval_seed_realization()
     assert len(seeds) == 90
     assert seeds[0][1] == 1176822329
-    assert seeds[0][1] == p0_val.seed_for_completion(
-        seeds[0][0], 0, domain="p0_val_eval",
-        base_seed=20260804)
+    identity = p0_execution.load_p0_execution_identity(
+        expected_sha256=p0_execution.P0_EXECUTION_IDENTITY_SHA256)
+    realization = identity["evaluation"][
+        "checkpoint_eval_realization"]
+    assert realization["realization_sha256"] == \
+        p0_execution.P0_EVAL_REALIZATION_SHA256
+    assert "num_return_sequences" in realization["rule"]
     monkeypatch.setattr(p0_execution,
                         "P0_EVAL_REALIZATION_SHA256", "0" * 64)
     with pytest.raises(InfrastructureError, match="frozen pin"):
@@ -7417,7 +7475,7 @@ def test_p0_runner_cpu_boundaries(monkeypatch, tmp_path):
                         "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
     monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
                         PRISTINE_VAL_CONFIG_SHA256)
-    # exactly-once prelaunch persistence (four files)
+    # exactly-once prelaunch persistence (four files, byte copies)
     live_env = json.loads(Path(
         "runs/routing-dev/beta-smoke-v1/execute_env_manifest.json"
     ).read_text("utf-8"))
@@ -7430,47 +7488,79 @@ def test_p0_runner_cpu_boundaries(monkeypatch, tmp_path):
     assert sorted(p.name for p in prelaunch.iterdir()) == [
         "env_manifest.json", "execution_identity.json",
         "launch_freeze.json", "p0_launch.json"]
-    assert (prelaunch / "launch_freeze.json").read_bytes() == \
-        Path(p0_launch.LAUNCH_FREEZE_PATH).read_bytes()
+    assert (prelaunch / "execution_identity.json").read_bytes() \
+        == Path(p0_execution.EXECUTION_IDENTITY_PATH).read_bytes()
     with pytest.raises(InfrastructureError, match="exactly once"):
         p0_execution.prepare_p0_launch(
             run_dir=run_dir, _environment_builder=lambda: live_env)
     # the cadence callback: deadline BEFORE the step; consumption
-    # at the optimizer; cadence events ONLY at intermediates
+    # at the optimizer; save requests at REMAINING intermediates
+    # only; the cadence event fires at on_save via the HF binding
+    from types import SimpleNamespace
+
     from tasks.routing import checkpoint as ckpt_module
     accountant = ckpt_module.GroupAccountant()
     instrumentation = p0_smoke._EpochInstrumentation()
-    fired = []
-    callback = p0_execution._make_p0_callback(
-        accountant, instrumentation, deadline=0.0,
-        cadence_updates=[0, 628, 1256, 6123],
-        on_cadence=fired.append)
+    context = {"deadline": 0.0, "accountant": accountant,
+               "instrumentation": instrumentation}
+    expired = p0_execution._make_p0_callback(
+        context, [0, 628, 1256, 6123])
     with pytest.raises(InfrastructureError,
                        match="deadline exceeded"):
-        callback.on_step_begin(None, None, None)
+        expired.on_step_begin(None, None, None)
     import time as _time
-    live = p0_execution._make_p0_callback(
-        accountant, instrumentation,
-        deadline=_time.monotonic() + 3600.0,
-        cadence_updates=[0, 628, 1256, 6123],
-        on_cadence=fired.append)
+    context["deadline"] = _time.monotonic() + 3600.0
+    callback = p0_execution._make_p0_callback(
+        context, [0, 628, 1256, 6123])
     with pytest.raises(InfrastructureError,
                        match="never generated"):
-        live.on_optimizer_step(None, None, None)
+        callback.on_optimizer_step(None, None, None)
 
-    class _State:
-        def __init__(self, step):
-            self.global_step = step
+    def _state(step):
+        return SimpleNamespace(global_step=step)
+
+    def _control():
+        return SimpleNamespace(should_save=False)
 
     instrumentation.start_epoch()
-    live.on_step_end(None, _State(627), None)
-    assert fired == []
-    live.on_step_end(None, _State(628), None)
-    assert fired == [628]
-    live.on_step_end(None, _State(6123), None)
-    assert fired == [628]  # the FINAL index is not an intermediate
-    # the abort rule: raw traces sealed, checkpoint bundles KEPT
-    abort_dir = tmp_path / "abort"
+    control = _control()
+    callback.on_step_end(None, _state(627), control)
+    assert control.should_save is False
+    control = _control()
+    callback.on_step_end(None, _state(628), control)
+    assert control.should_save is True
+    control = _control()
+    callback.on_step_end(None, _state(6123), control)
+    assert control.should_save is False  # final != intermediate
+    # a RESUMED session skips already-completed intermediates
+    resumed = p0_execution._make_p0_callback(
+        context, [0, 628, 1256, 6123], already_completed=(628,))
+    control = _control()
+    resumed.on_step_end(None, _state(628), control)
+    assert control.should_save is False
+    # on_save fires the cadence event bound to the HF checkpoint
+    fired = []
+    monkeypatch.setattr(
+        p0_execution, "_p0_cadence_event",
+        lambda ctx, step, hf_dir: fired.append((step,
+                                                hf_dir.name)))
+    hf_root = tmp_path / "hf"
+    (hf_root / "checkpoint-628").mkdir(parents=True)
+    callback.on_save(SimpleNamespace(output_dir=str(hf_root)),
+                     _state(628), _control())
+    assert fired == [(628, "checkpoint-628")]
+    with pytest.raises(InfrastructureError, match="absent"):
+        callback.on_save(
+            SimpleNamespace(output_dir=str(hf_root)),
+            _state(1256), _control())
+    monkeypatch.undo()
+    monkeypatch.setitem(p0_val.VAL_CONFIG["lineage"],
+                        "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
+    monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
+                        PRISTINE_VAL_CONFIG_SHA256)
+    # 363_s F4: a resumable interruption seals raws, RETAINS every
+    # checkpoint, records CUMULATIVE elapsed, writes NO closeout
+    abort_dir = tmp_path / "interrupted"
     sealed = abort_dir / "sealed"
     sealed.mkdir(parents=True)
     (sealed / "training_trace.jsonl").write_text(
@@ -7478,12 +7568,21 @@ def test_p0_runner_cpu_boundaries(monkeypatch, tmp_path):
     bundle = abort_dir / "checkpoint_bundle_upd628"
     bundle.mkdir()
     (bundle / "adapter_state.safetensors").write_bytes(b"resume")
-    p0_execution._sanitize_p0_abort(abort_dir)
+    p0_execution._record_resumable_interruption(
+        abort_dir, 100.0, RuntimeError("gpu fell over"))
     assert not (sealed / "training_trace.jsonl").exists()
     assert (sealed / "training_trace.jsonl.gz").exists()
-    assert bundle.exists()  # the resume state is RETAINED
-    # the closed record schema refuses extras
-    assert "resume entry point" in " ".join(
+    assert bundle.exists()
+    marker = json.loads(
+        (abort_dir / "interruption.json").read_text("utf-8"))
+    assert marker["cumulative_elapsed_seconds"] == 100.0
+    assert marker["interruption_count"] == 1
+    p0_execution._record_resumable_interruption(
+        abort_dir, 50.0, RuntimeError("again"))
+    marker = json.loads(
+        (abort_dir / "interruption.json").read_text("utf-8"))
+    assert marker["cumulative_elapsed_seconds"] == 150.0
+    assert marker["interruption_count"] == 2
+    assert "again" in marker["last_error"]
+    assert "sentinel-block" in " ".join(
         p0_execution.P0_RUNNER_OUTSTANDING)
-    assert set(p0_execution._P0_RECORD_KEYS) >= {
-        "cadence_completed", "checkpoints", "sealed_sha256"}

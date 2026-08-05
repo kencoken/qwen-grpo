@@ -32,7 +32,11 @@
  "development_only": true,
  "evaluation": {
   "base_seed": 20260804,
-  "checkpoint_rule": "every cadence checkpoint evaluates the full 90-observation cohort under IDENTICAL per-slot seeds (common random numbers; the checkpoint index lives in provenance only, 330_f \u00a71)",
+  "checkpoint_eval_realization": {
+   "realization_sha256": "a8e9cf7322a008889414c68ce133bb50cd82fe960340d079b0f1a66fd7f2f802",
+   "rule": "batched per-observation: torch.manual_seed(slot-0 CRN seed) then ONE generate call with num_return_sequences = group_size \u2014 the operation the beta smoke priced; identical draws at every checkpoint"
+  },
+  "checkpoint_rule": "every cadence checkpoint evaluates the full 90-observation cohort under IDENTICAL draws (common random numbers; the checkpoint index lives in provenance only, 330_f \u00a71)",
   "domain": "p0_val_eval",
   "ordered_observation_ids_sha256": "1d2e721ee064b934706f6984283a6c2be84a7b0be746975a689f304ab1c3e959",
   "sampling": {
@@ -50,7 +54,7 @@
   "val_lock_sha256": "2aecdf28ad25cae10e494aa9fc1a95138a9feb5a29ab0636314b847987caf19d"
  },
  "launch_freeze_sha256": "88c6635aadb2d0ca1c766efc937123b7ece427190cfe3ce3675ac8f269ebccfc",
- "record_sha256": "4c763cc9f21de2bfc05700b22b48529ed7f2e83ed68225a1ab115f4cdfa5a4ae",
+ "record_sha256": "b5749ecac2e8e2444dd2ebb6193054fb721ea1686751ffd73d0c3938d80b1e1d",
  "schema_version": "p0-execution-identity-v1",
  "science_contract_sha256": "d47a63ff435e3b2964f09f0d97f287ee722cae5bbc7df58104d7e10c6d519517",
  "telemetry": {

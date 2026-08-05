@@ -92,7 +92,7 @@ EXECUTION_IDENTITY_PATH = P0_DIR / "p0_execution_identity.json"
 P0_LAUNCH_FREEZE_SHA256 = \
     "88c6635aadb2d0ca1c766efc937123b7ece427190cfe3ce3675ac8f269ebccfc"
 P0_EXECUTION_IDENTITY_SHA256 = \
-    "4c763cc9f21de2bfc05700b22b48529ed7f2e83ed68225a1ab115f4cdfa5a4ae"
+    "b5749ecac2e8e2444dd2ebb6193054fb721ea1686751ffd73d0c3938d80b1e1d"
 
 
 # --- step 1: the chain-authenticated smoke record ------------------------------
@@ -388,10 +388,25 @@ def build_p0_execution_identity(*, launch_freeze_sha256: str
                 list(lock["ordered_observation_ids"])),
             "checkpoint_rule": "every cadence checkpoint evaluates "
                                "the full 90-observation cohort "
-                               "under IDENTICAL per-slot seeds "
-                               "(common random numbers; the "
-                               "checkpoint index lives in "
-                               "provenance only, 330_f §1)",
+                               "under IDENTICAL draws (common "
+                               "random numbers; the checkpoint "
+                               "index lives in provenance only, "
+                               "330_f §1)",
+            # 363_s F2: the EXECUTED batched realization is frozen
+            # IN the authenticated identity — one slot-0 CRN seed
+            # per observation seeds a single batched generation of
+            # group_size sequences (the smoke-priced operation);
+            # slots 1..7 of the 720-entry schedule are NOT
+            # consumed by checkpoint evaluation
+            "checkpoint_eval_realization": {
+                "rule": "batched per-observation: torch.manual_"
+                        "seed(slot-0 CRN seed) then ONE generate "
+                        "call with num_return_sequences = "
+                        "group_size — the operation the beta "
+                        "smoke priced; identical draws at every "
+                        "checkpoint",
+                "realization_sha256": P0_EVAL_REALIZATION_SHA256,
+            },
         },
         "telemetry": {
             "sentinel_fields":
@@ -806,34 +821,33 @@ def admit_p0_execution(*, execution_manifest: Mapping[str, Any],
     }
 
 
-# --- the P0 execution runner (post-Unit-L; 361_f sign-off carry-forward) -------
-# THE runner invariant: trainer inputs come ONLY from
+# --- the P0 execution runner (rev2, response to 363_s) -------------------------
+# THE runner invariant (361_f): trainer inputs come ONLY from
 # `admit_p0_execution`'s returned ADMITTED bundle — no path in
-# this module (or anywhere) appends a `training_run` through the
-# lower-level ledger helper.
+# this module appends a `training_run` through the lower-level
+# ledger helper. Lifecycle states (363_s F4): a RESUMABLE
+# INTERRUPTION seals partial evidence, retains every checkpoint,
+# records cumulative elapsed time, and leaves the launch OPEN;
+# `resume_p0_run` continues under the ORIGINAL launch and the
+# CUMULATIVE ten-hour deadline; `terminally_abort_p0` is the only
+# operation that closes the launch aborted.
 
-# The EXECUTED evaluation-seed realization for P0 checkpoint
-# evaluations: the smoke-priced shape (one slot-0 seed per
-# observation, eight sampled sequences per call — the cap
-# arithmetic priced EXACTLY this operation), realized under the
-# val lock's CRN rule (domain p0_val_eval, base 20260804, NO
-# checkpoint index — every checkpoint replays IDENTICAL draws).
+P0_RUN_ID = "routing-dev-p0-v1"
+
+# The EXECUTED checkpoint-evaluation realization (363_s F2): the
+# identity's evaluation block freezes the BATCHED per-observation
+# rule explicitly — one slot-0 CRN seed per observation seeds a
+# single batched generation of group_size sequences (the
+# smoke-priced operation; slots 1..7 of the 720-entry schedule
+# are NOT consumed by checkpoint evaluation). The realization pin
+# covers the 90 executed seeds in lock order.
 P0_EVAL_REALIZATION_SHA256 = \
     "a8e9cf7322a008889414c68ce133bb50cd82fe960340d079b0f1a66fd7f2f802"
 
-# Sentinel-block assembly is NOT performed in-run: the COMPLETE
-# training trace and the per-checkpoint evaluation traces are the
-# sealed evidence; the per-checkpoint sentinel blocks consumed by
-# `assemble_sentinel_trajectories` are derived from that evidence
-# by a deterministic CPU assembler in a follow-up reviewed unit
-# BEFORE cycle synthesis. Registered as outstanding.
 P0_RUNNER_OUTSTANDING = (
     "deterministic CPU sentinel-block assembly from the sealed "
     "training/evaluation traces (feeds "
     "assemble_sentinel_trajectories before cycle synthesis)",
-    "resume entry point (a reviewed implementation under the "
-    "ORIGINAL launch and its cumulative deadline — an abort "
-    "leaves the launch terminally blocked until then)",
 )
 
 
@@ -891,12 +905,139 @@ def prepare_p0_launch(*, run_dir: str | Path = P0_RUN_ROOT,
     return manifest
 
 
+def _p0_identities(manifest: Mapping[str, Any],
+                   training_lock: Mapping[str, Any],
+                   rows, seed: int) -> dict[str, str]:
+    """363_s conformance: renderer/surface/worker/cache fields
+    derive from the admitted rows and the AUTHENTICATED training
+    surface lock — never placeholders or duplicated hashes."""
+    from .resume_validation import schedule_identities
+    return {
+        "routing_source_sha256": manifest["routing_source_sha256"],
+        "environment_manifest_sha256":
+            manifest["environment_manifest_sha256"],
+        "config_sha256": manifest["launch_freeze_sha256"],
+        "surface_manifest_sha256": training_lock["manifest_sha256"],
+        "worker_pool_fingerprint":
+            training_lock["worker_pool_fingerprint"],
+        "cache_identity": training_lock["cache_identity"],
+        "seed": str(seed),
+        **schedule_identities(list(rows)),
+    }
+
+
+def _cast_and_assert_lora(trainer) -> None:
+    """363_s conformance: the explicit FP32 LoRA cast with the
+    frozen key set asserted (count + sorted-keys hash + dtype)."""
+    import hashlib as _hashlib
+
+    import torch
+
+    from .p0_launch import _validated_profile
+    profile = _validated_profile()
+    keys = []
+    for name, parameter in trainer.model.named_parameters():
+        if "lora" in name:
+            parameter.data = parameter.data.to(torch.float32)
+            keys.append(name)
+    expected = profile["lora_key_set"]
+    normalized = sorted(keys)
+    digest = _hashlib.sha256(
+        json.dumps(normalized).encode("utf-8")).hexdigest()
+    if len(normalized) != expected["count"] \
+            or digest != expected["sorted_keys_sha256"]:
+        raise InfrastructureError(
+            f"LoRA key set diverges from the frozen profile: "
+            f"{len(normalized)} keys, digest {digest[:12]}…")
+    for name, parameter in trainer.model.named_parameters():
+        if "lora" in name and parameter.dtype is not torch.float32:
+            raise InfrastructureError(
+                f"{name}: LoRA parameter not FP32 after the cast")
+
+
+def _save_p0_checkpoint_bundle(trainer, accountant, identities,
+                               out_dir: Path, update_index: int,
+                               parent_checkpoint: str | None,
+                               hf_dir: Path | None
+                               ) -> tuple[float, dict]:
+    """363_s F3: the P0-SPECIFIC v1 saver — correct run/segment/
+    parent lineage, the five-way counter cross-check at the
+    cadence index, the HF-checkpoint binding when one exists, and
+    an IMMEDIATE `checkpoint.validate_resume` from disk."""
+    import time as _time
+
+    import torch
+    from safetensors.torch import save_file
+
+    from . import checkpoint as ckpt
+    from .resume_validation import _hf_checkpoint_hashes
+    started = _time.monotonic()
+    step = int(trainer.state.global_step)
+    if not (step == update_index
+            and accountant.generated_groups == update_index
+            and accountant.consumed_groups == update_index
+            and accountant.optimizer_updates == update_index
+            and accountant.sampled_completions
+            == 8 * update_index):
+        raise InfrastructureError(
+            f"cadence update {update_index}: counters diverge — "
+            f"step {step}, accountant "
+            f"{accountant.generated_groups}/"
+            f"{accountant.consumed_groups}/"
+            f"{accountant.optimizer_updates}/"
+            f"{accountant.sampled_completions} (363_s F3)")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    counters = accountant.authorize_checkpoint()
+    save_file({k: v.detach().to("cpu").contiguous()
+               for k, v in trainer.model.state_dict().items()
+               if "lora" in k},
+              str(out_dir /
+                  ckpt.CHECKPOINT_BUNDLE_FILENAMES["adapter"]))
+    torch.save(trainer.optimizer.state_dict(),
+               out_dir / ckpt.CHECKPOINT_BUNDLE_FILENAMES[
+                   "optimizer"])
+    torch.save(trainer.lr_scheduler.state_dict(),
+               out_dir / ckpt.CHECKPOINT_BUNDLE_FILENAMES[
+                   "scheduler"])
+    rng_state = ckpt.capture_rng_state()
+    ckpt.persist_rng_state(out_dir, rng_state)
+    filenames = {name: ckpt.CHECKPOINT_BUNDLE_FILENAMES[name]
+                 for name in ("adapter", "optimizer",
+                              "scheduler", "rng")}
+    hashes = ckpt.hash_state_artifacts(out_dir, filenames)
+    sampler_position: dict[str, Any] = {
+        "next_global_group_index": counters["consumed_groups"],
+        "hf_global_step": step,
+        "hf_checkpoint_dir": str(hf_dir) if hf_dir else None,
+    }
+    if hf_dir is not None:
+        sampler_position["hf_checkpoint_sha256"] = \
+            _hf_checkpoint_hashes(hf_dir)
+    record = ckpt.build_checkpoint_record(
+        identities=identities, counters=counters,
+        rng_state=rng_state, state_artifact_hashes=hashes,
+        sampler_position=sampler_position,
+        run_id=P0_RUN_ID, segment_id=f"upd{update_index}",
+        parent_checkpoint=parent_checkpoint)
+    (out_dir / "checkpoint_record.json").write_text(
+        json.dumps(record, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    ckpt.validate_resume(record, identities, bundle_dir=out_dir)
+    proof = {"checkpoint_sha256": record["checkpoint_sha256"],
+             "state_artifact_sha256":
+                 record["state_artifact_sha256"],
+             "counters": counters}
+    return _time.monotonic() - started, proof
+
+
 def _p0_eval_pass(trainer, out_path: Path, deadline: float,
                   eval_context: dict[str, Any]) -> float:
-    """One COMPLETE checkpoint evaluation: the smoke-priced shape
-    (slot-0 seed, eight sequences) over the val cohort against
-    the AUTHENTICATED val surface, inside `isolated_rng`, sealed
-    inside the pass, deadline-checked at every observation."""
+    """One COMPLETE checkpoint evaluation: the frozen batched
+    per-observation realization (identity's
+    `checkpoint_eval_realization`) against the AUTHENTICATED val
+    surface, inside `isolated_rng`, sealed inside the pass,
+    deadline-checked at every observation; EVERY frozen sampling
+    field is consumed (363_s conformance)."""
     import time as _time
 
     import torch
@@ -941,9 +1082,13 @@ def _p0_eval_pass(trainer, out_path: Path, deadline: float,
                 model.device)
             torch.manual_seed(seeds[oid])
             generated = model.generate(
-                **inputs, do_sample=True,
+                **inputs, do_sample=bool(sampling["do_sample"]),
                 temperature=float(sampling["temperature"]),
-                top_p=float(sampling["top_p"]), top_k=0,
+                top_p=float(sampling["top_p"]),
+                top_k=(0 if sampling["top_k"] is None
+                       else int(sampling["top_k"])),
+                repetition_penalty=float(
+                    sampling["repetition_penalty"]),
                 num_return_sequences=sampling["group_size"],
                 max_new_tokens=sampling["max_new_tokens"],
                 pad_token_id=tokenizer.eos_token_id)
@@ -979,73 +1124,163 @@ def _p0_eval_pass(trainer, out_path: Path, deadline: float,
     return _time.monotonic() - started
 
 
-def _p0_checkpoint_and_eval(trainer, accountant, identities,
-                            run_dir: Path, update_index: int,
-                            deadline: float,
-                            eval_context: dict[str, Any],
-                            record_sink: dict[str, Any]) -> None:
-    """One cadence event: the RETAINED v1 checkpoint bundle (the
-    resume state — P0 never discards trained state) then the
-    evaluation pass under the frozen realization."""
-    from .p0_smoke import _save_and_verify_checkpoint_bundle
+def _p0_cadence_event(context: dict[str, Any],
+                      update_index: int,
+                      hf_dir: Path | None) -> None:
+    """One cadence event: deadline BEFORE, the RETAINED P0 bundle
+    (validated immediately), the CRN evaluation, deadline AFTER
+    both operations (363_s F6)."""
+    deadline = context["deadline"]
+    run_dir = context["run_dir"]
     _check_deadline(deadline, f"cadence update {update_index}")
-    bundle_dir = run_dir / f"checkpoint_bundle_upd{update_index}"
-    bundle_seconds, proof = _save_and_verify_checkpoint_bundle(
-        trainer, accountant, identities, bundle_dir)
+    bundle_seconds, proof = _save_p0_checkpoint_bundle(
+        context["trainer"], context["accountant"],
+        context["identities"],
+        run_dir / f"checkpoint_bundle_upd{update_index}",
+        update_index, context["last_checkpoint_sha256"], hf_dir)
+    _check_deadline(deadline,
+                    f"post-checkpoint update {update_index}")
     eval_seconds = _p0_eval_pass(
-        trainer,
+        context["trainer"],
         run_dir / "sealed" / f"eval_upd{update_index}.jsonl",
-        deadline, eval_context)
-    record_sink["checkpoints"][str(update_index)] = {
+        deadline, context["eval_context"])
+    _check_deadline(deadline,
+                    f"post-evaluation update {update_index}")
+    context["record_sink"]["checkpoints"][str(update_index)] = {
         "bundle_seconds": bundle_seconds,
         "eval_seconds": eval_seconds,
         "checkpoint_proof": proof,
     }
-    record_sink["cadence_completed"].append(update_index)
+    context["record_sink"]["cadence_completed"].append(
+        update_index)
+    context["last_checkpoint_sha256"] = proof["checkpoint_sha256"]
 
 
-def _make_p0_callback(accountant, instrumentation, deadline,
-                      cadence_updates, on_cadence):
-    """Lifecycle ordering exactly as reviewed for the smoke
-    (352_s/355_s): deadline BEFORE the step, consumption at the
-    optimizer, cadence events at step end when the optimizer
-    count reaches an intermediate index."""
+def _make_p0_callback(context: dict[str, Any],
+                      cadence_updates, already_completed=()):
+    """Lifecycle ordering as reviewed (352_s/355_s): deadline
+    BEFORE the step; consumption at the optimizer; at each
+    remaining intermediate index the callback requests an HF save
+    and the cadence event fires at `on_save` (the 235_s F2
+    pattern — the bundle binds the HF checkpoint it shadows)."""
     from transformers import TrainerCallback
 
-    intermediates = set(cadence_updates[1:-1])
+    intermediates = set(cadence_updates[1:-1]) \
+        - set(already_completed)
 
     class _P0Callback(TrainerCallback):
         def on_step_begin(self, args, state, control, **kwargs):
-            _check_deadline(deadline, "training step begin")
+            _check_deadline(context["deadline"],
+                            "training step begin")
 
         def on_optimizer_step(self, args, state, control,
                               **kwargs):
-            accountant.record_update(1)
+            context["accountant"].record_update(1)
 
         def on_step_end(self, args, state, control, **kwargs):
             scheduler = kwargs.get("lr_scheduler")
             lr = (scheduler.get_last_lr()[0]
                   if scheduler is not None else 0.0)
-            instrumentation.on_update_end(lr)
+            context["instrumentation"].on_update_end(lr)
+            if int(state.global_step) in intermediates:
+                control.should_save = True
+            return control
+
+        def on_save(self, args, state, control, **kwargs):
             step = int(state.global_step)
             if step in intermediates:
-                on_cadence(step)
+                hf_dir = Path(args.output_dir) \
+                    / f"checkpoint-{step}"
+                if not hf_dir.exists():
+                    raise InfrastructureError(
+                        f"{hf_dir} absent at on_save (235_s F2)")
+                _p0_cadence_event(context, step, hf_dir)
 
     return _P0Callback()
 
 
-def _sanitize_p0_abort(run_dir: Path) -> None:
-    """The P0 abort rule: raw semantic traces are SEALED, but the
-    checkpoint bundles are RETAINED — they are the resume state
-    under the original launch (330_f §5; the resume entry point
-    is a registered outstanding obligation). A failure here
-    propagates: the launch stays OPEN and visibly blocked."""
+def _record_resumable_interruption(run_dir: Path,
+                                   session_elapsed: float,
+                                   error: BaseException) -> None:
+    """363_s F4: a RESUMABLE interruption — partial evidence
+    sealed, every checkpoint retained, CUMULATIVE elapsed time
+    recorded, the launch left OPEN (no ledger write). A failure
+    here propagates and the launch stays visibly blocked."""
     from .p0_smoke import _seal_file
     sealed = run_dir / "sealed"
     if sealed.exists():
         for raw in sorted(sealed.iterdir()):
             if raw.is_file() and not raw.name.endswith(".gz"):
                 _seal_file(raw)
+    marker = run_dir / "interruption.json"
+    prior = {"cumulative_elapsed_seconds": 0.0,
+             "interruption_count": 0}
+    if marker.exists():
+        prior = json.loads(marker.read_text("utf-8"))
+    marker.write_text(json.dumps({
+        "cumulative_elapsed_seconds":
+            prior["cumulative_elapsed_seconds"]
+            + float(session_elapsed),
+        "interruption_count": prior["interruption_count"] + 1,
+        "last_error": f"{type(error).__name__}: {error}",
+    }, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def terminally_abort_p0(*, run_dir: str | Path = P0_RUN_ROOT,
+                        question: str, reason: str,
+                        ledger_path=None) -> dict[str, Any]:
+    """The ONLY operation that closes an interrupted P0 launch
+    aborted (363_s F4) — an explicit, deliberate retirement, never
+    an automatic reaction. Binds the sanitized inventory and the
+    CUMULATIVE consumed time."""
+    from .ledger import (
+        LEDGER_PATH,
+        append_ledger_entry,
+        ledger_head,
+        verify_ledger_head,
+    )
+    from .support_run import _hash_directory
+    ledger_path = ledger_path or LEDGER_PATH
+    run_dir = Path(run_dir)
+    manifest = validate_p0_execution_manifest(json.loads(
+        (run_dir / "prelaunch" / "p0_launch.json")
+        .read_text("utf-8")), recompute=False)
+    chain = verify_ledger_head(ledger_head(ledger_path),
+                               ledger_path)
+    launches = [e for e in chain if e["kind"] == "training_run"
+                and e["freeze"].get("p0_launch_manifest_sha256")
+                == manifest["manifest_sha256"]]
+    if len(launches) != 1:
+        raise InfrastructureError(
+            "exactly one launch must bind this manifest")
+    launch = launches[0]
+    if any(e for e in chain if e["kind"] == "closeout"
+           and e.get("closes_entry_sha256")
+           == launch["entry_sha256"]):
+        raise InfrastructureError(
+            "this launch is already closed")
+    marker = run_dir / "interruption.json"
+    cumulative = 0.0
+    if marker.exists():
+        cumulative = json.loads(marker.read_text("utf-8"))[
+            "cumulative_elapsed_seconds"]
+    return append_ledger_entry(
+        {"kind": "closeout", "question": question,
+         "motivating_evidence": "P0 TERMINALLY ABORTED (explicit)",
+         "freeze": {
+             "p0_launch_manifest_sha256":
+                 manifest["manifest_sha256"],
+             "partial_artifact_hashes": _hash_directory(run_dir)},
+         "parent": ledger_head(ledger_path),
+         "budget_allocated_gpu_hours": 0.0,
+         "budget_consumed_gpu_hours":
+             round(cumulative / 3600.0, 4),
+         "closes_entry_sha256": launch["entry_sha256"],
+         "terminal_status": "aborted",
+         "interpretation": reason,
+         "outcome_informed": False,
+         "outcome_pointer": str(run_dir)},
+        ledger_head(ledger_path), ledger_path)
 
 
 _P0_RECORD_KEYS = frozenset({
@@ -1055,17 +1290,36 @@ _P0_RECORD_KEYS = frozenset({
     "sealed_sha256", "development_only"})
 
 
+def _require_nonneg_finite(value: Any, where: str) -> None:
+    import math
+    if isinstance(value, bool) or not isinstance(
+            value, (int, float)) or not math.isfinite(value) \
+            or value < 0:
+        raise InfrastructureError(
+            f"{where}: must be a non-negative finite number, got "
+            f"{value!r}")
+
+
 def verify_p0_run(run_dir: str | Path, *, ledger_path,
                   expected_head_sha256: str | None
                   ) -> dict[str, Any]:
-    """The P0 terminal verifier, run before the success closeout
-    and post-hoc: the chain-authenticated launch; the closed
-    record schema; every sealed file `.gz` only and matching its
-    recorded hash; a RETAINED checkpoint bundle for every
-    completed cadence index; the environment cross-binding; the
-    complete-closeout inventory when present."""
+    """The P0 terminal verifier (hardened per 363_s F5): the
+    chain-authenticated launch; the EXACT frozen cadence and
+    checkpoint/evaluation/sealed inventories; finite nonnegative
+    measurements within the ceiling; the exact training-group
+    sequence with eight completions per group; full checkpoint
+    validation from disk with the parent chain; byte-exact
+    prelaunch artifact copies; prelaunch-execution environment
+    attestation; the lifecycle status; the complete-closeout
+    terminal inventory."""
+    import gzip
+
     from .ledger import verify_ledger_head
-    from .support_run import _sha_file
+    from .p0_contract import load_p0_science_contract as _load_c
+    from .p0_launch import LAUNCH_FREEZE_PATH
+    from .p0_schedule import schedule_for_epochs
+    from .support_run import _sha_file, attest_environment
+    from . import checkpoint as ckpt
     run_dir = Path(run_dir)
     chain = verify_ledger_head(expected_head_sha256, ledger_path)
     manifest = validate_p0_execution_manifest(json.loads(
@@ -1080,14 +1334,30 @@ def verify_p0_run(run_dir: str | Path, *, ledger_path,
             "launches binding this manifest — exactly one is "
             "required")
     launch = launches[0]
+    # byte-exact prelaunch artifact copies (363_s F5)
+    prelaunch = run_dir / "prelaunch"
+    if (prelaunch / "launch_freeze.json").read_bytes() \
+            != Path(LAUNCH_FREEZE_PATH).read_bytes() \
+            or (prelaunch / "execution_identity.json"
+                ).read_bytes() \
+            != Path(EXECUTION_IDENTITY_PATH).read_bytes():
+        raise InfrastructureError(
+            "prelaunch artifact copies are not byte-identical to "
+            "the committed reviewed artifacts (363_s F5)")
     frozen_env = json.loads(
-        (run_dir / "prelaunch" / "env_manifest.json")
-        .read_text("utf-8"))
+        (prelaunch / "env_manifest.json").read_text("utf-8"))
     if dev_support.validate_environment_manifest_binding(
             frozen_env) != manifest["environment_manifest_sha256"]:
         raise InfrastructureError(
             "the prelaunch environment does not bind to the "
             "manifest")
+    execute_env_path = run_dir / "execute_env_manifest.json"
+    if execute_env_path.exists():
+        execute_env = json.loads(
+            execute_env_path.read_text("utf-8"))
+        dev_support.validate_environment_manifest_binding(
+            execute_env)
+        attest_environment(frozen_env, execute_env)
     record = json.loads(
         (run_dir / "p0_record.json").read_text("utf-8"))
     if set(record) != _P0_RECORD_KEYS:
@@ -1101,118 +1371,210 @@ def verify_p0_run(run_dir: str | Path, *, ledger_path,
             != manifest["execution_identity_sha256"] \
             or record["launch_entry_sha256"] \
             != launch["entry_sha256"] \
+            or record["run"] != P0_RUN_ID \
             or record["development_only"] is not True:
         raise InfrastructureError(
             "P0 record does not bind the authenticated launch")
-    sealed = run_dir / "sealed"
-    raw_left = [p for p in sealed.iterdir()
-                if p.is_file() and not p.name.endswith(".gz")] \
-        if sealed.exists() else []
-    if raw_left:
+    # the EXACT frozen cadence (363_s F5 — never the record's
+    # declared collections)
+    identity = load_p0_execution_identity(
+        prelaunch / "execution_identity.json",
+        expected_sha256=manifest["execution_identity_sha256"])
+    cadence = list(identity["cadence"]["update_indices"])
+    if record["cadence_completed"] != cadence:
         raise InfrastructureError(
-            f"unsealed raw files remain: "
-            f"{[p.name for p in raw_left][:3]}")
+            "cadence_completed is not the exact frozen "
+            "eleven-point cadence (363_s F5)")
+    if set(record["checkpoints"]) != {str(i) for i in cadence}:
+        raise InfrastructureError(
+            "checkpoint blocks do not cover exactly the frozen "
+            "cadence")
+    _require_nonneg_finite(record["whole_run_seconds"],
+                           "whole_run_seconds")
+    if record["whole_run_seconds"] > \
+            manifest["budget_gpu_hours"] * 3600.0:
+        raise InfrastructureError(
+            "the recorded run time exceeds the ten-hour ceiling "
+            "(363_s F6)")
+    # full checkpoint validation FROM DISK with the parent chain
+    identities = None
+    parent = None
+    for update_index in cadence:
+        block = record["checkpoints"][str(update_index)]
+        _require_nonneg_finite(block["bundle_seconds"],
+                               f"bundle_seconds[{update_index}]")
+        _require_nonneg_finite(block["eval_seconds"],
+                               f"eval_seconds[{update_index}]")
+        bundle = run_dir / f"checkpoint_bundle_upd{update_index}"
+        disk_record = json.loads(
+            (bundle / "checkpoint_record.json")
+            .read_text("utf-8"))
+        proof = block["checkpoint_proof"]
+        if set(proof) != {"checkpoint_sha256",
+                          "state_artifact_sha256", "counters"}:
+            raise InfrastructureError(
+                f"update {update_index}: checkpoint proof schema")
+        if disk_record["checkpoint_sha256"] \
+                != proof["checkpoint_sha256"] \
+                or disk_record["state_artifact_sha256"] \
+                != proof["state_artifact_sha256"] \
+                or disk_record["counters"] != proof["counters"]:
+            raise InfrastructureError(
+                f"update {update_index}: the disk record diverges "
+                "from the recorded proof")
+        expected_counters = {
+            "generated_groups": update_index,
+            "consumed_groups": update_index,
+            "optimizer_updates": update_index,
+            "sampled_completions": 8 * update_index}
+        if dict(disk_record["counters"]) != expected_counters:
+            raise InfrastructureError(
+                f"update {update_index}: counters diverge from "
+                "the cadence position (363_s F3)")
+        if disk_record.get("parent_checkpoint") != parent \
+                or disk_record.get("run_id") != P0_RUN_ID \
+                or disk_record.get("segment_id") \
+                != f"upd{update_index}":
+            raise InfrastructureError(
+                f"update {update_index}: run/segment/parent "
+                "lineage diverges (363_s F3)")
+        if identities is None:
+            identities = dict(disk_record["identities"])
+            if identities.get("config_sha256") \
+                    != manifest["launch_freeze_sha256"] \
+                    or identities.get("routing_source_sha256") \
+                    != manifest["routing_source_sha256"]:
+                raise InfrastructureError(
+                    "checkpoint identities do not bind the "
+                    "manifest")
+        ckpt.validate_resume(disk_record, identities,
+                             bundle_dir=bundle)
+        parent = disk_record["checkpoint_sha256"]
+    # EXACT sealed inventory: eval per cadence index + the
+    # training-trace segments + the trainer log
+    sealed = run_dir / "sealed"
+    on_disk = {p.name for p in sealed.iterdir() if p.is_file()}
+    eval_files = {f"eval_upd{i}.jsonl.gz" for i in cadence}
+    trace_segments = sorted(
+        name for name in on_disk
+        if name.startswith("training_trace")
+        and name.endswith(".jsonl.gz"))
+    expected_sealed = eval_files | set(trace_segments) \
+        | {"trainer_log_history.json.gz"}
+    if on_disk != expected_sealed \
+            or set(record["sealed_sha256"]) != expected_sealed \
+            or not trace_segments:
+        raise InfrastructureError(
+            "sealed inventory is not exactly the frozen set "
+            "(363_s F5)")
     for name, expected_sha in record["sealed_sha256"].items():
         if _sha_file(sealed / name) != expected_sha:
             raise InfrastructureError(
                 f"sealed file {name} does not match the recorded "
                 "hash")
-    for update_index in record["cadence_completed"]:
-        bundle = run_dir / f"checkpoint_bundle_upd{update_index}"
-        if not (bundle / "checkpoint_record.json").exists():
-            raise InfrastructureError(
-                f"cadence update {update_index}: the RETAINED "
-                "checkpoint bundle is missing")
-        if str(update_index) not in record["checkpoints"]:
-            raise InfrastructureError(
-                f"cadence update {update_index} has no checkpoint "
-                "record block")
+    # the EXACT training-group sequence: the frozen schedule with
+    # eight completions per group (363_s F5)
+    contract = _load_c()
+    freeze = load_real_launch_freeze(
+        prelaunch / "launch_freeze.json")
+    schedule = schedule_for_epochs(
+        contract, freeze.launch_plan.launch_epochs)
+    observed: list[str] = []
+    for name in trace_segments:
+        with gzip.open(sealed / name, "rt",
+                       encoding="utf-8") as handle:
+            for line in handle:
+                group = json.loads(line)
+                observed.append(group["observation_id"])
+                if len(group["completions"]) != 8:
+                    raise InfrastructureError(
+                        f"group {len(observed) - 1}: "
+                        f"{len(group['completions'])} completions "
+                        "!= 8 (363_s F5)")
+    if observed != schedule:
+        raise InfrastructureError(
+            f"the training trace ({len(observed)} groups) is not "
+            f"the exact frozen {len(schedule)}-group schedule "
+            "(363_s F5)")
+    # lifecycle status (363_s F5)
     closeouts = [e for e in chain if e["kind"] == "closeout"
                  and e.get("closes_entry_sha256")
                  == launch["entry_sha256"]]
-    if closeouts and closeouts[0].get(
-            "terminal_status") == "complete":
-        from .support_run import _hash_directory
-        if closeouts[0]["freeze"].get("terminal_artifact_hashes") \
-                != _hash_directory(run_dir):
-            raise InfrastructureError(
-                "terminal evidence does not match the closeout "
-                "inventory")
+    if closeouts:
+        status = closeouts[0].get("terminal_status")
+        if status == "complete":
+            from .support_run import _hash_directory
+            if closeouts[0]["freeze"].get(
+                    "terminal_artifact_hashes") \
+                    != _hash_directory(run_dir):
+                raise InfrastructureError(
+                    "terminal evidence does not match the "
+                    "closeout inventory")
+            _require_nonneg_finite(
+                closeouts[0]["budget_consumed_gpu_hours"],
+                "closeout consumed")
+            if closeouts[0]["budget_consumed_gpu_hours"] \
+                    > manifest["budget_gpu_hours"]:
+                raise InfrastructureError(
+                    "closeout consumed time exceeds the ceiling "
+                    "(363_s F6)")
     return {"verdict": "PASS",
-            "launch_entry_sha256": launch["entry_sha256"]}
+            "launch_entry_sha256": launch["entry_sha256"],
+            "lifecycle": (closeouts[0].get("terminal_status")
+                          if closeouts else "open")}
 
 
-def execute_p0_run(*, run_dir: str | Path = P0_RUN_ROOT,
-                   expected_manifest_sha256: str,
-                   expected_head_sha256: str,
-                   question: str, motivating_evidence: str,
-                   ledger_path=None) -> dict[str, Any]:
-    """Phase 2 (GPU): P0 itself. Admission through
-    `admit_p0_execution` is the ONLY source of trainer inputs
-    (the 361_f runner invariant). Checkpoint-zero evaluation is
-    P0's FIRST execution under the already-frozen record (charter
-    §7); training follows with NO configuration change; every
-    cadence index gets a RETAINED v1 bundle + a CRN evaluation;
-    the complete training trace is the sealed evidence; the
-    cumulative deadline is enforced everywhere; abort seals and
-    RETAINS (resume state)."""
+def _unwrapped(obj):
+    """Accelerate may WRAP the optimizer/scheduler at `train()`;
+    reuse is proven against the inner object."""
+    inner = obj
+    for attr in ("optimizer", "scheduler"):
+        while hasattr(inner, attr):
+            inner = getattr(inner, attr)
+    return inner
+
+
+def _p0_session(*, run_dir: Path, manifest: Mapping[str, Any],
+                identity: Mapping[str, Any], rows,
+                runtime_seed: int, deadline: float,
+                prior_elapsed_seconds: float,
+                resume_state: Mapping[str, Any] | None,
+                question: str, ledger_path,
+                launch_entry_sha256: str) -> dict[str, Any]:
+    """The shared session core for fresh execution and resume:
+    startup under pins → (checkpoint zero | restore) → training
+    with cadence → the final event → seal → record → verify →
+    complete closeout. A failure records a RESUMABLE interruption
+    (launch stays OPEN) and re-raises."""
     import time as _time
 
-    from .ledger import LEDGER_PATH, append_ledger_entry
+    from .ledger import append_ledger_entry
+    from . import checkpoint as ckpt
+    from . import p0_smoke
+    from .p0_replay import restore_extension_surface_if_absent
     from .p0_smoke import (
         _make_smoke_reward,
         _seal_file,
         _strip_console_callbacks,
     )
-    from .p0_val import val_cohort_observations
+    from .p0_val import VAL_RUN_ROOT, val_cohort_observations
     from .resume_validation import make_validation_reward
     from .support_run import (
         _default_environment,
         _hash_directory,
         _sha_file,
     )
-    ledger_path = ledger_path or LEDGER_PATH
-    run_dir = Path(run_dir)
-    prelaunch = run_dir / "prelaunch"
-    manifest = validate_p0_execution_manifest(json.loads(
-        (prelaunch / "p0_launch.json").read_text("utf-8")))
-    prepared_env = json.loads(
-        (prelaunch / "env_manifest.json").read_text("utf-8"))
-    outputs = [run_dir / "sealed", run_dir / "p0_record.json",
-               run_dir / "execute_env_manifest.json"]
-    for path in outputs:
-        if path.exists():
-            raise InfrastructureError(
-                f"{path} exists — outputs are preflighted before "
-                "admission")
-
-    # THE runner invariant: admission is the only input source
-    bundle = admit_p0_execution(
-        execution_manifest=manifest,
-        expected_manifest_sha256=expected_manifest_sha256,
-        prepared_environment=prepared_env,
-        expected_head_sha256=expected_head_sha256,
-        question=question,
-        motivating_evidence=motivating_evidence,
-        run_dir=run_dir, ledger_path=ledger_path)
-    head = bundle["launch_entry_sha256"]
-    identity = bundle["execution_identity"]
+    from .unit_c2_sample import UNIT_C2_CONFIG
     started = _time.monotonic()
-    deadline = started + manifest["budget_gpu_hours"] * 3600.0
-
+    session_elapsed = 0.0
     try:
-        from . import checkpoint as ckpt
-        from . import p0_smoke
-        from .p0_replay import restore_extension_surface_if_absent
-        from .p0_val import VAL_RUN_ROOT
-        from .unit_c2_sample import UNIT_C2_CONFIG
         _persist = p0_smoke._persist_verified
-        _persist(run_dir / "execute_env_manifest.json",
-                 _default_environment())
+        if not (run_dir / "execute_env_manifest.json").exists():
+            _persist(run_dir / "execute_env_manifest.json",
+                     _default_environment())
         sealed = run_dir / "sealed"
-        sealed.mkdir(parents=True)
+        sealed.mkdir(parents=True, exist_ok=True)
 
-        # startup: surfaces, seeds, observations — all under pins
         training_surface = dev_support.load_dev_surface(
             restore_extension_surface_if_absent(),
             expected_lock_sha256=UNIT_C2_CONFIG[
@@ -1227,135 +1589,149 @@ def execute_p0_run(*, run_dir: str | Path = P0_RUN_ROOT,
                 != list(val_lock["ordered_observation_ids"]):
             raise InfrastructureError(
                 "val cohort order diverges from the lock")
+        cadence_updates = list(
+            identity["cadence"]["update_indices"])
+        final_index = cadence_updates[-1]
+        realization = identity["evaluation"][
+            "checkpoint_eval_realization"]
+        if realization["realization_sha256"] \
+                != P0_EVAL_REALIZATION_SHA256:
+            raise InfrastructureError(
+                "the identity's executed realization pin diverges")
         eval_context = {
             "surface": val_surface["surface"], "seeds": seeds,
             "observations": observations,
             "sampling": identity["evaluation"]["sampling"],
         }
-        accountant = ckpt.GroupAccountant()
+        identities = _p0_identities(
+            manifest, training_surface["lock"], rows,
+            runtime_seed)
+
+        if resume_state is None:
+            accountant = ckpt.GroupAccountant()
+            start_group_index = 0
+            already_completed: tuple[int, ...] = ()
+            trace_path = sealed / "training_trace.jsonl"
+            record_sink: dict[str, Any] = {
+                "checkpoints": {}, "cadence_completed": []}
+            last_sha = None
+        else:
+            accountant = ckpt.GroupAccountant.restore(
+                resume_state["counters"])
+            start_group_index = accountant.consumed_groups
+            already_completed = tuple(
+                resume_state["cadence_completed"])
+            trace_path = sealed / (
+                "training_trace_r"
+                f"{resume_state['interruption_count'] + 1}.jsonl")
+            record_sink = {
+                "checkpoints":
+                    dict(resume_state["checkpoints"]),
+                "cadence_completed":
+                    list(resume_state["cadence_completed"])}
+            last_sha = resume_state["last_checkpoint_sha256"]
+
         instrumentation = p0_smoke._EpochInstrumentation()
-        training_trace = sealed / "training_trace.jsonl"
         base_reward = make_validation_reward(
-            training_surface["surface"], accountant,
-            training_trace,
+            training_surface["surface"], accountant, trace_path,
             group_size=identity["evaluation"]["sampling"][
-                "group_size"])
+                "group_size"],
+            start_group_index=start_group_index)
         reward = _make_smoke_reward(base_reward, instrumentation,
                                     deadline)
-        identities = {
-            "routing_source_sha256":
-                manifest["routing_source_sha256"],
-            "environment_manifest_sha256":
-                manifest["environment_manifest_sha256"],
-            "config_sha256": manifest["launch_freeze_sha256"],
-            "prompt_sha256":
-                bundle["preparation"]["runtime"].prompt_sha256,
-            "training_cohort_sha256": content_sha256(
-                bundle["preparation"]["schedule"]),
-            "renderer_schedule_sha256": content_sha256(
-                [row["observation_id"]
-                 for row in bundle["preparation"]["trainer_rows"]]),
-            "surface_manifest_sha256": UNIT_C2_CONFIG[
-                "extension_surface_lock_sha256"],
-            "worker_pool_fingerprint": "precomputed_surface",
-            "cache_identity":
-                manifest["execution_identity_sha256"],
-            "seed": str(bundle["preparation"]["runtime"].seed),
+        context: dict[str, Any] = {
+            "run_dir": run_dir, "deadline": deadline,
+            "accountant": accountant,
+            "instrumentation": instrumentation,
+            "identities": identities,
+            "eval_context": eval_context,
+            "record_sink": record_sink,
+            "last_checkpoint_sha256": last_sha,
         }
-        record_sink: dict[str, Any] = {
-            "checkpoints": {}, "cadence_completed": []}
-        cadence_updates = list(
-            identity["cadence"]["update_indices"])
-
-        trainer_holder: dict[str, Any] = {}
-
-        def on_cadence(update_index: int) -> None:
-            _p0_checkpoint_and_eval(
-                trainer_holder["trainer"], accountant, identities,
-                run_dir, update_index, deadline, eval_context,
-                record_sink)
-
-        callback = _make_p0_callback(
-            accountant, instrumentation, deadline,
-            cadence_updates, on_cadence)
+        callback = _make_p0_callback(context, cadence_updates,
+                                     already_completed)
         trainer = _build_p0_trainer(
-            bundle["preparation"]["trainer_rows"], reward,
-            run_dir, bundle["preparation"]["runtime"].seed,
-            extra_callbacks=(callback,))
-        trainer_holder["trainer"] = trainer
+            rows, reward, run_dir, runtime_seed,
+            max_steps=final_index, extra_callbacks=(callback,))
+        context["trainer"] = trainer
         _strip_console_callbacks(trainer)
+        _cast_and_assert_lora(trainer)
+        # 363_s F1: the optimizer and FULL-horizon scheduler exist
+        # BEFORE checkpoint zero; train() must REUSE them
+        trainer.create_optimizer_and_scheduler(
+            num_training_steps=final_index)
+        pre_optimizer = _unwrapped(trainer.optimizer)
+        pre_scheduler = _unwrapped(trainer.lr_scheduler)
 
-        # checkpoint ZERO: P0's FIRST execution (charter §7)
-        _p0_checkpoint_and_eval(trainer, accountant, identities,
-                                run_dir, 0, deadline,
-                                eval_context, record_sink)
-
-        instrumentation.start_epoch()
-        trainer.train()
+        if resume_state is None:
+            # checkpoint ZERO: P0's FIRST execution (charter §7)
+            _p0_cadence_event(context, 0, None)
+            instrumentation.start_epoch()
+            trainer.train()
+        else:
+            instrumentation.start_epoch()
+            trainer.train(resume_from_checkpoint=str(
+                resume_state["hf_checkpoint_dir"]))
+        if _unwrapped(trainer.optimizer) is not pre_optimizer \
+                or _unwrapped(trainer.lr_scheduler) \
+                is not pre_scheduler:
+            raise InfrastructureError(
+                "train() replaced the pre-created optimizer/"
+                "scheduler — checkpoint zero did not capture the "
+                "training objects (363_s F1)")
         _check_deadline(deadline, "post-training boundary")
 
-        # the FINAL cadence event at the last update index
-        final_index = cadence_updates[-1]
         if int(trainer.state.global_step) != final_index:
             raise InfrastructureError(
                 f"trainer ended at step {trainer.state.global_step}"
                 f" != the frozen final update {final_index}")
-        _p0_checkpoint_and_eval(trainer, accountant, identities,
-                                run_dir, final_index, deadline,
-                                eval_context, record_sink)
+        _p0_cadence_event(context, final_index, None)
         if record_sink["cadence_completed"] != cadence_updates:
             raise InfrastructureError(
                 "completed cadence diverges from the frozen index "
                 "set")
-        _seal_file(training_trace)
+        _seal_file(trace_path)
         log_path = sealed / "trainer_log_history.json"
         log_path.write_text(
             json.dumps(trainer.state.log_history, sort_keys=True),
             encoding="utf-8")
         _seal_file(log_path)
+        session_elapsed = _time.monotonic() - started
+        total_seconds = prior_elapsed_seconds + session_elapsed
         sealed_hashes = {p.name: _sha_file(p)
                          for p in sorted(sealed.iterdir())}
         record = {
-            "run": "routing-dev-p0-v1",
+            "run": P0_RUN_ID,
             "p0_launch_manifest_sha256":
                 manifest["manifest_sha256"],
             "launch_freeze_sha256":
                 manifest["launch_freeze_sha256"],
             "execution_identity_sha256":
                 manifest["execution_identity_sha256"],
-            "launch_entry_sha256": head,
+            "launch_entry_sha256": launch_entry_sha256,
             "cadence_completed": record_sink["cadence_completed"],
             "checkpoints": record_sink["checkpoints"],
-            "whole_run_seconds": _time.monotonic() - started,
+            "whole_run_seconds": total_seconds,
             "sealed_sha256": sealed_hashes,
             "development_only": True,
         }
         _persist(run_dir / "p0_record.json", record)
         verify_p0_run(run_dir, ledger_path=ledger_path,
-                      expected_head_sha256=head)
+                      expected_head_sha256=launch_entry_sha256)
+        # 363_s F6: the ceiling is enforced immediately BEFORE the
+        # successful closeout, on CUMULATIVE time
+        if total_seconds > manifest["budget_gpu_hours"] * 3600.0:
+            raise InfrastructureError(
+                "cumulative run time crossed the ten-hour ceiling "
+                "before closeout (363_s F6)")
     except BaseException as error:
-        _sanitize_p0_abort(run_dir)
-        measured = round((_time.monotonic() - started) / 3600.0, 4)
-        append_ledger_entry(
-            {"kind": "closeout", "question": question,
-             "motivating_evidence": "P0 ABORTED",
-             "freeze": {
-                 "p0_launch_manifest_sha256":
-                     manifest["manifest_sha256"],
-                 "partial_artifact_hashes":
-                     _hash_directory(run_dir)},
-             "parent": head,
-             "budget_allocated_gpu_hours": 0.0,
-             "budget_consumed_gpu_hours": measured,
-             "closes_entry_sha256": head,
-             "terminal_status": "aborted",
-             "interpretation": f"{type(error).__name__}: {error}",
-             "outcome_informed": False,
-             "outcome_pointer": str(run_dir)},
-            head, ledger_path)
+        session_elapsed = _time.monotonic() - started
+        _record_resumable_interruption(run_dir, session_elapsed,
+                                       error)
         raise
 
-    measured = round((_time.monotonic() - started) / 3600.0, 4)
+    measured = round(total_seconds / 3600.0, 4)
+    from .ledger import ledger_head as _head
     closeout = append_ledger_entry(
         {"kind": "closeout", "question": question,
          "motivating_evidence": "P0 COMPLETE (development-only)",
@@ -1366,14 +1742,14 @@ def execute_p0_run(*, run_dir: str | Path = P0_RUN_ROOT,
                  _sha_file(run_dir / "execute_env_manifest.json"),
              "terminal_artifact_hashes": _hash_directory(run_dir),
          },
-         "parent": head,
+         "parent": _head(ledger_path),
          "budget_allocated_gpu_hours": 0.0,
          "budget_consumed_gpu_hours": measured,
-         "closes_entry_sha256": head,
+         "closes_entry_sha256": launch_entry_sha256,
          "terminal_status": "complete",
          "outcome_informed": False,
          "outcome_pointer": str(run_dir / "p0_record.json")},
-        head, ledger_path)
+        _head(ledger_path), ledger_path)
     verify_p0_run(run_dir, ledger_path=ledger_path,
                   expected_head_sha256=closeout["entry_sha256"])
     return {**record, "measured_gpu_hours": measured,
@@ -1381,11 +1757,208 @@ def execute_p0_run(*, run_dir: str | Path = P0_RUN_ROOT,
             "ledger_head": closeout["entry_sha256"]}
 
 
-def _build_p0_trainer(rows, reward, run_dir: Path, seed: int,
-                      extra_callbacks=()):
+def execute_p0_run(*, run_dir: str | Path = P0_RUN_ROOT,
+                   expected_manifest_sha256: str,
+                   expected_head_sha256: str,
+                   question: str, motivating_evidence: str,
+                   ledger_path=None) -> dict[str, Any]:
+    """Phase 2 (GPU), FRESH launch: VRAM preflight → admission
+    (the ONLY input source) → the shared session core (checkpoint
+    zero first)."""
+    from .ledger import LEDGER_PATH
+    from .resume_validation import gpu_session_preflight
+    ledger_path = ledger_path or LEDGER_PATH
+    run_dir = Path(run_dir)
+    prelaunch = run_dir / "prelaunch"
+    manifest = validate_p0_execution_manifest(json.loads(
+        (prelaunch / "p0_launch.json").read_text("utf-8")))
+    prepared_env = json.loads(
+        (prelaunch / "env_manifest.json").read_text("utf-8"))
+    for path in (run_dir / "sealed", run_dir / "p0_record.json",
+                 run_dir / "execute_env_manifest.json",
+                 run_dir / "interruption.json"):
+        if path.exists():
+            raise InfrastructureError(
+                f"{path} exists — outputs are preflighted before "
+                "admission")
+    # 363_s conformance: the >=20 GiB free-VRAM preflight BEFORE
+    # the irreversible ledger admission
+    gpu_session_preflight()
+    bundle = admit_p0_execution(
+        execution_manifest=manifest,
+        expected_manifest_sha256=expected_manifest_sha256,
+        prepared_environment=prepared_env,
+        expected_head_sha256=expected_head_sha256,
+        question=question,
+        motivating_evidence=motivating_evidence,
+        run_dir=run_dir, ledger_path=ledger_path)
+    import time as _time
+    deadline = _time.monotonic() \
+        + manifest["budget_gpu_hours"] * 3600.0
+    return _p0_session(
+        run_dir=run_dir, manifest=manifest,
+        identity=bundle["execution_identity"],
+        rows=bundle["preparation"]["trainer_rows"],
+        runtime_seed=bundle["preparation"]["runtime"].seed,
+        deadline=deadline, prior_elapsed_seconds=0.0,
+        resume_state=None, question=question,
+        ledger_path=ledger_path,
+        launch_entry_sha256=bundle["launch_entry_sha256"])
+
+
+def resume_p0_run(*, run_dir: str | Path = P0_RUN_ROOT,
+                  expected_manifest_sha256: str,
+                  question: str,
+                  ledger_path=None) -> dict[str, Any]:
+    """363_s F4: the resume entry point — under the ORIGINAL
+    launch (which must be OPEN; resume NEVER re-admits) and the
+    CUMULATIVE ten-hour deadline. The last cadence bundle is
+    validated (`checkpoint.validate_resume`) and its bound HF
+    checkpoint verified (`verify_hf_checkpoint_against_bundle` —
+    the 246_f-validated pattern) before training continues."""
+    import time as _time
+
+    from . import checkpoint as ckpt
+    from .ledger import LEDGER_PATH, ledger_head, verify_ledger_head
+    from .p0_launch import prepare_p0_dataset
+    from .resume_validation import (
+        gpu_session_preflight,
+        verify_hf_checkpoint_against_bundle,
+    )
+    ledger_path = ledger_path or LEDGER_PATH
+    run_dir = Path(run_dir)
+    prelaunch = run_dir / "prelaunch"
+    manifest = validate_p0_execution_manifest(json.loads(
+        (prelaunch / "p0_launch.json").read_text("utf-8")))
+    if manifest["manifest_sha256"] != expected_manifest_sha256:
+        raise InfrastructureError(
+            "the execution manifest does not match the externally "
+            "supplied hash (360_s P1-2)")
+    chain = verify_ledger_head(ledger_head(ledger_path),
+                               ledger_path)
+    launches = [e for e in chain if e["kind"] == "training_run"
+                and e["freeze"].get("p0_launch_manifest_sha256")
+                == manifest["manifest_sha256"]]
+    if len(launches) != 1:
+        raise InfrastructureError(
+            "exactly one launch must bind this manifest")
+    launch = launches[0]
+    if any(e for e in chain if e["kind"] == "closeout"
+           and e.get("closes_entry_sha256")
+           == launch["entry_sha256"]):
+        raise InfrastructureError(
+            "this launch is CLOSED — resume applies only to an "
+            "open interrupted launch (363_s F4)")
+    marker = run_dir / "interruption.json"
+    if not marker.exists():
+        raise InfrastructureError(
+            "no interruption record — nothing to resume")
+    interruption = json.loads(marker.read_text("utf-8"))
+    prior = float(interruption["cumulative_elapsed_seconds"])
+    remaining = manifest["budget_gpu_hours"] * 3600.0 - prior
+    if remaining <= 0:
+        raise InfrastructureError(
+            "the cumulative ten-hour ceiling is exhausted — only "
+            "terminally_abort_p0 remains (363_s F6)")
+    gpu_session_preflight()
+    identity = load_p0_execution_identity(
+        prelaunch / "execution_identity.json",
+        expected_sha256=manifest["execution_identity_sha256"])
+    cadence = list(identity["cadence"]["update_indices"])
+    # the last VALID cadence bundle with a bound HF checkpoint
+    freeze = load_real_launch_freeze(
+        prelaunch / "launch_freeze.json")
+    preparation = prepare_p0_dataset(
+        prelaunch / "launch_freeze.json",
+        manifest["launch_freeze_sha256"])
+    completed = []
+    resume_index = None
+    resume_record = None
+    for update_index in cadence:
+        bundle_dir = run_dir \
+            / f"checkpoint_bundle_upd{update_index}"
+        if not (bundle_dir / "checkpoint_record.json").exists():
+            break
+        disk_record = json.loads(
+            (bundle_dir / "checkpoint_record.json")
+            .read_text("utf-8"))
+        completed.append(update_index)
+        if update_index > 0 and disk_record[
+                "sampler_position"]["hf_checkpoint_dir"]:
+            resume_index = update_index
+            resume_record = disk_record
+    if resume_index is None or resume_record is None:
+        raise InfrastructureError(
+            "no resumable positive-index checkpoint exists — only "
+            "terminally_abort_p0 remains (363_s F4)")
+    bundle_dir = run_dir / f"checkpoint_bundle_upd{resume_index}"
+    from .p0_replay import restore_extension_surface_if_absent
+    from .unit_c2_sample import UNIT_C2_CONFIG
+    training_surface = dev_support.load_dev_surface(
+        restore_extension_surface_if_absent(),
+        expected_lock_sha256=UNIT_C2_CONFIG[
+            "extension_surface_lock_sha256"])
+    identities = _p0_identities(
+        manifest, training_surface["lock"],
+        preparation["trainer_rows"], freeze.runtime.seed)
+    ckpt.validate_resume(resume_record, identities,
+                         bundle_dir=bundle_dir)
+    hf_dir = Path(resume_record["sampler_position"][
+        "hf_checkpoint_dir"])
+    verify_hf_checkpoint_against_bundle(bundle_dir, hf_dir,
+                                        resume_record)
+    deadline = _time.monotonic() + remaining
+    resume_state = {
+        "counters": resume_record["counters"],
+        "cadence_completed": completed[:completed.index(
+            resume_index) + 1],
+        "checkpoints": {},  # rebuilt below from disk records
+        "interruption_count":
+            int(interruption["interruption_count"]),
+        "last_checkpoint_sha256":
+            resume_record["checkpoint_sha256"],
+        "hf_checkpoint_dir": hf_dir,
+    }
+    # the record blocks for already-completed cadence points are
+    # rebuilt from the PRIOR record if one exists, else from disk
+    prior_record_path = run_dir / "p0_record.json"
+    if prior_record_path.exists():
+        prior_blocks = json.loads(
+            prior_record_path.read_text("utf-8"))["checkpoints"]
+    else:
+        prior_blocks = {}
+    for update_index in resume_state["cadence_completed"]:
+        key = str(update_index)
+        if key in prior_blocks:
+            resume_state["checkpoints"][key] = prior_blocks[key]
+        else:
+            disk_record = json.loads(
+                (run_dir / f"checkpoint_bundle_upd{update_index}"
+                 / "checkpoint_record.json").read_text("utf-8"))
+            resume_state["checkpoints"][key] = {
+                "bundle_seconds": 0.0, "eval_seconds": 0.0,
+                "checkpoint_proof": {
+                    "checkpoint_sha256":
+                        disk_record["checkpoint_sha256"],
+                    "state_artifact_sha256":
+                        disk_record["state_artifact_sha256"],
+                    "counters": disk_record["counters"]}}
+    return _p0_session(
+        run_dir=run_dir, manifest=manifest, identity=identity,
+        rows=preparation["trainer_rows"],
+        runtime_seed=freeze.runtime.seed, deadline=deadline,
+        prior_elapsed_seconds=prior, resume_state=resume_state,
+        question=question, ledger_path=ledger_path,
+        launch_entry_sha256=launch["entry_sha256"])
+
+
+def _build_p0_trainer(rows, reward, run_dir: Path, seed: int, *,
+                      max_steps: int, extra_callbacks=()):
     """The canonical-profile construction for the FULL horizon:
-    identical to the smoke's reviewed builder except max_steps =
-    the frozen final update index and the P0 training seed."""
+    identical to the smoke's reviewed builder except `max_steps`
+    (from the admitted execution identity — never hardcoded) and
+    the P0 training seed; HF checkpoints are saved ONLY when the
+    cadence callback requests them."""
     import random
 
     import numpy
@@ -1416,7 +1989,7 @@ def _build_p0_trainer(rows, reward, run_dir: Path, seed: int,
         lr_scheduler_type=grpo["scheduler"],
         warmup_steps=grpo["warmup_steps"],
         beta=float(grpo["beta"]),
-        max_steps=6123, loss_type=grpo["loss"],
+        max_steps=max_steps, loss_type=grpo["loss"],
         shuffle_dataset=False, eval_strategy="no",
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
@@ -1430,7 +2003,8 @@ def _build_p0_trainer(rows, reward, run_dir: Path, seed: int,
                 bnb_4bit_use_double_quant=True,
                 bnb_4bit_compute_dtype=torch.bfloat16)},
         optim=grpo["optim"], report_to="none", logging_steps=16,
-        save_strategy="no", disable_tqdm=True)
+        save_strategy="no", save_total_limit=None,
+        disable_tqdm=True)
     peft_config = LoraConfig(
         r=profile["lora"]["r"],
         lora_alpha=profile["lora"]["alpha"],
