@@ -7256,40 +7256,134 @@ def test_p0_unit_l_admission(monkeypatch, tmp_path):
             entry["reserve"]["r_cycle_gpu_hours"] = 3.0
     with pytest.raises(InfrastructureError, match="diverges"):
         p0_execution._cross_check_final_reserve(divergent)
+    # 360_s P2-4: the COMPLETE reserve projection is compared —
+    # a mutated rounding field or a forged freeze binding refuses
+    mutated = json.loads(json.dumps(chain))
+    for entry in mutated:
+        if entry["kind"] == "reserve_update" \
+                and entry["reserve"].get("status") == "final":
+            entry["reserve"]["rounding"] = "floor"
+    with pytest.raises(InfrastructureError, match="diverges"):
+        p0_execution._cross_check_final_reserve(mutated)
+    forged_binding = json.loads(json.dumps(chain))
+    for entry in forged_binding:
+        if entry["kind"] == "reserve_update" \
+                and entry["reserve"].get("status") == "final":
+            entry["freeze"]["cycle_record_sha256"] = "ab" * 32
+    with pytest.raises(InfrastructureError, match="bindings"):
+        p0_execution._cross_check_final_reserve(forged_binding)
     # the full fail-closed admission on the COPY
+    run_dir = tmp_path / "p0-v1"
     bundle = p0_execution.admit_p0_execution(
         execution_manifest=manifest,
+        expected_manifest_sha256=manifest["manifest_sha256"],
+        prepared_environment=live_env,
         expected_head_sha256=head,
         question="P0 admission rehearsal (Unit L)",
         motivating_evidence="359_f CPU boundary test",
+        run_dir=run_dir,
         ledger_path=ledger_copy,
         _live_environment=live_env)
     assert bundle["preparation"]["gates"]["launch_plan"] == \
         "REDERIVED"
     assert bundle["preparation"]["groups_total"] == 6123
-    assert bundle["preparation"]["launch_admission"]["status"] == \
-        "DEFERRED"
+    # 360_s P2-3: the completed admission returns ADMITTED
+    assert bundle["admission"]["status"] == "ADMITTED"
+    assert bundle["admission"]["launch_entry_sha256"] == \
+        bundle["launch_entry_sha256"]
+    assert bundle["preparation"]["launch_admission"]["status"] \
+        == "ADMITTED"
     assert bundle["reserve_check"]["r_cycle_gpu_hours"] == 1.0
     entries = ledger.verify_ledger_head(
         bundle["launch_entry_sha256"], ledger_copy)
     assert entries[-1]["kind"] == "training_run"
     assert entries[-1]["parent"] == head
-    # a SECOND admission refuses: the prior attempt is OPEN
-    with pytest.raises(InfrastructureError, match="OPEN"):
+    # 360_s P1-1: a SECOND admission refuses — first-launch-only
+    with pytest.raises(InfrastructureError,
+                       match="first-launch-only"):
         p0_execution.admit_p0_execution(
             execution_manifest=manifest,
+            expected_manifest_sha256=manifest["manifest_sha256"],
+            prepared_environment=live_env,
             expected_head_sha256=bundle["launch_entry_sha256"],
             question="q", motivating_evidence="m",
+            run_dir=run_dir, ledger_path=ledger_copy,
+            _live_environment=live_env)
+    # 360_s P1-1 reproduction: even after an ABORTED closeout the
+    # same freeze refuses — no fresh allocation at zero consumed
+    ledger.append_ledger_entry(
+        {"kind": "closeout", "question": "abort",
+         "motivating_evidence": "360_s reproduction",
+         "freeze": {"partial_artifact_hashes": {}},
+         "parent": bundle["launch_entry_sha256"],
+         "budget_allocated_gpu_hours": 0.0,
+         "budget_consumed_gpu_hours": 2.5,
+         "closes_entry_sha256": bundle["launch_entry_sha256"],
+         "terminal_status": "aborted", "outcome_informed": False},
+        bundle["launch_entry_sha256"], ledger_copy)
+    with pytest.raises(InfrastructureError,
+                       match="first-launch-only"):
+        p0_execution.admit_p0_execution(
+            execution_manifest=manifest,
+            expected_manifest_sha256=manifest["manifest_sha256"],
+            prepared_environment=live_env,
+            expected_head_sha256=ledger.ledger_head(ledger_copy),
+            question="q", motivating_evidence="m",
+            run_dir=run_dir, ledger_path=ledger_copy,
+            _live_environment=live_env)
+    # 360_s P1-2 reproduction: a re-signed manifest (arbitrary
+    # root, zeroed environment hash) refuses at the EXTERNAL hash
+    forged = {k: v for k, v in manifest.items()
+              if k != "manifest_sha256"}
+    forged["execution_root"] = str(tmp_path / "elsewhere")
+    forged["environment_manifest_sha256"] = "0" * 64
+    forged["manifest_sha256"] = charter.content_sha256(forged)
+    with pytest.raises(InfrastructureError, match="externally "
+                       "supplied"):
+        p0_execution.admit_p0_execution(
+            execution_manifest=forged,
+            expected_manifest_sha256=manifest["manifest_sha256"],
+            prepared_environment=live_env,
+            expected_head_sha256=head,
+            question="q", motivating_evidence="m",
+            run_dir=run_dir, ledger_path=ledger_copy,
+            _live_environment=live_env)
+    # a prepared environment that does not bind refuses
+    with pytest.raises(InfrastructureError, match="prepared "
+                       "environment"):
+        p0_execution.admit_p0_execution(
+            execution_manifest=manifest,
+            expected_manifest_sha256=manifest["manifest_sha256"],
+            prepared_environment=_env_manifest(),
+            expected_head_sha256=head,
+            question="q", motivating_evidence="m",
+            run_dir=run_dir, ledger_path=ledger_copy,
+            _live_environment=live_env)
+    # a run root that diverges from the execution root refuses
+    with pytest.raises(InfrastructureError, match="resolved run "
+                       "root"):
+        p0_execution.admit_p0_execution(
+            execution_manifest=manifest,
+            expected_manifest_sha256=manifest["manifest_sha256"],
+            prepared_environment=live_env,
+            expected_head_sha256=head,
+            question="q", motivating_evidence="m",
+            run_dir=tmp_path / "wrong-root",
             ledger_path=ledger_copy,
             _live_environment=live_env)
     # a live environment that does not attest refuses (step 4
-    # precedes the chain-head check, so the stale head is unreached)
-    with pytest.raises(InfrastructureError, match="attest"):
+    # precedes the chain-head check, so the stale head is
+    # unreached; the ESTABLISHED prepared-vs-live attestation
+    # helper raises)
+    with pytest.raises(InfrastructureError,
+                       match="differs from the frozen snapshot"):
         p0_execution.admit_p0_execution(
             execution_manifest=manifest,
+            expected_manifest_sha256=manifest["manifest_sha256"],
+            prepared_environment=live_env,
             expected_head_sha256=head,
             question="q", motivating_evidence="m",
-            ledger_path=ledger_copy,
+            run_dir=run_dir, ledger_path=ledger_copy,
             _live_environment=_env_manifest())
     # the REAL ledger is untouched
     assert ledger.ledger_head() == head

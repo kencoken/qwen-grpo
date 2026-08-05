@@ -555,12 +555,19 @@ def validate_p0_execution_manifest(manifest: Mapping[str, Any], *,
 
 def _cross_check_final_reserve(chain: list[dict[str, Any]]
                                ) -> dict[str, Any]:
-    """346_f carry-forward: the PERSISTED final-reserve ledger
-    entry must exist EXACTLY ONCE and must equal the pinned raw
-    reserve record — a duplicate, a divergent value, or a missing
-    final reserve refuses admission."""
-    from .p0_cycle import load_r_cycle_reserve_record
-    record = load_r_cycle_reserve_record()
+    """346_f carry-forward, completed per 360_s P2-4: the
+    PERSISTED final-reserve ledger entry must exist EXACTLY ONCE
+    and must equal the pinned raw reserve record COMPLETELY — the
+    full reserve projection AND the ledger freeze/file bindings —
+    with the record loaded under the freeze's precursor pin."""
+    from .p0_cycle import (
+        R_CYCLE_RECORD_PATH,
+        SUPPORT_SURFACE_LOCK_SHA256,
+        load_r_cycle_reserve_record,
+    )
+    from .support_run import _sha_file
+    record = load_r_cycle_reserve_record(
+        expected_sha256=REAL_PRECURSORS["r_cycle_record_sha256"])
     finals = [e for e in chain if e["kind"] == "reserve_update"
               and isinstance(e.get("reserve"), dict)
               and e["reserve"].get("status") == "final"]
@@ -568,20 +575,48 @@ def _cross_check_final_reserve(chain: list[dict[str, Any]]
         raise InfrastructureError(
             f"the chain holds {len(finals)} final reserve entries "
             "— exactly one is required (346_f)")
-    reserve = finals[0]["reserve"]
-    if reserve["r_cycle_gpu_hours"] != record["r_cycle_gpu_hours"] \
-            or reserve.get("itemized_ceiling_gpu_hours") \
-            != record["itemized_closure_ceiling"]["ceiling_gpu_hours"]:
+    basis = record["registered_basis"]
+    expected_reserve = {
+        "status": "final",
+        "r_cycle_gpu_hours": record["r_cycle_gpu_hours"],
+        "assumed_cohort_size": basis["assumed_cohort_size"],
+        "evaluation_multiplier": basis["evaluation_multiplier"],
+        "measured_seconds_per_observation":
+            basis["measured_seconds_per_observation"],
+        "measured_support_gpu_hours":
+            basis["measured_support_gpu_hours"],
+        "itemized_ceiling_gpu_hours":
+            record["itemized_closure_ceiling"]["ceiling_gpu_hours"],
+        "rounding": "ceil_to_whole_gpu_hours",
+    }
+    if finals[0]["reserve"] != expected_reserve:
         raise InfrastructureError(
             "the persisted final reserve entry diverges from the "
-            "pinned reserve record (346_f)")
+            "pinned reserve record (346_f; 360_s P2-4 complete "
+            "projection)")
+    expected_freeze = {
+        "support_closeout_sha256": basis["support_closeout_sha256"],
+        "surface_lock_sha256": SUPPORT_SURFACE_LOCK_SHA256,
+        "cycle_record_sha256": record["cycle_record_sha256"],
+        "r_cycle_record_sha256": record["record_sha256"],
+        "r_cycle_record_file_sha256":
+            _sha_file(Path(R_CYCLE_RECORD_PATH)),
+    }
+    if finals[0]["freeze"] != expected_freeze:
+        raise InfrastructureError(
+            "the final reserve entry's freeze bindings diverge "
+            "from the pinned record (360_s P2-4)")
     return {"entry_sha256": finals[0]["entry_sha256"],
-            "r_cycle_gpu_hours": reserve["r_cycle_gpu_hours"]}
+            "r_cycle_gpu_hours":
+                expected_reserve["r_cycle_gpu_hours"]}
 
 
 def admit_p0_execution(*, execution_manifest: Mapping[str, Any],
+                       expected_manifest_sha256: str,
+                       prepared_environment: Mapping[str, Any],
                        expected_head_sha256: str,
                        question: str, motivating_evidence: str,
+                       run_dir: str | Path = P0_RUN_ROOT,
                        ledger_path=None,
                        _live_environment: Mapping[str, Any]
                        | None = None) -> dict[str, Any]:
@@ -617,6 +652,31 @@ def admit_p0_execution(*, execution_manifest: Mapping[str, Any],
     from .support_run import _default_environment, attest_environment
     ledger_path = ledger_path or LEDGER_PATH
     manifest = validate_p0_execution_manifest(execution_manifest)
+    # 360_s P1-2: the manifest is EXTERNALLY authenticated — the
+    # expected hash arrives as its own argument (a re-signed
+    # manifest with a mutated root or environment refuses HERE,
+    # never by its own self-hash)
+    from .p0_schema import _require_hex64
+    _require_hex64(expected_manifest_sha256,
+                   "expected_manifest_sha256")
+    if manifest["manifest_sha256"] != expected_manifest_sha256:
+        raise InfrastructureError(
+            "the execution manifest does not match the externally "
+            "supplied hash (360_s P1-2)")
+    # 360_s P1-2: the PREPARED environment artifact is
+    # authenticated against the manifest's bound hash
+    if dev_support.validate_environment_manifest_binding(
+            dict(prepared_environment)) \
+            != manifest["environment_manifest_sha256"]:
+        raise InfrastructureError(
+            "the prepared environment does not bind to the "
+            "manifest (360_s P1-2)")
+    # 360_s P1-2: the ACTUAL resolved run root must be the
+    # manifest's execution root
+    if str(Path(run_dir).resolve()) != manifest["execution_root"]:
+        raise InfrastructureError(
+            "the resolved run root diverges from the manifest's "
+            "execution root (360_s P1-2)")
 
     # (1) the four precursors, fresh and fail-closed
     val_lock = _val_lock_for_identity()
@@ -654,11 +714,13 @@ def admit_p0_execution(*, execution_manifest: Mapping[str, Any],
             "the execution identity does not bind the reviewed "
             "freeze hash (328_f §4)")
 
-    # (4) live environment attestation
+    # (4) live environment attestation: prepared vs live, and
+    # live vs the freeze's commit-independent expectation
     from .resume_validation import attested_environment_sha256
     live_env = dict(_live_environment) if _live_environment \
         is not None else _default_environment()
     dev_support.validate_environment_manifest_binding(live_env)
+    attest_environment(dict(prepared_environment), live_env)
     if attested_environment_sha256(live_env) \
             != freeze.runtime.attested_environment_sha256:
         raise InfrastructureError(
@@ -674,6 +736,19 @@ def admit_p0_execution(*, execution_manifest: Mapping[str, Any],
     if ledger_head(ledger_path) != expected_head_sha256:
         raise InfrastructureError(
             "the P0 launch head is not the committed ledger head")
+    # 360_s P1-1: Unit-L admission is FIRST-LAUNCH-ONLY — ANY
+    # prior same-freeze P0 attempt (open, aborted, or complete)
+    # refuses; a resume stays under the ORIGINAL launch and its
+    # cumulative deadline, and a relaunch requires a REVIEWED
+    # successor identity (never a fresh allocation on the same
+    # freeze with cumulative_consumed = 0)
+    prior_p0 = [e for e in chain if e["kind"] == "training_run"
+                and e["freeze"].get("launch_freeze_sha256")
+                == manifest["launch_freeze_sha256"]]
+    if prior_p0:
+        raise InfrastructureError(
+            "a prior P0 attempt exists under this launch freeze — "
+            "Unit-L admission is first-launch-only (360_s P1-1)")
     reserve_check = _cross_check_final_reserve(chain)
     state = envelope_state(chain, CYCLE_ENVELOPE_GPU_HOURS)
     if state["reserve"] is None \
@@ -706,8 +781,22 @@ def admit_p0_execution(*, execution_manifest: Mapping[str, Any],
     admitted = admit_and_append_launch(entry, expected_head_sha256,
                                        ledger_path,
                                        launch_manifest=manifest)
+    # 360_s P2-3: admission COMPLETED — the returned bundle
+    # carries an explicit ADMITTED block (the dataset-preparation
+    # DEFERRED marker described the pre-admission state)
+    admission_block = {
+        "status": "ADMITTED",
+        "launch_entry_sha256": admitted["entry_sha256"],
+        "manifest_sha256": manifest["manifest_sha256"],
+        "launch_freeze_sha256": manifest["launch_freeze_sha256"],
+        "execution_identity_sha256":
+            manifest["execution_identity_sha256"],
+    }
+    preparation = dict(preparation)
+    preparation["launch_admission"] = admission_block
     return {
         "launch_entry_sha256": admitted["entry_sha256"],
+        "admission": admission_block,
         "manifest": manifest,
         "freeze_sha256": manifest["launch_freeze_sha256"],
         "execution_identity": identity,

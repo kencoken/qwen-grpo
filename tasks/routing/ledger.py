@@ -751,6 +751,14 @@ def admit_and_append_launch(entry: Mapping[str, Any],
             raise InfrastructureError(
                 "a P0 training run binds a P0 execution manifest, "
                 f"not a {launch_manifest.get('kind')!r}")
+        # 360_s P1-2: the ledger invokes the CLOSED manifest
+        # validator itself — mutually consistent caller fields
+        # alone never admit (the source digest was recomputed at
+        # the admission boundary; here the closed schema and every
+        # configuration-owned field are re-enforced)
+        from .p0_execution import validate_p0_execution_manifest
+        validate_p0_execution_manifest(launch_manifest,
+                                       recompute=False)
         named = entry["freeze"].get("p0_launch_manifest_sha256")
         if named != launch_manifest.get("manifest_sha256") \
                 or not named:
@@ -784,22 +792,23 @@ def admit_and_append_launch(entry: Mapping[str, Any],
                     if e["kind"] == "training_run"
                     and e["freeze"].get("launch_freeze_sha256")
                     == frozen]
-        if not prior_p0 and entry.get("parent") != \
+        if prior_p0:
+            # 360_s P1-1: FIRST-LAUNCH-ONLY — any prior
+            # same-freeze attempt (open, ABORTED, or complete)
+            # refuses: an aborted run must never receive a fresh
+            # ten-hour allocation at cumulative_consumed = 0. A
+            # resume stays under the original launch's cumulative
+            # deadline; a relaunch requires a REVIEWED successor
+            # identity.
+            raise InfrastructureError(
+                "a prior P0 attempt exists under this launch "
+                "freeze — Unit-L admission is first-launch-only "
+                "(360_s P1-1)")
+        if entry.get("parent") != \
                 launch_manifest.get("lineage_parent_sha256"):
             raise InfrastructureError(
                 "the FIRST P0 launch is admitted only on the "
                 "manifest's frozen lineage parent")
-        p0_closeouts = {e.get("closes_entry_sha256"): e
-                        for e in entries if e["kind"] == "closeout"}
-        for attempt in prior_p0:
-            closeout = p0_closeouts.get(attempt["entry_sha256"])
-            if closeout is None:
-                raise InfrastructureError(
-                    "a prior P0 attempt is OPEN — no new launch")
-            if closeout.get("terminal_status") == "complete":
-                raise InfrastructureError(
-                    "a completed P0 exists — a relaunch is a "
-                    "REVIEWED decision, never a retry (330_f §5)")
     state = envelope_state(entries, CYCLE_ENVELOPE_GPU_HOURS)
     remaining = state["remaining_gpu_hours"]
     reserve = state["reserve"]
