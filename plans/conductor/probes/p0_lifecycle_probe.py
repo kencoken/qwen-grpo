@@ -217,12 +217,17 @@ def main() -> None:
     if int(trainer2.state.global_step) != 2:
         raise SystemExit(
             f"resume ended at {trainer2.state.global_step} != 2")
-    if accountant2.counters() != {"generated_groups": 2,
-                                  "consumed_groups": 2,
-                                  "optimizer_updates": 2,
-                                  "sampled_completions": 16}:
+    resumed_counters = {
+        "generated_groups": accountant2.generated_groups,
+        "consumed_groups": accountant2.consumed_groups,
+        "optimizer_updates": accountant2.optimizer_updates,
+        "sampled_completions": accountant2.sampled_completions}
+    if resumed_counters != {"generated_groups": 2,
+                            "consumed_groups": 2,
+                            "optimizer_updates": 2,
+                            "sampled_completions": 16}:
         raise SystemExit(
-            f"resume counters diverge: {accountant2.counters()}")
+            f"resume counters diverge: {resumed_counters}")
     sched2 = p0_execution._unwrap_scheduler(
         trainer2.lr_scheduler).state_dict()
     if sched2.get("last_epoch") != 2:
