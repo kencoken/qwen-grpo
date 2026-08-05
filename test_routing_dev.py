@@ -7035,3 +7035,46 @@ def test_p0_smoke_rev4_lifecycle(monkeypatch, tmp_path):
     assert set(p0_smoke._SEALED_INVENTORY) == {
         "training_trace.jsonl.gz", "eval_ckpt0.jsonl.gz",
         "eval_post.jsonl.gz", "trainer_log_history.json.gz"}
+
+
+def test_p0_smoke_reward_entry_deadline():
+    """355_s: the step BEGINS before the deadline; generation
+    finishes AFTER it — the reward entry refuses, so scoring and
+    consumption never occur."""
+    import time as _time
+    from tasks.routing import checkpoint as ckpt_module
+    instrumentation = p0_smoke._EpochInstrumentation()
+    accountant = ckpt_module.GroupAccountant()
+    # warm the factory's lazy transformers import so the timing
+    # window below is not consumed by first-import cost
+    p0_smoke._make_update_callback(instrumentation, accountant,
+                                   deadline=0.0)
+    deadline = _time.monotonic() + 1.0
+    callback = p0_smoke._make_update_callback(
+        instrumentation, accountant, deadline=deadline)
+    callback.on_step_begin(None, None, None)
+    scored = []
+
+    def base_reward(completions=None, **kwargs):
+        scored.append(completions)
+        accountant.record_generation(1, 8)
+        return [0.0] * 8
+
+    reward = p0_smoke._make_smoke_reward(
+        base_reward, instrumentation, deadline)
+    _time.sleep(1.1)
+    with pytest.raises(InfrastructureError,
+                       match="training reward entry"):
+        reward(completions=[["late"]] * 8)
+    assert scored == []
+    assert accountant.generated_groups == 0
+    with pytest.raises(InfrastructureError,
+                       match="never generated"):
+        callback.on_optimizer_step(None, None, None)
+    # the same path scores normally inside the deadline
+    instrumentation.start_epoch()
+    live = p0_smoke._make_smoke_reward(
+        base_reward, instrumentation, _time.monotonic() + 3600.0)
+    assert live(completions=[["ok"]] * 8) == [0.0] * 8
+    assert accountant.generated_groups == 1
+    assert len(scored) == 1

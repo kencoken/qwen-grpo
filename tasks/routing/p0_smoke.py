@@ -914,6 +914,19 @@ def _save_and_verify_checkpoint_bundle(trainer, accountant,
     return elapsed, proof
 
 
+def _make_smoke_reward(base_reward, instrumentation,
+                       deadline: float):
+    """355_s: the deadline is checked at the TRAINING REWARD
+    ENTRY — before any scoring — in ADDITION to `on_step_begin`.
+    Generation that begins before the deadline but finishes after
+    it is never scored, so no consumption can follow."""
+    def reward(completions=None, **kwargs):
+        _check_deadline(deadline, "training reward entry")
+        instrumentation.on_reward_entry()
+        return base_reward(completions, **kwargs)
+    return reward
+
+
 def _make_update_callback(instrumentation, accountant,
                           deadline: float):
     """352_s #2: lifecycle ordering — the deadline is checked
@@ -1345,9 +1358,8 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
             loaded["surface"], accountant, training_trace,
             group_size=8)
 
-        def reward(completions=None, **kwargs):
-            instrumentation.on_reward_entry()
-            return base_reward(completions, **kwargs)
+        reward = _make_smoke_reward(base_reward,
+                                    instrumentation, deadline)
 
         trainer = _build_smoke_trainer(
             rows, reward, run_dir,
