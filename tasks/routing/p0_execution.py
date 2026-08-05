@@ -90,9 +90,9 @@ EXECUTION_IDENTITY_PATH = P0_DIR / "p0_execution_identity.json"
 # the strict loaders REQUIRE them — a self-hash is never
 # authentication).
 P0_LAUNCH_FREEZE_SHA256 = \
-    "0000000000000000000000000000000000000000000000000000000000000000"
+    "88c6635aadb2d0ca1c766efc937123b7ece427190cfe3ce3675ac8f269ebccfc"
 P0_EXECUTION_IDENTITY_SHA256 = \
-    "0000000000000000000000000000000000000000000000000000000000000000"
+    "4c763cc9f21de2bfc05700b22b48529ed7f2e83ed68225a1ab115f4cdfa5a4ae"
 
 
 # --- step 1: the chain-authenticated smoke record ------------------------------
@@ -241,6 +241,11 @@ def freeze_real_p0_launch(out_path=None, *, ledger_path=None,
         build_p0_launch_freeze,
         save_launch_freeze,
     )
+    target = Path(out_path or LAUNCH_FREEZE_PATH)
+    if target.exists():
+        raise InfrastructureError(
+            f"{target} exists; the launch freeze is written "
+            "exactly once")
     plan = derive_real_launch_plan(ledger_path=ledger_path)
     freeze = build_p0_launch_freeze(
         plan_record=plan, precursors=REAL_PRECURSORS,
@@ -622,7 +627,7 @@ def admit_p0_execution(*, execution_manifest: Mapping[str, Any],
         raise InfrastructureError(
             "the cycle record pin diverges from the freeze's "
             "precursor pin")
-    if val_lock["lock_sha256"] \
+    if val_lock["record_sha256"] \
             != REAL_PRECURSORS["routing_dev_val_lock_sha256"]:
         raise InfrastructureError(
             "the val lock pin diverges from the freeze's "

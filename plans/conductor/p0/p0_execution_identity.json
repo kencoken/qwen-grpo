@@ -1,0 +1,111 @@
+{
+ "cadence": {
+  "epoch_labels": [
+   0,
+   4,
+   8,
+   12,
+   16,
+   20,
+   24,
+   28,
+   32,
+   36,
+   39
+  ],
+  "groups_per_epoch": 157,
+  "rule": "every 4 epochs on the launch horizon; checkpoint zero and final mandatory; out-of-horizon trimmed (330_f \u00a72)",
+  "update_indices": [
+   0,
+   628,
+   1256,
+   1884,
+   2512,
+   3140,
+   3768,
+   4396,
+   5024,
+   5652,
+   6123
+  ]
+ },
+ "development_only": true,
+ "evaluation": {
+  "base_seed": 20260804,
+  "checkpoint_rule": "every cadence checkpoint evaluates the full 90-observation cohort under IDENTICAL per-slot seeds (common random numbers; the checkpoint index lives in provenance only, 330_f \u00a71)",
+  "domain": "p0_val_eval",
+  "ordered_observation_ids_sha256": "1d2e721ee064b934706f6984283a6c2be84a7b0be746975a689f304ab1c3e959",
+  "sampling": {
+   "do_sample": true,
+   "group_size": 8,
+   "max_new_tokens": 128,
+   "repetition_penalty": 1.0,
+   "temperature": 1.0,
+   "top_k": null,
+   "top_p": 1.0
+  },
+  "seed_rule": "int(sha256(domain || base_seed || observation_id || completion_slot), 16) mod 2^31 over the COMPLETE digest (332_s P1-4); slots 0..7 only; NO checkpoint index (common random numbers, 330_f \u00a71) \u2014 the checkpoint lives in provenance only",
+  "seed_schedule_sha256": "7f5f65181e41b8011e2a5ccd735dc287ce6b1fd77e948d004ac4e9a1d6035215",
+  "source": "routing_dev_val_lock",
+  "val_lock_sha256": "2aecdf28ad25cae10e494aa9fc1a95138a9feb5a29ab0636314b847987caf19d"
+ },
+ "launch_freeze_sha256": "88c6635aadb2d0ca1c766efc937123b7ece427190cfe3ce3675ac8f269ebccfc",
+ "record_sha256": "4c763cc9f21de2bfc05700b22b48529ed7f2e83ed68225a1ab115f4cdfa5a4ae",
+ "schema_version": "p0-execution-identity-v1",
+ "science_contract_sha256": "d47a63ff435e3b2964f09f0d97f287ee722cae5bbc7df58104d7e10c6d519517",
+ "telemetry": {
+  "counter_fields": [
+   "group_denominator",
+   "completion_denominator",
+   "worker1_selections",
+   "worker1_completions",
+   "reward1_completions",
+   "reward_varying_groups",
+   "q1_counted_groups"
+  ],
+  "sentinel_fields": [
+   "cell",
+   "training_exposed",
+   "observation_ids",
+   "group_denominator",
+   "completion_denominator",
+   "worker1_selections",
+   "worker1_completions",
+   "reward1_completions",
+   "reward_varying_groups",
+   "q1_counted_groups",
+   "first_group_indices",
+   "first_update_indices"
+  ],
+  "trajectory_index_sets": {
+   "checkpoint_trajectory": [
+    0,
+    628,
+    1256,
+    1884,
+    2512,
+    3140,
+    3768,
+    4396,
+    5024,
+    5652,
+    6123
+   ],
+   "evaluation_trajectory": [
+    0,
+    628,
+    1256,
+    1884,
+    2512,
+    3140,
+    3768,
+    4396,
+    5024,
+    5652,
+    6123
+   ]
+  },
+  "units": "optimizer updates (330_f \u00a72)"
+ },
+ "training_seed": 20260807
+}

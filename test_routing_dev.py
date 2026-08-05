@@ -1253,8 +1253,10 @@ def test_admission_verifies_the_persisted_ledger_itself(
     empty = tmp_path / "empty.md"
     manifest = _fake_manifest(budget=4.0)
     with pytest.raises(InfrastructureError, match="ABORTED-closed"):
+        # (a manifestless ordinary kind — training_run now
+        # REQUIRES its P0 execution manifest, 359_f)
         ledger.admit_and_append_launch(
-            _entry(kind="training_run"), None, empty)
+            _entry(kind="standalone_evaluation"), None, empty)
     missing_design = _support_entry(manifest)
     missing_design["freeze"] = {"support_launch_sha256":
                                 manifest["manifest_sha256"]}
@@ -1284,7 +1286,7 @@ def test_admission_verifies_the_persisted_ledger_itself(
     # an ordinary launch that would breach max + R_cycle refuses
     with pytest.raises(InfrastructureError, match="inadmissible"):
         ledger.admit_and_append_launch(
-            _entry(kind="training_run",
+            _entry(kind="standalone_evaluation",
                    budget_allocated_gpu_hours=60.0), head, path)
     with pytest.raises(InfrastructureError, match="exceeds the "
                        "reserved"):
@@ -7081,3 +7083,213 @@ def test_p0_smoke_reward_entry_deadline():
     assert live(completions=[["ok"]] * 8) == [0.0] * 8
     assert accountant.generated_groups == 1
     assert len(scored) == 1
+
+
+# --- precursors Unit L: the real freeze + execution identity + admission -------
+
+def test_p0_unit_l_freeze_and_identity(monkeypatch, tmp_path):
+    """Unit L: the chain-authenticated smoke record; the BINDING
+    plan derivation; the real P0LaunchFreeze under its pin; the
+    frozen cadence in both unit systems; the P0ExecutionIdentity
+    strict rederiving loader."""
+    from tasks.routing import p0_execution
+    monkeypatch.setitem(p0_val.VAL_CONFIG["lineage"],
+                        "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
+    monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
+                        PRISTINE_VAL_CONFIG_SHA256)
+    # the smoke record authenticates through the verified chain
+    record = p0_execution.authenticate_smoke_record()
+    assert record["smoke_freeze_sha256"] == \
+        p0_smoke.SMOKE_FREEZE_SHA256
+    monkeypatch.setattr(p0_execution, "BETA_SMOKE_RECORD_SHA256",
+                        "0" * 64)
+    with pytest.raises(InfrastructureError, match="reviewed"):
+        p0_execution.authenticate_smoke_record()
+    monkeypatch.undo()
+    monkeypatch.setitem(p0_val.VAL_CONFIG["lineage"],
+                        "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
+    monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
+                        PRISTINE_VAL_CONFIG_SHA256)
+    # anchoring the closeout at a different chain entry refuses
+    monkeypatch.setattr(
+        p0_execution, "SMOKE_CLOSEOUT_SHA256",
+        "929e1724" + p0_execution.SMOKE_CLOSEOUT_SHA256[8:])
+    with pytest.raises(InfrastructureError, match="chain"):
+        p0_execution.authenticate_smoke_record()
+    monkeypatch.undo()
+    monkeypatch.setitem(p0_val.VAL_CONFIG["lineage"],
+                        "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
+    monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
+                        PRISTINE_VAL_CONFIG_SHA256)
+    # the BINDING derivation: 39/41/39, no extra training
+    plan = p0_execution.derive_real_launch_plan()
+    assert (plan["nominal_epochs"], plan["capacity_epochs"],
+            plan["launch_epochs"]) == (39, 41, 39)
+    assert plan["branch"] == "no_extra_training"
+    assert plan["spare_epochs_not_trained"] == 2
+    # the real freeze loads under its pin and binds everything
+    freeze = p0_execution.load_real_launch_freeze()
+    assert p0_cap._strict_equal(freeze.launch_plan.to_record(),
+                                plan)
+    assert freeze.runtime.seed == p0_execution.P0_TRAINING_SEED
+    assert len({p0_execution.P0_TRAINING_SEED, 20260804,
+                20260805, 20260806}) == 4
+    assert freeze.runtime.attested_environment_sha256 == \
+        p0_replay.REPLAY_SOURCE["attested_environment_sha256"]
+    with pytest.raises(InfrastructureError, match="reviewed"):
+        p0_launch.load_p0_launch_freeze(
+            p0_launch.LAUNCH_FREEZE_PATH, "0" * 64)
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_execution.freeze_real_p0_launch()
+    # the frozen cadence in BOTH unit systems
+    cadence = p0_execution.derive_cadence(39, 157)
+    assert tuple(cadence["update_indices"]) == \
+        p0_smoke.CADENCE_UPDATES
+    assert cadence["epoch_labels"][0] == 0
+    assert cadence["epoch_labels"][-1] == 39
+    trimmed = p0_execution.derive_cadence(10, 157)
+    assert trimmed["epoch_labels"] == [0, 4, 8, 10]
+    with pytest.raises(InfrastructureError, match="positive"):
+        p0_execution.derive_cadence(0, 157)
+    # the identity loads under its pin and rederives
+    identity = p0_execution.load_p0_execution_identity(
+        expected_sha256=p0_execution.P0_EXECUTION_IDENTITY_SHA256)
+    assert identity["launch_freeze_sha256"] == \
+        p0_execution.P0_LAUNCH_FREEZE_SHA256
+    assert identity["telemetry"]["trajectory_index_sets"][
+        "checkpoint_trajectory"] == cadence["update_indices"]
+    evaluation = identity["evaluation"]
+    assert evaluation["base_seed"] == 20260804
+    assert evaluation["val_lock_sha256"] == \
+        p0_val.VAL_LOCK_SHA256
+    assert evaluation["seed_schedule_sha256"] == \
+        p0_val.VAL_SEED_SCHEDULE_SHA256
+    assert "NO checkpoint index" in evaluation["seed_rule"]
+    assert identity["training_seed"] == 20260807
+    with pytest.raises(InfrastructureError, match="reviewed"):
+        p0_execution.load_p0_execution_identity(
+            expected_sha256="0" * 64)
+    # a REHASHED identity with a mutated cadence refuses at the
+    # rederivation
+    payload = json.loads(Path(
+        p0_execution.EXECUTION_IDENTITY_PATH).read_text("utf-8"))
+    body = {k: v for k, v in payload.items()
+            if k != "record_sha256"}
+    body["cadence"] = dict(body["cadence"])
+    body["cadence"]["update_indices"] = \
+        list(body["cadence"]["update_indices"])
+    body["cadence"]["update_indices"][3] = 1885
+    forged = dict(body)
+    forged["record_sha256"] = charter.content_sha256(body)
+    forged_path = tmp_path / "forged_identity.json"
+    forged_path.write_text(json.dumps(forged), encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="rederive"):
+        p0_execution.load_p0_execution_identity(
+            forged_path, expected_sha256=forged["record_sha256"])
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_execution.freeze_p0_execution_identity(
+            launch_freeze_sha256=
+            p0_execution.P0_LAUNCH_FREEZE_SHA256)
+
+
+def test_p0_unit_l_admission(monkeypatch, tmp_path):
+    """Unit L: the closed execution manifest; the fail-closed
+    admit_p0_execution on a COPY of the real ledger (the real
+    ledger untouched); the 346_f final-reserve cross-check; the
+    manifest-mandatory training_run branch; open-attempt refusal."""
+    import shutil
+    from tasks.routing import p0_execution
+    monkeypatch.setitem(p0_val.VAL_CONFIG["lineage"],
+                        "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
+    monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
+                        PRISTINE_VAL_CONFIG_SHA256)
+    live_env = json.loads(Path(
+        "runs/routing-dev/beta-smoke-v1/execute_env_manifest.json"
+    ).read_text("utf-8"))
+    manifest = p0_execution.build_p0_execution_manifest(
+        environment_manifest=live_env,
+        execution_root=tmp_path / "p0-v1")
+    validated = p0_execution.validate_p0_execution_manifest(
+        manifest)
+    assert validated["manifest_sha256"] == \
+        manifest["manifest_sha256"]
+    assert manifest["lineage_parent_sha256"] == \
+        p0_execution.SMOKE_CLOSEOUT_SHA256
+    assert manifest["budget_gpu_hours"] == 10.0
+    resigned = {k: v for k, v in manifest.items()
+                if k != "manifest_sha256"}
+    resigned["budget_gpu_hours"] = 20.0
+    resigned["manifest_sha256"] = charter.content_sha256(resigned)
+    with pytest.raises(InfrastructureError, match="diverges"):
+        p0_execution.validate_p0_execution_manifest(resigned)
+    # the manifest-mandatory training_run ledger branch
+    ledger_copy = tmp_path / "ledger.md"
+    shutil.copy(ledger.LEDGER_PATH, ledger_copy)
+    head = ledger.ledger_head(ledger_copy)
+    assert head == p0_execution.SMOKE_CLOSEOUT_SHA256
+    bare = {"kind": "training_run", "question": "q",
+            "motivating_evidence": "m",
+            "freeze": {"launch_freeze_sha256": "ab" * 32},
+            "parent": head, "budget_allocated_gpu_hours": 10.0,
+            "outcome_informed": False}
+    with pytest.raises(InfrastructureError, match="WITH its"):
+        ledger.admit_and_append_launch(bare, head, ledger_copy)
+    with pytest.raises(InfrastructureError,
+                       match="P0 execution manifest"):
+        ledger.admit_and_append_launch(
+            bare, head, ledger_copy,
+            launch_manifest={"kind": "wrong-kind-v1"})
+    # the 346_f duplicate-final-reserve cross-check
+    chain = ledger.verify_ledger_head(head, ledger_copy)
+    check = p0_execution._cross_check_final_reserve(chain)
+    assert check["r_cycle_gpu_hours"] == 1.0
+    fake_final = {"kind": "reserve_update", "entry_sha256": "9" * 64,
+                  "reserve": {"status": "final",
+                              "r_cycle_gpu_hours": 1.0}}
+    with pytest.raises(InfrastructureError, match="exactly one"):
+        p0_execution._cross_check_final_reserve(
+            chain + [fake_final])
+    divergent = json.loads(json.dumps(chain))
+    for entry in divergent:
+        if entry["kind"] == "reserve_update" \
+                and entry["reserve"].get("status") == "final":
+            entry["reserve"]["r_cycle_gpu_hours"] = 3.0
+    with pytest.raises(InfrastructureError, match="diverges"):
+        p0_execution._cross_check_final_reserve(divergent)
+    # the full fail-closed admission on the COPY
+    bundle = p0_execution.admit_p0_execution(
+        execution_manifest=manifest,
+        expected_head_sha256=head,
+        question="P0 admission rehearsal (Unit L)",
+        motivating_evidence="359_f CPU boundary test",
+        ledger_path=ledger_copy,
+        _live_environment=live_env)
+    assert bundle["preparation"]["gates"]["launch_plan"] == \
+        "REDERIVED"
+    assert bundle["preparation"]["groups_total"] == 6123
+    assert bundle["preparation"]["launch_admission"]["status"] == \
+        "DEFERRED"
+    assert bundle["reserve_check"]["r_cycle_gpu_hours"] == 1.0
+    entries = ledger.verify_ledger_head(
+        bundle["launch_entry_sha256"], ledger_copy)
+    assert entries[-1]["kind"] == "training_run"
+    assert entries[-1]["parent"] == head
+    # a SECOND admission refuses: the prior attempt is OPEN
+    with pytest.raises(InfrastructureError, match="OPEN"):
+        p0_execution.admit_p0_execution(
+            execution_manifest=manifest,
+            expected_head_sha256=bundle["launch_entry_sha256"],
+            question="q", motivating_evidence="m",
+            ledger_path=ledger_copy,
+            _live_environment=live_env)
+    # a live environment that does not attest refuses (step 4
+    # precedes the chain-head check, so the stale head is unreached)
+    with pytest.raises(InfrastructureError, match="attest"):
+        p0_execution.admit_p0_execution(
+            execution_manifest=manifest,
+            expected_head_sha256=head,
+            question="q", motivating_evidence="m",
+            ledger_path=ledger_copy,
+            _live_environment=_env_manifest())
+    # the REAL ledger is untouched
+    assert ledger.ledger_head() == head

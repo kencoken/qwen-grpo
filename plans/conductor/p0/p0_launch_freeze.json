@@ -1,0 +1,44 @@
+{
+ "freeze_sha256": "88c6635aadb2d0ca1c766efc937123b7ece427190cfe3ce3675ac8f269ebccfc",
+ "launch_plan": {
+  "available_generation_seconds": 34408.8,
+  "branch": "no_extra_training",
+  "cap_rule_id": "p0-cap-v1",
+  "capacity_epochs": 41,
+  "inputs": {
+   "cumulative_consumed_seconds": 0.0,
+   "frozen_non_rollout_overhead_seconds": 1443.7573475223035,
+   "measured_finalization_reserve_seconds": 147.48471159813926,
+   "measured_whole_epoch_seconds": 827.1569903432392,
+   "operational_ceiling_seconds": 36000.0
+  },
+  "launch_epochs": 39,
+  "launchable": true,
+  "nominal_epochs": 39,
+  "spare_epochs_not_trained": 2
+ },
+ "precursors": {
+  "beta_smoke_record_sha256": "a9d6f55b6300b97df03135beed4b82cb82ff5d555f7d1eee48688cf88a743b80",
+  "cycle_record_sha256": "d617ab5fbb609fc89c250e6a79627b2ed28e54603fa1fed2253d855a3abaccdc",
+  "r_cycle_record_sha256": "e13cf4d3605393186499cab0490d5e2bc289c77841b146841d0f52258f422265",
+  "routing_dev_val_lock_sha256": "2aecdf28ad25cae10e494aa9fc1a95138a9feb5a29ab0636314b847987caf19d"
+ },
+ "runtime": {
+  "attested_environment_sha256": "372f958f5e5aa30805222d338f2e90d665cf8188a7c2ac8d559d231b3f53cd42",
+  "beta": 0.001,
+  "group_size": 8,
+  "learning_rate": 1e-05,
+  "lora_adapter_dtype": "float32",
+  "lora_key_set_sha256": "e44ecb9caf0be396aaaceae6802dbaab9209677103ba263c89ca9a7ea65f6215",
+  "model_id": "Qwen/Qwen2.5-3B-Instruct",
+  "model_revision": "aa8e72537993ba99e69dfaafa59ed015b17504d1",
+  "policy_max_new_tokens": 128,
+  "prompt_sha256": "fe9bba0deafc60ec45f7883d9fb7bbddda4da847ed7e5d92a53f9b88adb29070",
+  "quantization": "nf4",
+  "runtime_profile_sha256": "202bc3773f9f4d4fa4ccc1842c17199aabd8d8f5c532bda7826c7af53fa08ceb",
+  "seed": 20260807,
+  "temperature": 1.0
+ },
+ "schema_version": "p0-launch-freeze-v1",
+ "science_contract_sha256": "d47a63ff435e3b2964f09f0d97f287ee722cae5bbc7df58104d7e10c6d519517"
+}
