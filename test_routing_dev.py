@@ -6656,29 +6656,48 @@ def test_p0_r_cycle_final_reserve(tmp_path, monkeypatch):
             {**final_reserve, "status": "provisional",
              "r_cycle_gpu_hours": 1.0,
              "itemized_ceiling_gpu_hours": 1.0})
-    # the ledger final path, rehearsed on a COPY of the real ledger
+    # the ledger final path, rehearsed on a TRUNCATED copy of the
+    # real ledger (the REAL ledger now carries the appended final
+    # reserve at entry 20; the rehearsal replays the append from
+    # the frozen parent — a valid chain PREFIX)
+    frozen_parent = p0_cycle.CYCLE_CONFIG["lineage"][
+        "parent_entry_sha256"]
+    full_text = Path(ledger.LEDGER_PATH).read_text("utf-8")
+    truncated = full_text[:full_text.index("\n## entry 20 ")]
     ledger_copy = tmp_path / "ledger.md"
-    shutil.copy2(ledger.LEDGER_PATH, ledger_copy)
-    head = ledger.ledger_head(ledger_copy)
+    ledger_copy.write_text(truncated, encoding="utf-8")
+    assert ledger.ledger_head(ledger_copy) == frozen_parent
     # 344_s P1-4: only the FROZEN parent head admits the append
     with pytest.raises(InfrastructureError, match="frozen parent"):
         p0_cycle.record_final_r_cycle(
             expected_head_sha256="ab" * 32,
             ledger_path=ledger_copy)
     appended = p0_cycle.record_final_r_cycle(
-        expected_head_sha256=head, ledger_path=ledger_copy)
+        expected_head_sha256=frozen_parent,
+        ledger_path=ledger_copy)
     entries = ledger.verify_ledger_head(
         appended["entry_sha256"], ledger_copy)
     state = ledger.envelope_state(
         entries, charter.CYCLE_ENVELOPE_GPU_HOURS)
     assert state["reserve"]["r_cycle_gpu_hours"] == 1.0
     assert state["reserve"]["status"] == "final"
+    # the rehearsal reproduces the REAL appended entry exactly
+    real_final = [e for e in ledger.read_ledger()
+                  if e["kind"] == "reserve_update"
+                  and e["reserve"]["status"] == "final"]
+    assert len(real_final) == 1
+    assert appended["entry_sha256"] == \
+        real_final[0]["entry_sha256"]
     # 344_s P1-4: a SECOND final reserve refuses (head has moved
     # off the frozen parent, and the once-only rule also bites)
     with pytest.raises(InfrastructureError, match="frozen parent"):
         p0_cycle.record_final_r_cycle(
             expected_head_sha256=appended["entry_sha256"],
             ledger_path=ledger_copy)
+    # ... and on the REAL ledger, any further append refuses
+    with pytest.raises(InfrastructureError, match="frozen parent"):
+        p0_cycle.record_final_r_cycle(
+            expected_head_sha256=ledger.ledger_head())
     # a final append WITHOUT the cycle-record bindings refuses
     with pytest.raises(InfrastructureError, match="must bind"):
         ledger._append(
@@ -6700,5 +6719,6 @@ def test_p0_r_cycle_final_reserve(tmp_path, monkeypatch):
                  "itemized_ceiling_gpu_hours": 1.0,
                  "rounding": "ceil_to_whole_gpu_hours"}},
             appended["entry_sha256"], ledger_copy)
-    # the REAL ledger is untouched by the rehearsal
-    assert ledger.ledger_head() == head
+    # the REAL ledger is untouched by the rehearsal (its head is
+    # the real appended final-reserve entry)
+    assert ledger.ledger_head() == real_final[0]["entry_sha256"]

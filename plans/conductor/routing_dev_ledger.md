@@ -665,3 +665,35 @@ chains the previous entry's hash. Never edit a recorded entry.
  "terminal_status": "complete"
 }
 ```
+
+## entry 20 — reserve_update
+
+```json
+{
+ "budget_allocated_gpu_hours": 0.0,
+ "entry_sha256": "6fea9e3be1f2043d38c297e50bcce36b9d225ce741d61de3ed3a56054e8dba51",
+ "freeze": {
+  "cycle_record_sha256": "d617ab5fbb609fc89c250e6a79627b2ed28e54603fa1fed2253d855a3abaccdc",
+  "r_cycle_record_file_sha256": "77fed28121396377634eff6d9c25ad3a918990f6cd0bad5c1112b4caa77d3098",
+  "r_cycle_record_sha256": "e13cf4d3605393186499cab0490d5e2bc289c77841b146841d0f52258f422265",
+  "support_closeout_sha256": "6506f117180c9b2a2fafbd745ca9b19082b18e2c63d49a71e0a2dbce4da4c283",
+  "surface_lock_sha256": "61c4e85a53683c9e2dbcbf15f60794935a76a86d979a69412a97f44ea9f2562b"
+ },
+ "kind": "reserve_update",
+ "motivating_evidence": "330_f-signed plan Unit Y; the committed cycle and reserve records",
+ "outcome_informed": false,
+ "parent": "929e172415845471f2fe613ef71a36eb57d47492cfa58c4e511e95403a5ed11c",
+ "previous_entry_sha256": "929e172415845471f2fe613ef71a36eb57d47492cfa58c4e511e95403a5ed11c",
+ "question": "Unit Y: the FINAL R_cycle reserve \u2014 the cycle cohort and its evaluation rule are frozen; the reserve becomes the rounded maximum of the registered basis and the itemized closure ceiling",
+ "reserve": {
+  "assumed_cohort_size": 90,
+  "evaluation_multiplier": 2.0,
+  "itemized_ceiling_gpu_hours": 1.0,
+  "measured_seconds_per_observation": 2.44,
+  "measured_support_gpu_hours": 0.0732,
+  "r_cycle_gpu_hours": 1.0,
+  "rounding": "ceil_to_whole_gpu_hours",
+  "status": "final"
+ }
+}
+```
