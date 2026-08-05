@@ -972,7 +972,9 @@ def test_equal_cell_view_refuses_partial_populations(
 # --- ledger (211_f §§10, 12; 218_s F2; 220_s F1) ---------------------------------
 
 def _entry(**overrides):
-    entry = {"kind": "engineering_smoke", "question": "q",
+    # 352_s #1: engineering_smoke now REQUIRES its manifest, so the
+    # generic launch-boundary tests use standalone_evaluation
+    entry = {"kind": "standalone_evaluation", "question": "q",
              "motivating_evidence": "202_f priors",
              "freeze": {"config_sha256": "ab" * 32},
              "parent": None, "budget_allocated_gpu_hours": 0.5,
@@ -6907,3 +6909,129 @@ def test_p0_smoke_design(monkeypatch):
     resigned["manifest_sha256"] = charter.content_sha256(resigned)
     with pytest.raises(InfrastructureError, match="diverges"):
         p0_smoke.validate_smoke_launch_manifest(resigned)
+
+
+def test_p0_smoke_rev4_lifecycle(monkeypatch, tmp_path):
+    """352_s direct regressions: manifestless admission, callback
+    ordering, abort cleanup, terminal-proof mutation."""
+    # --- 352_s #1: a manifestless smoke with fabricated hashes
+    # can never admit (the reviewer's reproduction)
+    ledger_path = tmp_path / "ledger.md"
+    seeded = _seed_reserve_ledger(ledger_path, tag="smoke-adm")
+    head = seeded["entry_sha256"]
+    entry = {"kind": "engineering_smoke",
+             "question": "manifestless smoke",
+             "motivating_evidence": "352_s #1 reproduction",
+             "freeze": {"smoke_launch_sha256": "ab" * 32,
+                        "smoke_freeze_sha256": "cd" * 32,
+                        "smoke_config_sha256": "ef" * 32},
+             "parent": head, "budget_allocated_gpu_hours": 0.75,
+             "outcome_informed": False}
+    with pytest.raises(InfrastructureError, match="WITH its"):
+        ledger.admit_and_append_launch(entry, head, ledger_path)
+    with pytest.raises(InfrastructureError,
+                       match="binds a smoke-launch"):
+        ledger.admit_and_append_launch(
+            entry, head, ledger_path,
+            launch_manifest={"kind": "some-other-manifest-v1"})
+    # a coherent manifest whose hash the entry does not name
+    with pytest.raises(InfrastructureError, match="exact "
+                       "smoke-launch manifest hash"):
+        ledger.admit_and_append_launch(
+            entry, head, ledger_path,
+            launch_manifest={
+                "kind": "routing-dev-beta-smoke-launch-v1",
+                "manifest_sha256": "99" * 32,
+                "budget_gpu_hours": 0.75,
+                "smoke_freeze_sha256": "cd" * 32,
+                "lineage_parent_sha256": head})
+    # --- 352_s #2: lifecycle ordering — deadline BEFORE the step,
+    # consumption at the OPTIMIZER, never inside the reward
+    from tasks.routing import checkpoint as ckpt_module
+    instrumentation = p0_smoke._EpochInstrumentation()
+    accountant = ckpt_module.GroupAccountant()
+    expired = p0_smoke._make_update_callback(
+        instrumentation, accountant, deadline=0.0)
+    with pytest.raises(InfrastructureError,
+                       match="deadline exceeded"):
+        expired.on_step_begin(None, None, None)
+    import time as _time
+    callback = p0_smoke._make_update_callback(
+        instrumentation, accountant,
+        deadline=_time.monotonic() + 3600.0)
+    callback.on_step_begin(None, None, None)
+    # consumption cannot precede generation — the rev3 defect
+    # (record_update inside the reward) is structurally refused
+    with pytest.raises(InfrastructureError,
+                       match="never generated"):
+        callback.on_optimizer_step(None, None, None)
+    accountant.record_generation(1, 8)
+    assert accountant.optimizer_updates == 0
+    callback.on_optimizer_step(None, None, None)
+    assert accountant.optimizer_updates == 1
+    assert accountant.consumed_groups == 1
+    callback.on_step_end(None, None, None)
+    assert instrumentation.updates == 1
+    # --- 352_s #4: abort cleanup seals raw traces and discards
+    # trained state; a cleanup failure propagates (no closeout)
+    run_dir = tmp_path / "abort-run"
+    sealed = run_dir / "sealed"
+    sealed.mkdir(parents=True)
+    (sealed / "training_trace.jsonl").write_text(
+        '{"row": 1}\n', encoding="utf-8")
+    (sealed / "eval_ckpt0.jsonl.gz").write_bytes(b"already")
+    bundle = run_dir / "checkpoint_bundle"
+    bundle.mkdir()
+    (bundle / "adapter_state.safetensors").write_bytes(b"lora")
+    hf_dir = run_dir / "checkpoint-42"
+    hf_dir.mkdir()
+    (hf_dir / "weights.bin").write_bytes(b"w")
+    p0_smoke._sanitize_for_abort(run_dir)
+    assert not bundle.exists() and not hf_dir.exists()
+    assert not (sealed / "training_trace.jsonl").exists()
+    assert (sealed / "training_trace.jsonl.gz").exists()
+    assert (sealed / "eval_ckpt0.jsonl.gz").read_bytes() == \
+        b"already"
+    (sealed / "late_trace.jsonl").write_text("x\n",
+                                             encoding="utf-8")
+
+    def _fail_seal(path):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(p0_smoke, "_seal_file", _fail_seal)
+    with pytest.raises(OSError, match="disk full"):
+        p0_smoke._sanitize_for_abort(run_dir)
+    monkeypatch.undo()
+    # --- 352_s #3: the checkpoint proof is validated, never
+    # trusted — every mutation channel refuses
+    proof = {"checkpoint_sha256": "aa" * 32,
+             "state_artifact_sha256": {
+                 "adapter": "bb" * 32, "optimizer": "cc" * 32,
+                 "scheduler": "dd" * 32, "rng": "ee" * 32},
+             "counters": {"generated_groups": 157,
+                          "consumed_groups": 157,
+                          "optimizer_updates": 157,
+                          "sampled_completions": 157 * 8}}
+    p0_smoke._validate_checkpoint_proof(proof)
+    with pytest.raises(InfrastructureError,
+                       match="one-epoch expectation"):
+        p0_smoke._validate_checkpoint_proof(
+            {**proof, "counters": {**proof["counters"],
+                                   "optimizer_updates": 156}})
+    with pytest.raises(InfrastructureError,
+                       match="closed schema"):
+        p0_smoke._validate_checkpoint_proof(
+            {**proof, "extra_claim": True})
+    missing_rng = {k: v for k, v in
+                   proof["state_artifact_sha256"].items()
+                   if k != "rng"}
+    with pytest.raises(InfrastructureError,
+                       match="bundle manifest"):
+        p0_smoke._validate_checkpoint_proof(
+            {**proof, "state_artifact_sha256": missing_rng})
+    with pytest.raises(InfrastructureError, match="malformed"):
+        p0_smoke._validate_checkpoint_proof(
+            {**proof, "checkpoint_sha256": "abc"})
+    assert set(p0_smoke._SEALED_INVENTORY) == {
+        "training_trace.jsonl.gz", "eval_ckpt0.jsonl.gz",
+        "eval_post.jsonl.gz", "trainer_log_history.json.gz"}

@@ -674,11 +674,23 @@ def admit_and_append_launch(entry: Mapping[str, Any],
                 raise InfrastructureError(
                     "an aborted-val retry must preserve the "
                     "scientific design (334_s P1-3)")
-    if launch_kind == "engineering_smoke" \
-            and launch_manifest is not None:
-        # 350_s #5: a manifest-bound smoke admission is
-        # AUTHORITATIVE — the entry must name the exact manifest,
-        # carry its budget, and bind the signed smoke freeze
+    if launch_kind == "engineering_smoke":
+        # 350_s #5 / 352_s #1: the manifest is MANDATORY — a
+        # manifestless smoke with fabricated hashes can never
+        # admit; the branch validates the manifest kind, budget,
+        # freeze identity, the ACTUAL parent, the initial lineage,
+        # and the aborted-retry state (the smoke-freeze hash IS
+        # the retry design identity).
+        if launch_manifest is None:
+            raise InfrastructureError(
+                "an engineering smoke is admitted WITH its "
+                "smoke-launch manifest (352_s #1)")
+        if launch_manifest.get("kind") != \
+                "routing-dev-beta-smoke-launch-v1":
+            raise InfrastructureError(
+                "an engineering smoke binds a smoke-launch "
+                f"manifest, not a {launch_manifest.get('kind')!r} "
+                "(352_s #1)")
         named = entry["freeze"].get("smoke_launch_sha256")
         if named != launch_manifest.get("manifest_sha256") \
                 or not named:
@@ -696,6 +708,35 @@ def admit_and_append_launch(entry: Mapping[str, Any],
             raise InfrastructureError(
                 "the smoke entry's freeze must carry the signed "
                 "smoke-freeze hash the manifest binds (350_s #5)")
+        if entry.get("parent") != (entries[-1]["entry_sha256"]
+                                   if entries else None):
+            raise InfrastructureError(
+                "a smoke entry must persist the ACTUAL lineage "
+                "parent — the verified head it is admitted on "
+                "(352_s #1)")
+        prior_smoke = [e for e in entries
+                       if e["kind"] == "engineering_smoke"
+                       and e["freeze"].get("smoke_freeze_sha256")
+                       == frozen]
+        if not prior_smoke and entry.get("parent") != \
+                launch_manifest.get("lineage_parent_sha256"):
+            raise InfrastructureError(
+                "the FIRST smoke launch is admitted only on the "
+                "manifest's frozen initial parent (352_s #1)")
+        smoke_closeouts = {e.get("closes_entry_sha256"): e
+                           for e in entries
+                           if e["kind"] == "closeout"}
+        for attempt in prior_smoke:
+            closeout = smoke_closeouts.get(
+                attempt["entry_sha256"])
+            if closeout is None:
+                raise InfrastructureError(
+                    "a prior smoke attempt is OPEN — no new "
+                    "launch (352_s #1)")
+            if closeout.get("terminal_status") == "complete":
+                raise InfrastructureError(
+                    "a completed smoke exists — never rerun "
+                    "(352_s #1)")
     state = envelope_state(entries, CYCLE_ENVELOPE_GPU_HOURS)
     remaining = state["remaining_gpu_hours"]
     reserve = state["reserve"]

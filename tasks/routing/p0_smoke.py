@@ -914,6 +914,45 @@ def _save_and_verify_checkpoint_bundle(trainer, accountant,
     return elapsed, proof
 
 
+def _make_update_callback(instrumentation, accountant,
+                          deadline: float):
+    """352_s #2: lifecycle ordering — the deadline is checked
+    BEFORE generation (`on_step_begin`) and consumption is
+    recorded when the OPTIMIZER consumes the rollout
+    (`on_optimizer_step`), never inside the reward function."""
+    from transformers import TrainerCallback
+
+    class _UpdateCallback(TrainerCallback):
+        def on_step_begin(self, args, state, control, **kwargs):
+            _check_deadline(deadline, "training step begin")
+
+        def on_optimizer_step(self, args, state, control,
+                              **kwargs):
+            accountant.record_update(1)
+
+        def on_step_end(self, args, state, control, **kwargs):
+            scheduler = kwargs.get("lr_scheduler")
+            lr = (scheduler.get_last_lr()[0]
+                  if scheduler is not None else 0.0)
+            instrumentation.on_update_end(lr)
+
+    return _UpdateCallback()
+
+
+def _sanitize_for_abort(run_dir: Path) -> None:
+    """352_s #4: the abort path obeys the SAME discard/sealing
+    rules — any raw semantic trace is sealed (deterministic gzip)
+    and all trained state is discarded BEFORE the aborted
+    closeout hashes the sanitized inventory. A failure here
+    propagates: the launch stays OPEN and visibly blocked."""
+    sealed = run_dir / "sealed"
+    if sealed.exists():
+        for raw in sorted(sealed.iterdir()):
+            if raw.is_file() and not raw.name.endswith(".gz"):
+                _seal_file(raw)
+    _discard_trained_state(run_dir)
+
+
 def _discard_trained_state(run_dir: Path) -> None:
     """350_s #3: the signed discard rule — the trained state
     (bundle + any trainer output) is DELETED before the
@@ -1009,6 +1048,51 @@ def _build_smoke_trainer(rows, reward, run_dir: Path,
     return trainer
 
 
+_SEALED_INVENTORY = frozenset({
+    "training_trace.jsonl.gz", "eval_ckpt0.jsonl.gz",
+    "eval_post.jsonl.gz", "trainer_log_history.json.gz"})
+
+
+def _validate_checkpoint_proof(proof: Mapping[str, Any]) -> None:
+    """352_s #3: after discard, the proof is the ONLY evidence —
+    its schema and counters are validated, never trusted."""
+    from . import checkpoint as ckpt
+    if not isinstance(proof, Mapping) or set(proof) != {
+            "checkpoint_sha256", "state_artifact_sha256",
+            "counters"}:
+        raise InfrastructureError(
+            "checkpoint proof does not match the closed schema "
+            "(352_s #3)")
+    value = proof["checkpoint_sha256"]
+    if not isinstance(value, str) or len(value) != 64:
+        raise InfrastructureError(
+            "checkpoint proof carries a malformed record hash")
+    artifacts = proof["state_artifact_sha256"]
+    required = set(ckpt.REQUIRED_STATE_ARTIFACTS)
+    optional = set(ckpt.OPTIONAL_STATE_ARTIFACTS)
+    if not isinstance(artifacts, Mapping) \
+            or not required <= set(artifacts) \
+            or not set(artifacts) <= required | optional:
+        raise InfrastructureError(
+            "checkpoint proof artifact hashes do not match the "
+            "bundle manifest")
+    for name in required:
+        digest = artifacts[name]
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise InfrastructureError(
+                f"checkpoint proof artifact {name} hash malformed")
+    counters = proof["counters"]
+    expected_counters = {"generated_groups": 157,
+                         "consumed_groups": 157,
+                         "optimizer_updates": 157,
+                         "sampled_completions": 157 * 8}
+    if dict(counters) != expected_counters:
+        raise InfrastructureError(
+            f"checkpoint proof counters {counters} != the frozen "
+            f"one-epoch expectation {expected_counters} (352_s "
+            "#3)")
+
+
 def verify_smoke_run(run_dir: str | Path, *,
                      ledger_path, expected_head_sha256: str | None
                      ) -> dict[str, Any]:
@@ -1072,20 +1156,39 @@ def verify_smoke_run(run_dir: str | Path, *,
         raise InfrastructureError(
             "the persisted projection does not recompute from the "
             "validated measurements (350_s #5)")
+    _validate_checkpoint_proof(record["checkpoint_proof"])
     sealed = run_dir / "sealed"
-    raw_left = list(sealed.glob("*.jsonl")) + \
-        list(sealed.glob("*.json"))
-    raw_left = [p for p in raw_left if not p.name.endswith(".gz")]
-    if raw_left:
+    # 352_s #3: the EXACT four-file sealed inventory — nothing
+    # omitted, nothing extra, nothing unsealed
+    on_disk = {p.name for p in sealed.iterdir() if p.is_file()}
+    if on_disk != set(_SEALED_INVENTORY) \
+            or set(record["sealed_sha256"]) \
+            != set(_SEALED_INVENTORY):
         raise InfrastructureError(
-            f"unsealed raw files remain: "
-            f"{[p.name for p in raw_left][:3]}")
+            f"sealed inventory is not exactly "
+            f"{sorted(_SEALED_INVENTORY)}: on disk "
+            f"{sorted(on_disk)[:5]} (352_s #3)")
     for name, expected_sha in record["sealed_sha256"].items():
         actual = _sha_file(sealed / name)
         if actual != expected_sha:
             raise InfrastructureError(
                 f"sealed file {name} does not match the recorded "
                 "hash")
+    # 352_s #3: the exact top-level terminal inventory
+    expected_files = {
+        "prelaunch/env_manifest.json",
+        "prelaunch/smoke_launch.json",
+        "prelaunch/smoke_freeze.json",
+        "execute_env_manifest.json", "smoke_record.json",
+    } | {f"sealed/{name}" for name in _SEALED_INVENTORY}
+    from .support_run import _hash_directory
+    actual_files = set(_hash_directory(run_dir))
+    if actual_files != expected_files:
+        missing = sorted(expected_files - actual_files)
+        extra = sorted(actual_files - expected_files)
+        raise InfrastructureError(
+            f"terminal inventory is not exact: missing "
+            f"{missing[:3]}, extra {extra[:3]} (352_s #3)")
     # 350_s #3: the trained state must be GONE
     if (run_dir / "checkpoint_bundle").exists() \
             or list(run_dir.glob("checkpoint-*")):
@@ -1243,24 +1346,13 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
             group_size=8)
 
         def reward(completions=None, **kwargs):
-            _check_deadline(deadline, "training reward entry")
             instrumentation.on_reward_entry()
-            out = base_reward(completions, **kwargs)
-            accountant.record_update(1)
-            return out
-
-        from transformers import TrainerCallback
-
-        class _UpdateCallback(TrainerCallback):
-            def on_step_end(self, args, state, control, **kwargs):
-                scheduler = kwargs.get("lr_scheduler")
-                lr = (scheduler.get_last_lr()[0]
-                      if scheduler is not None else 0.0)
-                instrumentation.on_update_end(lr)
+            return base_reward(completions, **kwargs)
 
         trainer = _build_smoke_trainer(
             rows, reward, run_dir,
-            extra_callbacks=(_UpdateCallback(),))
+            extra_callbacks=(_make_update_callback(
+                instrumentation, accountant, deadline),))
         torch.cuda.reset_peak_memory_stats()
         baseline = _adapter_snapshot(trainer)
         identities = {
@@ -1299,10 +1391,33 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
         _check_deadline(deadline, "P3/P4 boundary")
 
         # --- P4 the production v1 bundle, verified ---------------
+        # 352_s #2: the three counters must AGREE before any
+        # checkpoint exists
+        if not (accountant.optimizer_updates == 157
+                and accountant.generated_groups == 157
+                and accountant.consumed_groups == 157
+                and int(trainer.state.global_step) == 157
+                and instrumentation.updates == 157):
+            raise InfrastructureError(
+                f"pre-checkpoint cross-check failed: accountant "
+                f"{accountant.optimizer_updates}/"
+                f"{accountant.generated_groups}/"
+                f"{accountant.consumed_groups}, trainer "
+                f"{trainer.state.global_step}, instrumentation "
+                f"{instrumentation.updates} — all must be 157 "
+                "(352_s #2)")
         bundle_seconds, checkpoint_proof = \
             _save_and_verify_checkpoint_bundle(
                 trainer, accountant, identities,
                 run_dir / "checkpoint_bundle")
+        # 352_s #3: the ESTABLISHED resume validator runs against
+        # the bundle BEFORE the trained state is discarded
+        bundle_dir = run_dir / "checkpoint_bundle"
+        bundle_record = json.loads(
+            (bundle_dir / "checkpoint_record.json")
+            .read_text("utf-8"))
+        ckpt.validate_resume(bundle_record, identities,
+                             bundle_dir=bundle_dir)
         _check_deadline(deadline, "P4/P5 boundary")
 
         # --- P5 the post-epoch eval ------------------------------
@@ -1385,6 +1500,11 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
                          expected_head_sha256=head)
         _check_deadline(deadline, "terminal verification")
     except BaseException as error:
+        # 352_s #4: sanitize BEFORE the aborted closeout — seal
+        # any raw semantic traces and discard all trained state;
+        # if sanitization itself fails, the launch stays OPEN
+        # (visibly blocked; an open attempt refuses retries)
+        _sanitize_for_abort(run_dir)
         measured = round((_time.monotonic() - started) / 3600.0, 4)
         append_ledger_entry(
             {"kind": "closeout", "question": question,
@@ -1424,6 +1544,10 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
          "outcome_informed": False,
          "outcome_pointer": str(run_dir / "smoke_record.json")},
         head, ledger_path)
+    # 352_s #3: the terminal verifier runs AGAIN against the
+    # COMPLETED ledger head (the closeout inventory branch)
+    verify_smoke_run(run_dir, ledger_path=ledger_path,
+                     expected_head_sha256=closeout["entry_sha256"])
     return {**record, "measured_gpu_hours": measured,
             "closeout_entry_sha256": closeout["entry_sha256"],
             "ledger_head": closeout["entry_sha256"]}
