@@ -98,12 +98,14 @@ SMOKE_CONFIG: dict[str, Any] = {
                    "locked routing_dev_val cohort receives NO "
                    "policy output before checkpoint zero"),
         "sampling": ("the frozen canonical sampling identity; "
-                     "per-OBSERVATION seeding with the slot-0 CRN "
-                     "seed, one 8-sequence batch (the operational "
-                     "realization of the per-slot schedule is "
-                     "bound at Unit L's P0ExecutionIdentity; the "
-                     "smoke measures the identical cost shape); "
-                     "outputs discarded unread"),
+                     "the EXECUTED seed realization is itself "
+                     "frozen (350_s #4): per-OBSERVATION seeding "
+                     "with the slot-0 CRN seed, one 8-sequence "
+                     "batch — the 90-entry executed schedule is "
+                     "pinned alongside the 720-entry identity "
+                     "schedule; every evaluation pass runs inside "
+                     "the isolated_rng boundary so training RNG is "
+                     "NEVER perturbed; outputs discarded unread"),
     },
     "cadence": {
         "rule": ("checkpoint + evaluation every 4 epochs on the "
@@ -126,20 +128,36 @@ SMOKE_CONFIG: dict[str, Any] = {
         "P2_checkpoint_zero_eval": (
             "one COMPLETE evaluation pass: generation + "
             "parse/score against the locked surface + telemetry + "
-            "sealed trace persistence"),
+            "SEALING INSIDE THE PHASE (deterministic gzip within "
+            "the timed window; 350_s #2); runs inside "
+            "isolated_rng"),
         "P3_epoch": ("the 157 rollout+update groups; first rollout "
                      "start to the 157th optimizer-update end; NO "
                      "evaluation time inside"),
         "P4_checkpoint_bundle": (
-            "one COMPLETE RESUMABLE checkpoint bundle write: "
-            "adapter + optimizer state + scheduler state + RNG "
-            "states (the resume-validation bundle shape), wall"),
+            "the PRODUCTION v1 checkpoint contract (350_s #3): "
+            "adapter safetensors + optimizer + scheduler + RNG "
+            "state + artifact hashes + the checkpoint record "
+            "(GroupAccountant-authorized counters, sampler "
+            "position) — then RESTORE-VERIFIED (artifact hashes "
+            "re-derived and compared); the write+record time is "
+            "the priced quantity; proof hashes and timing are "
+            "retained and the trained state is DELETED before the "
+            "successful closeout"),
         "P5_post_epoch_eval": ("the second complete evaluation "
-                               "pass, identical path to P2"),
-        "P6_trace_seal": ("training + evaluation trace flush + "
-                          "verification + deterministic-gzip "
-                          "archival, wall; the per-epoch trace "
-                          "volume is recorded"),
+                               "pass, identical path to P2 "
+                               "(sealed inside the phase; "
+                               "isolated_rng)"),
+        "P6_trace_seal": ("the TRAINING trace (the 157-group full "
+                          "trace written by the authenticated "
+                          "reward boundary): flush + "
+                          "deterministic-gzip archive + hash + "
+                          "ROUND-TRIP verification, timed "
+                          "SEPARATELY — this is the x39-scaled "
+                          "quantity (350_s #2); trainer-log "
+                          "sealing follows OUTSIDE that timer; "
+                          "per_epoch_trace_bytes = the training "
+                          "trace volume"),
         "per_group_rollout_definition": (
             "group i's rollout wall = the reward-function entry "
             "time for group i minus the previous phase boundary "
@@ -170,9 +188,16 @@ SMOKE_CONFIG: dict[str, Any] = {
     "budget_gpu_hours": 0.75,
     "run_root": SMOKE_RUN_ROOT,
     "ledger_kind": "engineering_smoke",
-    # 348_s #4: OPERATIONAL disclosure enforcement
+    # 348_s #4 / 350_s #4: OPERATIONAL disclosure enforcement
     "disclosure_controls": {
         "report_to": "none",
+        "console_callbacks": ("PrinterCallback AND "
+                              "ProgressCallback are REMOVED from "
+                              "the trainer (350_s: disable_tqdm "
+                              "alone installs PrinterCallback, "
+                              "which prints reward/KL/loss) — log "
+                              "history is captured internally and "
+                              "sealed only"),
         "completion_printing": "disabled — no completion text is "
                                "ever written to stdout/stderr",
         "trainer_logs": ("captured to sealed files inside the run "
@@ -184,6 +209,12 @@ SMOKE_CONFIG: dict[str, Any] = {
         "surfaced_output": ("ONLY the closed timing record and "
                             "the derived cap-input projection"),
     },
+    # 350_s #5: budget enforcement points
+    "deadline_enforcement": ("the budget deadline is checked at "
+                             "EVERY training reward entry, at "
+                             "every evaluation observation, and "
+                             "at every phase boundary — never "
+                             "only at the end"),
     "predictions": {
         "whole_epoch_minutes": "12-16 (C2: 12.2 at beta 0)",
         "eval_pass_minutes": "~7 each (90 groups x ~4.647 "
@@ -213,17 +244,22 @@ SMOKE_CONFIG: dict[str, Any] = {
     },
 }
 SMOKE_CONFIG_SHA256 = \
-    "70e4be03cc23b382404def3e3813c7696b4b5cfc34e9d6fa8f2b150470f3a110"
+    "6e775b9079658799e8759a4d8d4bea969dd8bdd8c100016915c8ef6771a9cf41"
 
 # the frozen timing-evaluation seed schedule (90 obs x slots 0..7,
 # domain timing_smoke, base 20260806)
 TIMING_SEED_SCHEDULE_SHA256 = \
     "cbfe528435882c0728eb79235e9303d85f403de2b7cf1a96cdae99328eb9992b"
 
+# 350_s #4: the EXECUTED seed realization (90 slot-0 seeds) is
+# itself frozen alongside the 720-entry identity schedule
+TIMING_EXECUTED_SEEDS_SHA256 = \
+    "83faa1843fc6c3350cb17ec1bfc69c3a2774f7fc60b65d0ef8ddbd38c84c79d0"
+
 # the externally reviewed freeze pin (set after the one-time
 # freeze; recorded by the Unit-T review)
 SMOKE_FREEZE_SHA256 = \
-    "bd499f0376924cc2278df6c11f5a715ee98a6859a1dee4663cbd428fb08fb164"
+    "d2d87971765d40da9d2c8aebc29e014e2ca24e82f46a7afbf6c9b32231f75eb7"
 
 # the CLOSED measured field set (348_s #3: the shape proofs are
 # fields too — infrastructure counters, never semantic values)
@@ -290,6 +326,20 @@ def timing_seed_schedule() -> list[tuple[str, int, int]]:
             "the derived timing seed schedule does not match the "
             "frozen pin")
     return schedule
+
+
+def executed_seed_realization() -> list[tuple[str, int]]:
+    """The seeds the eval passes ACTUALLY execute (350_s #4): the
+    90 per-observation slot-0 CRN seeds, in cohort order, under
+    their own pin."""
+    realization = [(oid, seed) for oid, slot, seed
+                   in timing_seed_schedule() if slot == 0]
+    digest = content_sha256([list(entry) for entry in realization])
+    if digest != TIMING_EXECUTED_SEEDS_SHA256:
+        raise InfrastructureError(
+            "the executed seed realization does not match the "
+            "frozen pin (350_s #4)")
+    return realization
 
 
 def _positive_number(name: str, value: Any) -> float:
@@ -479,6 +529,8 @@ def build_smoke_freeze() -> dict[str, Any]:
             prompt_fewshot().encode("utf-8")).hexdigest(),
         "runtime_profile_sha256": P0_RUNTIME_PROFILE_SHA256,
         "timing_seed_schedule_sha256": TIMING_SEED_SCHEDULE_SHA256,
+        "timing_executed_seeds_sha256":
+            TIMING_EXECUTED_SEEDS_SHA256,
         "timing_cohort_observation_ids": [
             obs["observation_id"] for obs in observations],
         "observations_total": len(observations),
@@ -526,7 +578,7 @@ def load_smoke_freeze(path: str | Path = SMOKE_FREEZE_PATH,
     return payload
 
 
-# --- the two-phase instrumented runner (348_s: rev2 deliverable) ---------------
+# --- the two-phase instrumented runner (348_s; repaired per 350_s) -------------
 
 DRIVER = "tasks/routing/p0_smoke.py"
 
@@ -643,10 +695,34 @@ def prepare_smoke_launch(*, run_dir: str | Path = SMOKE_RUN_ROOT,
     return manifest
 
 
+def _check_deadline(deadline: float, where: str) -> None:
+    """350_s #5: the budget deadline is enforced at every reward
+    entry, every evaluation observation, and every phase
+    boundary."""
+    import time as _time
+    if _time.monotonic() > deadline:
+        raise InfrastructureError(
+            f"budget deadline exceeded at {where} — the run "
+            "aborts (350_s #5)")
+
+
+def _strip_console_callbacks(trainer) -> None:
+    """350_s #4: `disable_tqdm=True` makes Transformers install
+    PrinterCallback (which PRINTS reward/KL/loss); remove every
+    console reporter — log history is captured internally and
+    sealed only."""
+    from transformers.trainer_callback import (
+        PrinterCallback,
+        ProgressCallback,
+    )
+    for callback_type in (PrinterCallback, ProgressCallback):
+        trainer.remove_callback(callback_type)
+
+
 class _EpochInstrumentation:
-    """The P3 instrumentation (the frozen per-group rollout
-    definition): reward-entry minus the previous phase boundary;
-    lr sampled at the END of each update; update counting."""
+    """P3 instrumentation: reward-entry minus the previous update
+    boundary; lr sampled at the END of each update; update
+    counting."""
 
     def __init__(self):
         import time as _time
@@ -673,12 +749,28 @@ class _EpochInstrumentation:
             self.lr_trajectory.append(float(learning_rate))
 
 
+def _seal_file(path: Path) -> str:
+    """Deterministic-gzip seal (gzip -n -9); returns the sealed
+    file's sha256; the raw file is removed."""
+    import gzip
+    data = path.read_bytes()
+    gz_path = Path(str(path) + ".gz")
+    with open(gz_path, "wb") as raw:
+        with gzip.GzipFile(fileobj=raw, mode="wb", filename="",
+                           mtime=0, compresslevel=9) as handle:
+            handle.write(data)
+    path.unlink()
+    return hashlib.sha256(gz_path.read_bytes()).hexdigest()
+
+
 def _timed_eval_pass(trainer, observations, loaded, seeds,
-                     out_path: Path, label: str) -> float:
-    """One COMPLETE evaluation pass (348_s #2): generation under
-    the frozen sampling identity (per-observation slot-0 CRN
-    seeding), parse/score against the locked surface, telemetry,
-    and SEALED trace persistence — all inside the timed window."""
+                     out_path: Path, deadline: float) -> float:
+    """One COMPLETE evaluation pass (348_s #2; 350_s): generation
+    under the FROZEN EXECUTED seed realization, parse/score
+    against the locked surface, telemetry, and SEALING INSIDE the
+    timed window — the whole pass wrapped in `isolated_rng` so
+    training RNG is never perturbed; the deadline checked at
+    every observation."""
     import time as _time
 
     import torch
@@ -689,19 +781,22 @@ def _timed_eval_pass(trainer, observations, loaded, seeds,
         parse_routing_action,
     )
     from tasks.conductor.policy import policy_messages
-    from tasks.conductor.profiles import DEFAULT_PROFILE
     from tasks.conductor.stage1 import prompt_fewshot
+
+    from .checkpoint import isolated_rng
     started = _time.monotonic()
     model = trainer.model
     tokenizer = trainer.processing_class
     surface = loaded["surface"]
     system = prompt_fewshot()
-    rows = []
     telemetry = {"groups": 0, "completions": 0, "valid": 0}
     was_training = model.training
     model.eval()
-    with torch.no_grad():
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with isolated_rng(), torch.no_grad(), \
+            open(out_path, "w", encoding="utf-8") as trace:
         for obs in observations:
+            _check_deadline(deadline, "evaluation observation")
             oid = obs["observation_id"]
             latent = obs["latent"]
             steps = [{"subtask": s["subtask"],
@@ -732,61 +827,108 @@ def _timed_eval_pass(trainer, observations, loaded, seeds,
                     parsed = parse_routing_action(
                         text, len(positions))
                 except ActionSchemaError:
-                    parsed = None
-                if parsed is None:
                     rewards.append(0.0)
                     continue
                 semantic = tuple(positional_to_semantic(
                     parsed, positions))
                 payoff = surface.get((oid, semantic))
                 if payoff is None:
-                    rewards.append(0.0)
-                    continue
+                    raise InfrastructureError(
+                        f"({oid}, {semantic}): no surface row — "
+                        "an infrastructure abort, never a reward")
                 telemetry["valid"] += 1
                 rewards.append(float(payoff))
             telemetry["groups"] += 1
             telemetry["completions"] += len(completions)
-            rows.append({"observation_id": oid,
-                         "completions": completions,
-                         "rewards": rewards})
+            trace.write(json.dumps(
+                {"observation_id": oid,
+                 "completions": completions,
+                 "rewards": rewards}, sort_keys=True) + "\n")
+        # SEALED INSIDE the phase (350_s #2)
+    _seal_file(out_path)
     if was_training:
         model.train()
-    # SEALED: persisted inside the timed window, never surfaced
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        "\n".join(json.dumps(row, sort_keys=True)
-                  for row in rows) + "\n", encoding="utf-8")
-    del rows  # discarded unread
     return _time.monotonic() - started
 
 
-def _save_checkpoint_bundle(trainer, out_dir: Path) -> float:
-    """P4: one COMPLETE RESUMABLE bundle — adapter + optimizer +
-    scheduler + RNG states (the resume-validation bundle shape),
-    timed."""
-    import random
+def _save_and_verify_checkpoint_bundle(trainer, accountant,
+                                       identities, out_dir: Path
+                                       ) -> tuple[float, dict]:
+    """P4 (350_s #3): the PRODUCTION v1 checkpoint contract —
+    adapter safetensors + optimizer + scheduler + RNG + artifact
+    hashes + the GroupAccountant-authorized checkpoint record —
+    then RESTORE-VERIFIED (hashes re-derived and compared). The
+    priced quantity is the write+record wall; the returned proof
+    carries hashes only."""
     import time as _time
 
-    import numpy
     import torch
+    from safetensors.torch import save_file
+
+    from . import checkpoint as ckpt
     started = _time.monotonic()
     out_dir.mkdir(parents=True, exist_ok=True)
-    trainer.model.save_pretrained(str(out_dir / "adapter"))
-    torch.save(
-        {"optimizer": trainer.optimizer.state_dict(),
-         "lr_scheduler": trainer.lr_scheduler.state_dict(),
-         "torch_rng": torch.get_rng_state(),
-         "cuda_rng": (torch.cuda.get_rng_state_all()
-                      if torch.cuda.is_available() else None),
-         "numpy_rng": numpy.random.get_state(),
-         "python_rng": random.getstate()},
-        out_dir / "training_state.pt")
-    return _time.monotonic() - started
+    counters = accountant.authorize_checkpoint()
+    save_file({k: v.detach().to("cpu").contiguous()
+               for k, v in trainer.model.state_dict().items()
+               if "lora" in k},
+              str(out_dir /
+                  ckpt.CHECKPOINT_BUNDLE_FILENAMES["adapter"]))
+    torch.save(trainer.optimizer.state_dict(),
+               out_dir / ckpt.CHECKPOINT_BUNDLE_FILENAMES[
+                   "optimizer"])
+    torch.save(trainer.lr_scheduler.state_dict(),
+               out_dir / ckpt.CHECKPOINT_BUNDLE_FILENAMES[
+                   "scheduler"])
+    rng_state = ckpt.capture_rng_state()
+    ckpt.persist_rng_state(out_dir, rng_state)
+    filenames = {name: ckpt.CHECKPOINT_BUNDLE_FILENAMES[name]
+                 for name in ("adapter", "optimizer",
+                              "scheduler", "rng")}
+    hashes = ckpt.hash_state_artifacts(out_dir, filenames)
+    record = ckpt.build_checkpoint_record(
+        identities=identities, counters=counters,
+        rng_state=rng_state, state_artifact_hashes=hashes,
+        sampler_position={
+            "next_global_group_index": counters["consumed_groups"],
+            "hf_global_step": int(trainer.state.global_step),
+            "hf_checkpoint_dir": None,
+            "note": ("the smoke prices the bundle operation; "
+                     "save_strategy='no' — no HF checkpoint dir")},
+        run_id="beta-smoke-v1", segment_id="smoke-epoch-1",
+        parent_checkpoint=None)
+    (out_dir / "checkpoint_record.json").write_text(
+        json.dumps(record, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    # restore verification: the artifact hashes must re-derive
+    reverified = ckpt.hash_state_artifacts(out_dir, filenames)
+    if reverified != hashes:
+        raise InfrastructureError(
+            "checkpoint bundle failed restore verification "
+            "(350_s #3)")
+    elapsed = _time.monotonic() - started
+    proof = {"checkpoint_sha256": record["checkpoint_sha256"],
+             "state_artifact_sha256":
+                 record["state_artifact_sha256"],
+             "counters": counters}
+    return elapsed, proof
+
+
+def _discard_trained_state(run_dir: Path) -> None:
+    """350_s #3: the signed discard rule — the trained state
+    (bundle + any trainer output) is DELETED before the
+    successful closeout; only proof hashes and timing remain."""
+    import shutil
+    for name in ("checkpoint_bundle",):
+        target = run_dir / name
+        if target.exists():
+            shutil.rmtree(target)
+    for hf_dir in run_dir.glob("checkpoint-*"):
+        shutil.rmtree(hf_dir)
 
 
 def _adapter_snapshot(trainer) -> dict[str, Any]:
-    import hashlib as _hashlib
-    digest = _hashlib.sha256()
+    digest = hashlib.sha256()
     for name, parameter in sorted(
             trainer.model.named_parameters()):
         if "lora" in name:
@@ -798,10 +940,9 @@ def _adapter_snapshot(trainer) -> dict[str, Any]:
 
 def _build_smoke_trainer(rows, reward, run_dir: Path,
                          extra_callbacks=()):
-    """The canonical-profile construction: the C2-validated
-    literals with the SIGNED training deltas (lr 1e-5, beta 1e-3,
-    10-update constant_with_warmup) and the smoke seed; report_to
-    none; logging captured by the caller into sealed files."""
+    """The canonical-profile construction (the C2-validated
+    literals + the signed training deltas), the smoke seed,
+    console reporters STRIPPED (350_s #4)."""
     import random
 
     import numpy
@@ -862,9 +1003,108 @@ def _build_smoke_trainer(rows, reward, run_dir: Path,
     for name, parameter in trainer.model.named_parameters():
         if "lora" in name:
             parameter.data = parameter.data.to(torch.float32)
+    _strip_console_callbacks(trainer)
     for callback in extra_callbacks:
         trainer.add_callback(callback)
     return trainer
+
+
+def verify_smoke_run(run_dir: str | Path, *,
+                     ledger_path, expected_head_sha256: str | None
+                     ) -> dict[str, Any]:
+    """The smoke terminal verifier (350_s #5), run BEFORE the
+    success closeout and post-hoc: chain-authenticated launch;
+    exact top-level inventory; the persisted record revalidated
+    (closed measurements + the projection RECOMPUTED); the
+    environment cross-bindings; the sealed files present as .gz
+    ONLY; the trained state ABSENT."""
+    from .ledger import verify_ledger_head
+    from .support_run import _sha_file
+    run_dir = Path(run_dir)
+    chain = verify_ledger_head(expected_head_sha256, ledger_path)
+    manifest = validate_smoke_launch_manifest(json.loads(
+        (run_dir / "prelaunch" / "smoke_launch.json")
+        .read_text("utf-8")), recompute=False)
+    launches = [e for e in chain
+                if e["kind"] == "engineering_smoke"
+                and e["freeze"].get("smoke_launch_sha256")
+                == manifest["manifest_sha256"]]
+    if len(launches) != 1:
+        raise InfrastructureError(
+            f"the verified chain holds {len(launches)} launches "
+            "binding this manifest — exactly one is required")
+    launch = launches[0]
+    frozen_env = json.loads(
+        (run_dir / "prelaunch" / "env_manifest.json")
+        .read_text("utf-8"))
+    if dev_support.validate_env_self_hash(frozen_env) != \
+            manifest["environment_manifest_sha256"]:
+        raise InfrastructureError(
+            "the prelaunch environment does not bind to the "
+            "manifest (350_s #5)")
+    execute_env = json.loads(
+        (run_dir / "execute_env_manifest.json").read_text("utf-8"))
+    dev_support.validate_env_self_hash(execute_env)
+    from .support_run import attest_environment
+    attest_environment(frozen_env, execute_env)
+    record = json.loads(
+        (run_dir / "smoke_record.json").read_text("utf-8"))
+    expected_record_keys = {
+        "run", "smoke_launch_sha256", "smoke_freeze_sha256",
+        "launch_entry_sha256", "measurements", "projection",
+        "checkpoint_proof", "sealed_sha256", "development_only"}
+    if set(record) != expected_record_keys:
+        raise InfrastructureError(
+            "smoke record keys do not match the closed schema")
+    if record["smoke_launch_sha256"] != \
+            manifest["manifest_sha256"] \
+            or record["smoke_freeze_sha256"] != \
+            SMOKE_FREEZE_SHA256 \
+            or record["launch_entry_sha256"] != \
+            launch["entry_sha256"] \
+            or record["development_only"] is not True:
+        raise InfrastructureError(
+            "smoke record does not bind the authenticated launch "
+            "and freeze")
+    measurements = validate_measurements(record["measurements"])
+    recomputed = worked_launch_projection(measurements)
+    if recomputed != record["projection"]:
+        raise InfrastructureError(
+            "the persisted projection does not recompute from the "
+            "validated measurements (350_s #5)")
+    sealed = run_dir / "sealed"
+    raw_left = list(sealed.glob("*.jsonl")) + \
+        list(sealed.glob("*.json"))
+    raw_left = [p for p in raw_left if not p.name.endswith(".gz")]
+    if raw_left:
+        raise InfrastructureError(
+            f"unsealed raw files remain: "
+            f"{[p.name for p in raw_left][:3]}")
+    for name, expected_sha in record["sealed_sha256"].items():
+        actual = _sha_file(sealed / name)
+        if actual != expected_sha:
+            raise InfrastructureError(
+                f"sealed file {name} does not match the recorded "
+                "hash")
+    # 350_s #3: the trained state must be GONE
+    if (run_dir / "checkpoint_bundle").exists() \
+            or list(run_dir.glob("checkpoint-*")):
+        raise InfrastructureError(
+            "the trained state was not discarded (350_s #3)")
+    closeouts = [e for e in chain if e["kind"] == "closeout"
+                 and e.get("closes_entry_sha256")
+                 == launch["entry_sha256"]]
+    if closeouts and closeouts[0].get(
+            "terminal_status") == "complete":
+        freeze = closeouts[0]["freeze"]
+        from .support_run import _hash_directory
+        if freeze.get("terminal_artifact_hashes") != \
+                _hash_directory(run_dir):
+            raise InfrastructureError(
+                "terminal evidence does not match the closeout "
+                "inventory")
+    return {"verdict": "PASS",
+            "launch_entry_sha256": launch["entry_sha256"]}
 
 
 def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
@@ -872,12 +1112,13 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
                       expected_head_sha256: str | None,
                       question: str, motivating_evidence: str,
                       ledger_path=None) -> dict[str, Any]:
-    """Phase 2 (GPU): the disjoint-phase instrumented run. Full
-    validation before the irreversible admission (engineering_smoke
-    on EXACTLY the frozen lineage parent for a first attempt;
-    aborted identical-design retries per 330_f §5); the sealed
-    outputs and the closed timing record; the closeout binds every
-    terminal byte."""
+    """Phase 2 (GPU): the six disjoint instrumented phases with the
+    350_s repairs — the authenticated reward boundary and full
+    training trace; in-phase eval sealing under isolated_rng; the
+    production v1 checkpoint contract, verified then DISCARDED;
+    console reporters stripped; the deadline enforced everywhere;
+    manifest-bound admission; the terminal verifier before the
+    success closeout."""
     import time as _time
 
     from .ledger import (
@@ -890,12 +1131,11 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
         _default_environment,
         _hash_directory,
         _persist_verified,
+        _sha_file,
         attest_environment,
     )
     config = _validated_config()
     ledger_path = ledger_path or LEDGER_PATH
-    # lineage: first launch only from the frozen parent; retries
-    # only after aborted-closed identical-design attempts
     chain = verify_ledger_head(expected_head_sha256, ledger_path)
     prior = [e for e in chain if e["kind"] == "engineering_smoke"
              and e["freeze"].get("smoke_freeze_sha256")
@@ -929,11 +1169,18 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
         raise InfrastructureError(
             "the execution directory is not the root the manifest "
             "binds")
+    # 350_s #5: the persisted environment binds to the manifest
+    if dev_support.validate_environment_manifest_binding(
+            frozen_env) != manifest["environment_manifest_sha256"]:
+        raise InfrastructureError(
+            "persisted environment manifest is not the one the "
+            "manifest binds (350_s #5)")
     live_env = _default_environment()
     dev_support.validate_environment_manifest_binding(live_env)
     attest_environment(frozen_env, live_env)
     outputs = [run_dir / "sealed", run_dir / "smoke_record.json",
-               run_dir / "execute_env_manifest.json"]
+               run_dir / "execute_env_manifest.json",
+               run_dir / "checkpoint_bundle"]
     for path in outputs:
         if path.exists():
             raise InfrastructureError(
@@ -954,8 +1201,10 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
             manifest["budget_gpu_hours"],
         "outcome_informed": False,
     }
+    # 350_s #5: manifest-bound authoritative admission
     admitted = admit_and_append_launch(entry, expected_head_sha256,
-                                       ledger_path)
+                                       ledger_path,
+                                       launch_manifest=manifest)
     head = admitted["entry_sha256"]
     started = _time.monotonic()
     deadline = started + manifest["budget_gpu_hours"] * 3600.0
@@ -963,16 +1212,18 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
     try:
         import torch
 
+        from . import checkpoint as ckpt
         from .p0_contract import load_p0_science_contract
         from .p0_replay import restore_extension_surface_if_absent
         from .p0_schedule import build_trainer_rows
+        from .resume_validation import make_validation_reward
         from .unit_c2_sample import UNIT_C2_CONFIG
         _persist_verified(run_dir / "execute_env_manifest.json",
                           live_env)
         sealed = run_dir / "sealed"
         sealed.mkdir(parents=True)
 
-        # --- P1 startup: everything loaded, nothing sampled ------
+        # --- P1 startup ------------------------------------------
         contract = load_p0_science_contract()
         rows = build_trainer_rows(contract, 1)
         loaded = dev_support.load_dev_surface(
@@ -980,36 +1231,22 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
             expected_lock_sha256=UNIT_C2_CONFIG[
                 "extension_surface_lock_sha256"])
         observations = timing_cohort_observations()
-        seeds = {oid: seed for oid, slot, seed
-                 in timing_seed_schedule() if slot == 0}
+        seeds = dict(executed_seed_realization())
         instrumentation = _EpochInstrumentation()
-        surface = loaded["surface"]
+        accountant = ckpt.GroupAccountant()
+        # 350_s #1: the ESTABLISHED authenticated reward boundary
+        # (message-list normalization, group alignment, full
+        # training trace, missing-surface = infrastructure error)
+        training_trace = sealed / "training_trace.jsonl"
+        base_reward = make_validation_reward(
+            loaded["surface"], accountant, training_trace,
+            group_size=8)
 
-        def reward(completions=None, prompts=None, **kwargs):
+        def reward(completions=None, **kwargs):
+            _check_deadline(deadline, "training reward entry")
             instrumentation.on_reward_entry()
-            oids = kwargs["observation_id"]
-            positions_json = kwargs["positions"]
-            out = []
-            from tasks.conductor.grpo_task import (
-                positional_to_semantic,
-            )
-            from tasks.conductor.parser import (
-                ActionSchemaError,
-                parse_routing_action,
-            )
-            for text, oid, positions_s in zip(
-                    completions, oids, positions_json):
-                positions = json.loads(positions_s)
-                try:
-                    parsed = parse_routing_action(
-                        text, len(positions))
-                except ActionSchemaError:
-                    out.append(0.0)
-                    continue
-                semantic = tuple(positional_to_semantic(
-                    parsed, positions))
-                out.append(float(surface.get((oid, semantic),
-                                             0.0)))
+            out = base_reward(completions, **kwargs)
+            accountant.record_update(1)
             return out
 
         from transformers import TrainerCallback
@@ -1026,47 +1263,75 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
             extra_callbacks=(_UpdateCallback(),))
         torch.cuda.reset_peak_memory_stats()
         baseline = _adapter_snapshot(trainer)
+        identities = {
+            "routing_source_sha256":
+                manifest["routing_source_sha256"],
+            "environment_manifest_sha256":
+                manifest["environment_manifest_sha256"],
+            "config_sha256": SMOKE_CONFIG_SHA256,
+            "prompt_sha256":
+                load_smoke_freeze()["prompt_sha256"],
+            "training_cohort_sha256": content_sha256(
+                [row["observation_id"] for row in rows]),
+            "renderer_schedule_sha256": content_sha256(
+                [row["observation_id"].split(":")[4]
+                 for row in rows]),
+            "surface_manifest_sha256": loaded["lock"][
+                "manifest_sha256"],
+            "worker_pool_fingerprint": loaded["lock"][
+                "worker_pool_fingerprint"],
+            "cache_identity": loaded["lock"]["cache_identity"],
+            "seed": str(config["training"]["seed"]),
+        }
         startup_seconds = _time.monotonic() - started
+        _check_deadline(deadline, "P1/P2 boundary")
 
-        # --- P2 checkpoint-zero eval -----------------------------
+        # --- P2 checkpoint-zero eval (isolated_rng, sealed) ------
         ckpt0_eval = _timed_eval_pass(
             trainer, observations, loaded, seeds,
-            sealed / "eval_ckpt0.jsonl", "ckpt0")
+            sealed / "eval_ckpt0.jsonl", deadline)
+        _check_deadline(deadline, "P2/P3 boundary")
 
         # --- P3 the epoch ----------------------------------------
         instrumentation.start_epoch()
         trainer.train()
-        epoch_end = _time.monotonic()
-        whole_epoch = epoch_end - instrumentation.epoch_start
+        whole_epoch = _time.monotonic() - instrumentation.epoch_start
+        _check_deadline(deadline, "P3/P4 boundary")
 
-        # --- P4 the resumable checkpoint bundle ------------------
-        bundle_seconds = _save_checkpoint_bundle(
-            trainer, run_dir / "checkpoint_bundle")
+        # --- P4 the production v1 bundle, verified ---------------
+        bundle_seconds, checkpoint_proof = \
+            _save_and_verify_checkpoint_bundle(
+                trainer, accountant, identities,
+                run_dir / "checkpoint_bundle")
+        _check_deadline(deadline, "P4/P5 boundary")
 
         # --- P5 the post-epoch eval ------------------------------
         post_eval = _timed_eval_pass(
             trainer, observations, loaded, seeds,
-            sealed / "eval_post.jsonl", "post")
+            sealed / "eval_post.jsonl", deadline)
+        _check_deadline(deadline, "P5/P6 boundary")
 
-        # --- P6 trace seal ---------------------------------------
+        # --- P6 the TRAINING-trace seal, timed separately --------
         import gzip
         seal_start = _time.monotonic()
-        trace_files = sorted(sealed.glob("*.jsonl"))
+        trace_bytes = training_trace.read_bytes()
+        volume = len(trace_bytes)
+        trace_sha = hashlib.sha256(trace_bytes).hexdigest()
+        gz_sha = _seal_file(training_trace)
+        with gzip.open(str(training_trace) + ".gz", "rb") as handle:
+            if hashlib.sha256(handle.read()).hexdigest() != \
+                    trace_sha:
+                raise InfrastructureError(
+                    "training trace failed round-trip "
+                    "verification (350_s #2)")
+        seal_seconds = _time.monotonic() - seal_start
+        # trainer logs sealed OUTSIDE the scaled timer
         log_history = trainer.state.log_history
-        (sealed / "trainer_log_history.json").write_text(
+        log_path = sealed / "trainer_log_history.json"
+        log_path.write_text(
             json.dumps(log_history, sort_keys=True),
             encoding="utf-8")
-        volume = 0
-        for file in trace_files:
-            data = file.read_bytes()
-            volume += len(data)
-            with open(str(file) + ".gz", "wb") as raw:
-                with gzip.GzipFile(fileobj=raw, mode="wb",
-                                   filename="", mtime=0,
-                                   compresslevel=9) as handle:
-                    handle.write(data)
-            file.unlink()
-        seal_seconds = _time.monotonic() - seal_start
+        log_gz_sha = _seal_file(log_path)
 
         changed = _adapter_snapshot(trainer)
         kl_events = sum(1 for entry_ in log_history
@@ -1092,6 +1357,14 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
                 != baseline["lora_state_sha256"],
         }
         projection = worked_launch_projection(measurements)
+        sealed_hashes = {
+            "training_trace.jsonl.gz": gz_sha,
+            "eval_ckpt0.jsonl.gz":
+                _sha_file(sealed / "eval_ckpt0.jsonl.gz"),
+            "eval_post.jsonl.gz":
+                _sha_file(sealed / "eval_post.jsonl.gz"),
+            "trainer_log_history.json.gz": log_gz_sha,
+        }
         record = {
             "run": config["tranche"],
             "smoke_launch_sha256": manifest["manifest_sha256"],
@@ -1099,16 +1372,18 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
             "launch_entry_sha256": head,
             "measurements": validate_measurements(measurements),
             "projection": projection,
+            "checkpoint_proof": checkpoint_proof,
+            "sealed_sha256": sealed_hashes,
             "development_only": True,
         }
         _persist_verified(run_dir / "smoke_record.json", record)
-        # the trained state is DISCARDED (the bundle stays as
-        # timed evidence bytes; nothing loads it into P0)
+        # 350_s #3: the trained state is DISCARDED before the
+        # successful closeout; the terminal verifier then runs
         del trainer
-        if _time.monotonic() > deadline:
-            raise InfrastructureError(
-                "the smoke finished past its budget deadline — "
-                "the run aborts")
+        _discard_trained_state(run_dir)
+        verify_smoke_run(run_dir, ledger_path=ledger_path,
+                         expected_head_sha256=head)
+        _check_deadline(deadline, "terminal verification")
     except BaseException as error:
         measured = round((_time.monotonic() - started) / 3600.0, 4)
         append_ledger_entry(
@@ -1131,7 +1406,6 @@ def execute_smoke_run(*, run_dir: str | Path = SMOKE_RUN_ROOT,
         raise
 
     measured = round((_time.monotonic() - started) / 3600.0, 4)
-    from .support_run import _sha_file
     closeout = append_ledger_entry(
         {"kind": "closeout", "question": question,
          "motivating_evidence": "measured beta-smoke cost",

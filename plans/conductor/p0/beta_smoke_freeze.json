@@ -32,9 +32,11 @@
     6123
    ]
   },
+  "deadline_enforcement": "the budget deadline is checked at EVERY training reward entry, at every evaluation observation, and at every phase boundary \u2014 never only at the end",
   "development_only": true,
   "disclosure_controls": {
    "completion_printing": "disabled \u2014 no completion text is ever written to stdout/stderr",
+   "console_callbacks": "PrinterCallback AND ProgressCallback are REMOVED from the trainer (350_s: disable_tqdm alone installs PrinterCallback, which prints reward/KL/loss) \u2014 log history is captured internally and sealed only",
    "report_to": "none",
    "semantic_traces": "persisted + hashed (sealed); uninspected until after the P0 freeze",
    "surfaced_output": "ONLY the closed timing record and the derived cap-input projection",
@@ -49,11 +51,11 @@
   },
   "phases": {
    "P1_startup": "process start to READY: model + pool + strict-loader dataset + tokenizer loaded; ends BEFORE the first evaluation or rollout begins",
-   "P2_checkpoint_zero_eval": "one COMPLETE evaluation pass: generation + parse/score against the locked surface + telemetry + sealed trace persistence",
+   "P2_checkpoint_zero_eval": "one COMPLETE evaluation pass: generation + parse/score against the locked surface + telemetry + SEALING INSIDE THE PHASE (deterministic gzip within the timed window; 350_s #2); runs inside isolated_rng",
    "P3_epoch": "the 157 rollout+update groups; first rollout start to the 157th optimizer-update end; NO evaluation time inside",
-   "P4_checkpoint_bundle": "one COMPLETE RESUMABLE checkpoint bundle write: adapter + optimizer state + scheduler state + RNG states (the resume-validation bundle shape), wall",
-   "P5_post_epoch_eval": "the second complete evaluation pass, identical path to P2",
-   "P6_trace_seal": "training + evaluation trace flush + verification + deterministic-gzip archival, wall; the per-epoch trace volume is recorded",
+   "P4_checkpoint_bundle": "the PRODUCTION v1 checkpoint contract (350_s #3): adapter safetensors + optimizer + scheduler + RNG state + artifact hashes + the checkpoint record (GroupAccountant-authorized counters, sampler position) \u2014 then RESTORE-VERIFIED (artifact hashes re-derived and compared); the write+record time is the priced quantity; proof hashes and timing are retained and the trained state is DELETED before the successful closeout",
+   "P5_post_epoch_eval": "the second complete evaluation pass, identical path to P2 (sealed inside the phase; isolated_rng)",
+   "P6_trace_seal": "the TRAINING trace (the 157-group full trace written by the authenticated reward boundary): flush + deterministic-gzip archive + hash + ROUND-TRIP verification, timed SEPARATELY \u2014 this is the x39-scaled quantity (350_s #2); trainer-log sealing follows OUTSIDE that timer; per_epoch_trace_bytes = the training trace volume",
    "per_group_rollout_definition": "group i's rollout wall = the reward-function entry time for group i minus the previous phase boundary (the (i-1)th optimizer-update end; the P3 start for i=1) \u2014 generation + prompt processing, measured inside P3; the WORST (maximum) feeds the finalization reserve"
   },
   "predictions": {
@@ -118,7 +120,7 @@
     "goal_first",
     "bound_var"
    ],
-   "sampling": "the frozen canonical sampling identity; per-OBSERVATION seeding with the slot-0 CRN seed, one 8-sequence batch (the operational realization of the per-slot schedule is bound at Unit L's P0ExecutionIdentity; the smoke measures the identical cost shape); outputs discarded unread",
+   "sampling": "the frozen canonical sampling identity; the EXECUTED seed realization is itself frozen (350_s #4): per-OBSERVATION seeding with the slot-0 CRN seed, one 8-sequence batch \u2014 the 90-entry executed schedule is pinned alongside the 720-entry identity schedule; every evaluation pass runs inside the isolated_rng boundary so training RNG is NEVER perturbed; outputs discarded unread",
    "source": "the LOCKED extension surface \u2014 surfaces already materialized; no new exposure; the locked routing_dev_val cohort receives NO policy output before checkpoint zero",
    "visibility": "private"
   },
@@ -136,10 +138,10 @@
   },
   "tranche": "routing-dev-beta-smoke-v1"
  },
- "config_sha256": "70e4be03cc23b382404def3e3813c7696b4b5cfc34e9d6fa8f2b150470f3a110",
+ "config_sha256": "6e775b9079658799e8759a4d8d4bea969dd8bdd8c100016915c8ef6771a9cf41",
  "development_only": true,
  "extension_surface_lock_sha256": "ccb1c3e2db2422a82919292144c0bdecc21d2cc89cb7a3a2c69bec17a2ce6d1b",
- "freeze_sha256": "bd499f0376924cc2278df6c11f5a715ee98a6859a1dee4663cbd428fb08fb164",
+ "freeze_sha256": "d2d87971765d40da9d2c8aebc29e014e2ca24e82f46a7afbf6c9b32231f75eb7",
  "kind": "p0_beta_smoke_freeze",
  "motivation": "330_f-signed precursors plan Unit T; 348_s",
  "observations_total": 90,
@@ -241,5 +243,6 @@
   "math_code:routing_dev:00004:11a0fe95:goal_first:private",
   "math_code:routing_dev:00004:11a0fe95:bound_var:private"
  ],
+ "timing_executed_seeds_sha256": "83faa1843fc6c3350cb17ec1bfc69c3a2774f7fc60b65d0ef8ddbd38c84c79d0",
  "timing_seed_schedule_sha256": "cbfe528435882c0728eb79235e9303d85f403de2b7cf1a96cdae99328eb9992b"
 }

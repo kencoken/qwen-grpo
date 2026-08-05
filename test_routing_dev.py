@@ -6834,6 +6834,64 @@ def test_p0_smoke_design(monkeypatch):
     with pytest.raises(InfrastructureError, match="adapter"):
         p0_smoke.validate_measurements(
             {**measurements, "adapter_state_changed": False})
+    # 350_s #4: the EXECUTED seed realization is frozen
+    realization = p0_smoke.executed_seed_realization()
+    assert len(realization) == 90
+    assert realization[0][1] == p0_val.seed_for_completion(
+        realization[0][0], 0, domain="timing_smoke",
+        base_seed=20260806)
+    monkeypatch.setattr(p0_smoke, "TIMING_EXECUTED_SEEDS_SHA256",
+                        "0" * 64)
+    with pytest.raises(InfrastructureError, match="frozen pin"):
+        p0_smoke.executed_seed_realization()
+    monkeypatch.undo()
+    # 350_s #1: the ESTABLISHED reward boundary normalizes
+    # TRL message-list completions (the reproduction shape)
+    from tasks.routing import checkpoint as ckpt_module
+    accountant = ckpt_module.GroupAccountant()
+    surface = {("obs:a", (2,)): 1.0}
+    trace = tmp_path_maker = None
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        trace_path = Path(tmp) / "trace.jsonl"
+        base_reward = resume_validation.make_validation_reward(
+            surface, accountant, trace_path, group_size=8)
+        completions = [[{"role": "assistant",
+                         "content": "{\"worker_ids\": [2]}"}]] * 8
+        rewards = base_reward(
+            completions, observation_id=["obs:a"] * 8,
+            positions=[json.dumps(["p1"])] * 8,
+            num_steps=[1] * 8)
+        assert rewards == [1.0] * 8
+        assert trace_path.exists()
+    # 350_s #4: console reporters are stripped
+    class _FakeHandler:
+        def __init__(self):
+            from transformers.trainer_callback import (
+                PrinterCallback,
+                ProgressCallback,
+            )
+            self.callbacks = [PrinterCallback(),
+                              ProgressCallback()]
+
+    class _FakeTrainer:
+        def __init__(self):
+            self.callback_handler = _FakeHandler()
+
+        def remove_callback(self, kind):
+            self.callback_handler.callbacks = [
+                c for c in self.callback_handler.callbacks
+                if not isinstance(c, kind)]
+
+    fake = _FakeTrainer()
+    p0_smoke._strip_console_callbacks(fake)
+    assert fake.callback_handler.callbacks == []
+    # 350_s #5: the deadline helper bites
+    with pytest.raises(InfrastructureError, match="deadline "
+                       "exceeded"):
+        p0_smoke._check_deadline(0.0, "test point")
+    # 350_s #5: the manifest-bound smoke admission is authoritative
+    # (a forged budget refuses at the ledger)
     # the launch manifest rederives the frozen launch
     manifest = p0_smoke.build_smoke_launch_manifest(
         environment_manifest=_env_manifest(),

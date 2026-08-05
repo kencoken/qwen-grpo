@@ -674,6 +674,28 @@ def admit_and_append_launch(entry: Mapping[str, Any],
                 raise InfrastructureError(
                     "an aborted-val retry must preserve the "
                     "scientific design (334_s P1-3)")
+    if launch_kind == "engineering_smoke" \
+            and launch_manifest is not None:
+        # 350_s #5: a manifest-bound smoke admission is
+        # AUTHORITATIVE — the entry must name the exact manifest,
+        # carry its budget, and bind the signed smoke freeze
+        named = entry["freeze"].get("smoke_launch_sha256")
+        if named != launch_manifest.get("manifest_sha256") \
+                or not named:
+            raise InfrastructureError(
+                "the smoke entry's freeze must name the exact "
+                "smoke-launch manifest hash (350_s #5)")
+        if launch_max != launch_manifest.get("budget_gpu_hours"):
+            raise InfrastructureError(
+                f"the admitted budget {launch_max} differs from "
+                f"the manifest budget "
+                f"{launch_manifest.get('budget_gpu_hours')}")
+        frozen = entry["freeze"].get("smoke_freeze_sha256")
+        if not frozen or frozen != \
+                launch_manifest.get("smoke_freeze_sha256"):
+            raise InfrastructureError(
+                "the smoke entry's freeze must carry the signed "
+                "smoke-freeze hash the manifest binds (350_s #5)")
     state = envelope_state(entries, CYCLE_ENVELOPE_GPU_HOURS)
     remaining = state["remaining_gpu_hours"]
     reserve = state["reserve"]
