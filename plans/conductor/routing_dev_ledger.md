@@ -697,3 +697,57 @@ chains the previous entry's hash. Never edit a recorded entry.
  }
 }
 ```
+
+## entry 21 — engineering_smoke
+
+```json
+{
+ "budget_allocated_gpu_hours": 0.75,
+ "entry_sha256": "4738b32b3e1cdd079235062f1587d4326adb030daf80c44eb0484aef470c0d90",
+ "freeze": {
+  "smoke_config_sha256": "6e775b9079658799e8759a4d8d4bea969dd8bdd8c100016915c8ef6771a9cf41",
+  "smoke_freeze_sha256": "d2d87971765d40da9d2c8aebc29e014e2ca24e82f46a7afbf6c9b32231f75eb7",
+  "smoke_launch_sha256": "6c717d47ef7210ae927378591ea49368b81d86a11968946be2f33de58482b6e5"
+ },
+ "kind": "engineering_smoke",
+ "motivating_evidence": "356_f rev2 prelaunch sign-off: manifest 6c717d47 on head 6fea9e3b, budget 0.75 GPU-h",
+ "outcome_informed": false,
+ "parent": "6fea9e3be1f2043d38c297e50bcce36b9d225ce741d61de3ed3a56054e8dba51",
+ "previous_entry_sha256": "6fea9e3be1f2043d38c297e50bcce36b9d225ce741d61de3ed3a56054e8dba51",
+ "question": "Unit T beta smoke: one-epoch timing + finalization reserve under the frozen P0 shape (timing-only, development-only)"
+}
+```
+
+## entry 22 — closeout
+
+```json
+{
+ "budget_allocated_gpu_hours": 0.0,
+ "budget_consumed_gpu_hours": 0.3117,
+ "closes_entry_sha256": "4738b32b3e1cdd079235062f1587d4326adb030daf80c44eb0484aef470c0d90",
+ "entry_sha256": "df4bf7ad7c649a5b550b58673368811854c42493125f86a68e6abbf5ce91da56",
+ "freeze": {
+  "execute_env_file_sha256": "891b22bb4c06c67818caa3bce9742a5d7dd15168c9cbb25b674fbf413a5f4d55",
+  "smoke_record_file_sha256": "a9d6f55b6300b97df03135beed4b82cb82ff5d555f7d1eee48688cf88a743b80",
+  "terminal_artifact_hashes": {
+   "execute_env_manifest.json": "891b22bb4c06c67818caa3bce9742a5d7dd15168c9cbb25b674fbf413a5f4d55",
+   "prelaunch/env_manifest.json": "92c023a503bcec11ca6f13468b8fc68c63b555c402051a61b005aaa5d666a7a0",
+   "prelaunch/smoke_freeze.json": "24ed45bb6d2cc93560736f4d1b27dba47e43606fce924b62f789b1c5720dd633",
+   "prelaunch/smoke_launch.json": "2cccc4b1bf0bcda760659711ff8c212ef0d24fae79166c058dca37d39429f62c",
+   "sealed/eval_ckpt0.jsonl.gz": "63bae137230a257a7fe7a3fafff897dbfe7b383a7824e125f72140ffb321c5ca",
+   "sealed/eval_post.jsonl.gz": "9a16f30849524e255ac697ff40df4225b7496661031431750d02a89bd54b2a44",
+   "sealed/trainer_log_history.json.gz": "cfd2a72362ba821ab4689dbe09a5d525865902ea548680ef373b765d5f3c5ed5",
+   "sealed/training_trace.jsonl.gz": "e980225f3ad8879beb72a6dbce486858facf45f45b7447a7e63d6b248682fe0e",
+   "smoke_record.json": "a9d6f55b6300b97df03135beed4b82cb82ff5d555f7d1eee48688cf88a743b80"
+  }
+ },
+ "kind": "closeout",
+ "motivating_evidence": "measured beta-smoke cost",
+ "outcome_informed": false,
+ "outcome_pointer": "runs/routing-dev/beta-smoke-v1/smoke_record.json",
+ "parent": "4738b32b3e1cdd079235062f1587d4326adb030daf80c44eb0484aef470c0d90",
+ "previous_entry_sha256": "4738b32b3e1cdd079235062f1587d4326adb030daf80c44eb0484aef470c0d90",
+ "question": "Unit T beta smoke: one-epoch timing + finalization reserve under the frozen P0 shape (timing-only, development-only)",
+ "terminal_status": "complete"
+}
+```
