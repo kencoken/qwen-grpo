@@ -25,7 +25,7 @@ from tasks.conductor.types import (
     CELL_IDS, NAMESPACES, RENDERER_IDS, InfrastructureError,
 )
 from tasks.routing import charter, checkpoint, cohorts, dev_support
-from tasks.routing import extension_run, ledger, p0_c2_equivalence, p0_cap, p0_contract, p0_cycle, p0_estimands, p0_launch, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, p0_tables, p0_val, support_run, telemetry, unit_c2_sample, unit_c_sample
+from tasks.routing import extension_run, ledger, p0_c2_equivalence, p0_cap, p0_contract, p0_cycle, p0_estimands, p0_launch, p0_smoke, p0_mixture, p0_mixture_v2, p0_replay, p0_schedule, p0_schema, p0_tables, p0_val, support_run, telemetry, unit_c2_sample, unit_c_sample
 
 from test_conductor_executor import perfect_worker
 from test_conductor_pool_runtime import FakeFourPool, profile_with
@@ -6722,3 +6722,102 @@ def test_p0_r_cycle_final_reserve(tmp_path, monkeypatch):
     # the REAL ledger is untouched by the rehearsal (its head is
     # the real appended final-reserve entry)
     assert ledger.ledger_head() == real_final[0]["entry_sha256"]
+
+
+# --- precursors Unit T: the beta timing smoke (347_f) --------------------------
+
+def test_p0_smoke_design(monkeypatch):
+    """Unit T CPU boundaries: the frozen config, the shape-matched
+    exposed timing cohort, seed distinctness, the closed
+    measurement schema, the deterministic cap-input mapping, and
+    the non-binding worked projection."""
+    monkeypatch.setitem(p0_val.VAL_CONFIG["lineage"],
+                        "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
+    monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
+                        PRISTINE_VAL_CONFIG_SHA256)
+    config = p0_smoke.SMOKE_CONFIG
+    assert charter.content_sha256(config) == \
+        p0_smoke.SMOKE_CONFIG_SHA256
+    # the frozen cadence in BOTH unit systems
+    assert p0_smoke.CADENCE_EPOCHS == (0, 4, 8, 12, 16, 20, 24,
+                                       28, 32, 36, 39)
+    assert p0_smoke.CADENCE_UPDATES == (0, 628, 1256, 1884, 2512,
+                                        3140, 3768, 4396, 5024,
+                                        5652, 6123)
+    # seed pairwise-distinct across the registered domains
+    assert config["training"]["seed"] == 20260806
+    assert len({p0_val.VAL_CONFIG["evaluation"]["base_seed"],
+                p0_cycle.CYCLE_CONFIG["evaluation"]["base_seed"],
+                config["training"]["seed"]}) == 3
+    # the timing cohort: 90 shape-matched routing_dev observations,
+    # every one on the LOCKED extension surface (never
+    # routing_dev_val)
+    observations = p0_smoke.timing_cohort_observations()
+    assert len(observations) == 90
+    assert all(o["observation_id"].split(":")[1] == "routing_dev"
+               for o in observations)
+    freeze = p0_smoke.smoke_tranche_freeze()
+    assert freeze["observations_total"] == 90
+    assert freeze["config_sha256"] == p0_smoke.SMOKE_CONFIG_SHA256
+    monkeypatch.setitem(p0_smoke.SMOKE_CONFIG,
+                        "budget_gpu_hours", 0.7)
+    with pytest.raises(InfrastructureError, match="mutated"):
+        p0_smoke.timing_cohort_observations()
+    monkeypatch.undo()
+    # the deterministic mapping on synthetic measurements
+    measurements = {
+        "startup_seconds": 150.0,
+        "whole_epoch_seconds": 840.0,
+        "per_group_generation_seconds": [5.0] * 156 + [9.0],
+        "checkpoint_write_seconds": 4.0,
+        "checkpoint_zero_eval_seconds": 420.0,
+        "intermediate_eval_seconds": 415.0,
+        "final_eval_seconds": 425.0,
+        "trace_flush_archive_seconds": 3.0,
+        "per_epoch_trace_bytes": 15_000_000,
+        "peak_reserved_vram_mib": 9000,
+        "warmup_lr_trajectory":
+            [1e-05 * i / 10 for i in range(1, 11)] + [1e-05],
+    }
+    inputs = p0_smoke.derive_cap_inputs(measurements)
+    # overhead = ckpt0 + 9 x (eval + write) + startup
+    assert inputs["frozen_non_rollout_overhead_seconds"] == \
+        round(420.0 + 9 * (415.0 + 4.0) + 150.0, 1)
+    # reserve = worst batch + final eval + final write + scaled
+    # full-run trace: ceil(3.0 x 39 x 1.2) = 141
+    assert inputs["components"]["full_run_trace_seconds"] == 141.0
+    assert inputs["measured_finalization_reserve_seconds"] == \
+        round(9.0 + 425.0 + 4.0 + 141.0, 1)
+    assert inputs["cumulative_consumed_seconds"] == 0.0
+    assert inputs["measured_whole_epoch_seconds"] == 840.0
+    # the non-binding worked projection runs the REGISTERED cap
+    # arithmetic on the derived inputs
+    projection = p0_smoke.worked_launch_projection(measurements)
+    assert projection["binding"] is False
+    plan = projection["plan"]
+    assert plan["launch_epochs"] == min(plan["nominal_epochs"],
+                                        plan["capacity_epochs"])
+    # with these synthetic values: floor((36000 - 579 - 4341)
+    # / 840) = floor(37.0) = 37
+    assert plan["capacity_epochs"] == 37
+    assert plan["branch"] == "disclosed_under_target"
+    # the CLOSED measurement schema: an extra (semantic) field
+    # refuses; a missing field refuses; a non-monotone warmup
+    # trajectory refuses
+    with pytest.raises(InfrastructureError, match="closed field"):
+        p0_smoke.validate_measurements(
+            {**measurements, "mean_reward": 0.5})
+    with pytest.raises(InfrastructureError, match="closed field"):
+        p0_smoke.validate_measurements(
+            {k: v for k, v in measurements.items()
+             if k != "startup_seconds"})
+    with pytest.raises(InfrastructureError, match="157"):
+        p0_smoke.validate_measurements(
+            {**measurements,
+             "per_group_generation_seconds": [5.0] * 156})
+    with pytest.raises(InfrastructureError, match="ramp"):
+        p0_smoke.validate_measurements(
+            {**measurements,
+             "warmup_lr_trajectory":
+                 [1e-05] + [1e-05 * i / 10
+                            for i in range(1, 11)]})
