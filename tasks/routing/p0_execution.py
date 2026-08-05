@@ -1580,8 +1580,42 @@ def _bundle_inventory() -> frozenset[str]:
         | {"checkpoint_record.json"})
 
 
-def _expected_p0_identities(manifest: Mapping[str, Any]
-                            ) -> dict[str, str]:
+def _read_authorized_prefix(segment_file: Path,
+                            start_index: int,
+                            authorized_end: int,
+                            label: str) -> list[dict[str, Any]]:
+    """369_s F2: read and validate EXACTLY the
+    checkpoint-authorized prefix — excluded tail bytes are NEVER
+    parsed (a SIGKILL can truncate a tail row mid-write; the
+    complete gzip remains preserved evidence, but only the
+    authorized rows are consumed)."""
+    import gzip
+    rows: list[dict[str, Any]] = []
+    with gzip.open(segment_file, "rt",
+                   encoding="utf-8") as handle:
+        for offset, line in enumerate(handle):
+            index = start_index + offset
+            if index >= authorized_end:
+                break
+            group = json.loads(line)
+            if group["global_group_index"] != index:
+                raise InfrastructureError(
+                    f"segment {label}: group index "
+                    f"{group['global_group_index']} out of "
+                    "sequence")
+            if len(group["completions"]) != 8 \
+                    or len(group["actions"]) != 8 \
+                    or len(group["assignments"]) != 8 \
+                    or len(group["rewards"]) != 8:
+                raise InfrastructureError(
+                    f"segment {label} group {index}: malformed "
+                    "row (365_s)")
+            rows.append(group)
+    return rows
+
+
+def _expected_p0_identities(manifest: Mapping[str, Any],
+                            prelaunch: Path) -> dict[str, str]:
     """365_s: the verifier re-derives ALL TEN identity fields
     INDEPENDENTLY — from the manifest, the freeze under its pin,
     the AUTHENTICATED training surface lock, and the frozen
@@ -1593,9 +1627,12 @@ def _expected_p0_identities(manifest: Mapping[str, Any]
         restore_extension_surface_if_absent(),
         expected_lock_sha256=UNIT_C2_CONFIG[
             "extension_surface_lock_sha256"])
-    freeze = load_real_launch_freeze()
+    # 369_s: the ARCHIVED prelaunch copy under the MANIFEST pin —
+    # never the current committed default (historical)
+    freeze = load_real_launch_freeze(
+        prelaunch / "launch_freeze.json")
     preparation = prepare_p0_dataset(
-        Path("plans/conductor/p0/p0_launch_freeze.json"),
+        prelaunch / "launch_freeze.json",
         manifest["launch_freeze_sha256"])
     return _p0_identities(manifest, training_surface["lock"],
                           preparation["trainer_rows"],
@@ -1710,7 +1747,8 @@ def verify_p0_run(run_dir: str | Path, *, ledger_path,
             "persisted cadence records do not cover the frozen "
             "cadence")
     # every bundle from disk against INDEPENDENT identities
-    expected_identities = _expected_p0_identities(manifest)
+    expected_identities = _expected_p0_identities(manifest,
+                                                 prelaunch)
     parent = None
     for update_index in cadence:
         block = record["checkpoints"][str(update_index)]
@@ -1855,24 +1893,8 @@ def verify_p0_run(run_dir: str | Path, *, ledger_path,
         authorized_end = (int(starts[later[0]]
                               ["start_group_index"])
                           if later else len(schedule))
-        with gzip.open(segment_file, "rt",
-                       encoding="utf-8") as handle:
-            for offset, line in enumerate(handle):
-                group = json.loads(line)
-                index = group["global_group_index"]
-                if index != start_index + offset:
-                    raise InfrastructureError(
-                        f"segment s{k}: group index {index} out "
-                        "of sequence")
-                if len(group["completions"]) != 8 \
-                        or len(group["actions"]) != 8 \
-                        or len(group["assignments"]) != 8 \
-                        or len(group["rewards"]) != 8:
-                    raise InfrastructureError(
-                        f"segment s{k} group {index}: malformed "
-                        "row (365_s)")
-                if index < authorized_end:
-                    merged.append(group)
+        merged.extend(_read_authorized_prefix(
+            segment_file, start_index, authorized_end, f"s{k}"))
     if [g["global_group_index"] for g in merged] != \
             list(range(len(schedule))) or \
             [g["observation_id"] for g in merged] != schedule:
@@ -2157,7 +2179,11 @@ def _p0_session(*, run_dir: Path, manifest: Mapping[str, Any],
             raise InfrastructureError(
                 f"trainer ended at step {trainer.state.global_step}"
                 f" != the frozen final update {final_index}")
-        _p0_cadence_event(context, final_index, None)
+        # 369_s F1: the training trace and the trainer log seal
+        # FIRST — the final cadence record is the LAST durable
+        # commit, so an all-records-complete state ALWAYS implies
+        # sealed finalization inputs (finalize-only resume can
+        # never fail on missing evidence)
         _seal_file(trace_path)
         log_name = "trainer_log_history.json"
         if (sealed / (log_name + ".gz")).exists():
@@ -2168,6 +2194,7 @@ def _p0_session(*, run_dir: Path, manifest: Mapping[str, Any],
             json.dumps(trainer.state.log_history, sort_keys=True),
             encoding="utf-8")
         _seal_file(log_path)
+        _p0_cadence_event(context, final_index, None)
     except BaseException as error:
         _record_resumable_interruption(
             run_dir, session_index,

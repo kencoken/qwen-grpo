@@ -7759,3 +7759,39 @@ def test_p0_runner_rev4_regressions(monkeypatch, tmp_path):
                        match="never" ):
         p0_execution._exclude_uncommitted_attempt(
             attempt, 1256, 3)
+
+
+def test_p0_runner_rev5_crash_windows(tmp_path):
+    """369_s: the authorized-prefix reader never parses excluded
+    tail bytes — a valid prefix followed by a TRUNCATED JSON
+    fragment (SIGKILL mid-write) reads cleanly; a corrupt row
+    INSIDE the prefix still refuses."""
+    import gzip
+
+    from tasks.routing import p0_execution
+
+    def _row(i):
+        return json.dumps({
+            "global_group_index": i, "observation_id": f"obs{i}",
+            "completions": ["c"] * 8, "actions": [None] * 8,
+            "assignments": [None] * 8, "rewards": [0.0] * 8},
+            sort_keys=True)
+
+    segment = tmp_path / "training_trace_s1.jsonl.gz"
+    with gzip.open(segment, "wt", encoding="utf-8") as handle:
+        handle.write(_row(0) + "\n")
+        handle.write(_row(1) + "\n")
+        handle.write('{"global_group_index": 2, "comp')  # killed
+    rows = p0_execution._read_authorized_prefix(
+        segment, 0, 2, "s1")
+    assert [r["global_group_index"] for r in rows] == [0, 1]
+    # the same truncation INSIDE the authorized range refuses
+    with pytest.raises(Exception):
+        p0_execution._read_authorized_prefix(segment, 0, 3, "s1")
+    # an out-of-sequence authorized row refuses
+    bad = tmp_path / "training_trace_s2.jsonl.gz"
+    with gzip.open(bad, "wt", encoding="utf-8") as handle:
+        handle.write(_row(5) + "\n")
+    with pytest.raises(InfrastructureError, match="out of "
+                       "sequence"):
+        p0_execution._read_authorized_prefix(bad, 0, 1, "s2")
