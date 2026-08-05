@@ -7387,3 +7387,103 @@ def test_p0_unit_l_admission(monkeypatch, tmp_path):
             _live_environment=_env_manifest())
     # the REAL ledger is untouched
     assert ledger.ledger_head() == head
+
+
+def test_p0_runner_cpu_boundaries(monkeypatch, tmp_path):
+    """The P0 execution runner's CPU boundaries: the frozen eval
+    realization (CRN continuity with the V pinned vector); the
+    exactly-once prelaunch; the cadence callback ordering; the
+    abort rule (seal, RETAIN checkpoints); the closed record
+    schema at the terminal verifier."""
+    from tasks.routing import p0_execution
+    monkeypatch.setitem(p0_val.VAL_CONFIG["lineage"],
+                        "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
+    monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
+                        PRISTINE_VAL_CONFIG_SHA256)
+    # the executed realization: 90 slot-0 seeds, frozen pin, CRN
+    # continuity (slot-0 of the V pinned vector reproduces)
+    seeds = p0_execution.p0_eval_seed_realization()
+    assert len(seeds) == 90
+    assert seeds[0][1] == 1176822329
+    assert seeds[0][1] == p0_val.seed_for_completion(
+        seeds[0][0], 0, domain="p0_val_eval",
+        base_seed=20260804)
+    monkeypatch.setattr(p0_execution,
+                        "P0_EVAL_REALIZATION_SHA256", "0" * 64)
+    with pytest.raises(InfrastructureError, match="frozen pin"):
+        p0_execution.p0_eval_seed_realization()
+    monkeypatch.undo()
+    monkeypatch.setitem(p0_val.VAL_CONFIG["lineage"],
+                        "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
+    monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
+                        PRISTINE_VAL_CONFIG_SHA256)
+    # exactly-once prelaunch persistence (four files)
+    live_env = json.loads(Path(
+        "runs/routing-dev/beta-smoke-v1/execute_env_manifest.json"
+    ).read_text("utf-8"))
+    run_dir = tmp_path / "p0-v1"
+    manifest = p0_execution.prepare_p0_launch(
+        run_dir=run_dir, _environment_builder=lambda: live_env)
+    assert p0_execution.validate_p0_execution_manifest(
+        manifest)["manifest_sha256"] == manifest["manifest_sha256"]
+    prelaunch = run_dir / "prelaunch"
+    assert sorted(p.name for p in prelaunch.iterdir()) == [
+        "env_manifest.json", "execution_identity.json",
+        "launch_freeze.json", "p0_launch.json"]
+    assert (prelaunch / "launch_freeze.json").read_bytes() == \
+        Path(p0_launch.LAUNCH_FREEZE_PATH).read_bytes()
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_execution.prepare_p0_launch(
+            run_dir=run_dir, _environment_builder=lambda: live_env)
+    # the cadence callback: deadline BEFORE the step; consumption
+    # at the optimizer; cadence events ONLY at intermediates
+    from tasks.routing import checkpoint as ckpt_module
+    accountant = ckpt_module.GroupAccountant()
+    instrumentation = p0_smoke._EpochInstrumentation()
+    fired = []
+    callback = p0_execution._make_p0_callback(
+        accountant, instrumentation, deadline=0.0,
+        cadence_updates=[0, 628, 1256, 6123],
+        on_cadence=fired.append)
+    with pytest.raises(InfrastructureError,
+                       match="deadline exceeded"):
+        callback.on_step_begin(None, None, None)
+    import time as _time
+    live = p0_execution._make_p0_callback(
+        accountant, instrumentation,
+        deadline=_time.monotonic() + 3600.0,
+        cadence_updates=[0, 628, 1256, 6123],
+        on_cadence=fired.append)
+    with pytest.raises(InfrastructureError,
+                       match="never generated"):
+        live.on_optimizer_step(None, None, None)
+
+    class _State:
+        def __init__(self, step):
+            self.global_step = step
+
+    instrumentation.start_epoch()
+    live.on_step_end(None, _State(627), None)
+    assert fired == []
+    live.on_step_end(None, _State(628), None)
+    assert fired == [628]
+    live.on_step_end(None, _State(6123), None)
+    assert fired == [628]  # the FINAL index is not an intermediate
+    # the abort rule: raw traces sealed, checkpoint bundles KEPT
+    abort_dir = tmp_path / "abort"
+    sealed = abort_dir / "sealed"
+    sealed.mkdir(parents=True)
+    (sealed / "training_trace.jsonl").write_text(
+        '{"row": 1}\n', encoding="utf-8")
+    bundle = abort_dir / "checkpoint_bundle_upd628"
+    bundle.mkdir()
+    (bundle / "adapter_state.safetensors").write_bytes(b"resume")
+    p0_execution._sanitize_p0_abort(abort_dir)
+    assert not (sealed / "training_trace.jsonl").exists()
+    assert (sealed / "training_trace.jsonl.gz").exists()
+    assert bundle.exists()  # the resume state is RETAINED
+    # the closed record schema refuses extras
+    assert "resume entry point" in " ".join(
+        p0_execution.P0_RUNNER_OUTSTANDING)
+    assert set(p0_execution._P0_RECORD_KEYS) >= {
+        "cadence_completed", "checkpoints", "sealed_sha256"}

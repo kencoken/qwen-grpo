@@ -758,7 +758,7 @@ def admit_and_append_launch(entry: Mapping[str, Any],
         # configuration-owned field are re-enforced)
         from .p0_execution import validate_p0_execution_manifest
         validate_p0_execution_manifest(launch_manifest,
-                                       recompute=False)
+                                       recompute=True)
         named = entry["freeze"].get("p0_launch_manifest_sha256")
         if named != launch_manifest.get("manifest_sha256") \
                 or not named:
