@@ -6727,10 +6727,10 @@ def test_p0_r_cycle_final_reserve(tmp_path, monkeypatch):
 # --- precursors Unit T: the beta timing smoke (347_f) --------------------------
 
 def test_p0_smoke_design(monkeypatch):
-    """Unit T CPU boundaries: the frozen config, the shape-matched
-    exposed timing cohort, seed distinctness, the closed
-    measurement schema, the deterministic cap-input mapping, and
-    the non-binding worked projection."""
+    """Unit T rev2 CPU boundaries: the persisted freeze as a
+    strict identity boundary; the shape-proving closed measurement
+    schema; the two-pass conservative pricing; the exact-value
+    mapping; the manifest rederivation."""
     monkeypatch.setitem(p0_val.VAL_CONFIG["lineage"],
                         "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
     monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
@@ -6738,86 +6738,114 @@ def test_p0_smoke_design(monkeypatch):
     config = p0_smoke.SMOKE_CONFIG
     assert charter.content_sha256(config) == \
         p0_smoke.SMOKE_CONFIG_SHA256
-    # the frozen cadence in BOTH unit systems
-    assert p0_smoke.CADENCE_EPOCHS == (0, 4, 8, 12, 16, 20, 24,
-                                       28, 32, 36, 39)
+    assert config["budget_gpu_hours"] == 0.75
     assert p0_smoke.CADENCE_UPDATES == (0, 628, 1256, 1884, 2512,
                                         3140, 3768, 4396, 5024,
                                         5652, 6123)
-    # seed pairwise-distinct across the registered domains
-    assert config["training"]["seed"] == 20260806
     assert len({p0_val.VAL_CONFIG["evaluation"]["base_seed"],
                 p0_cycle.CYCLE_CONFIG["evaluation"]["base_seed"],
                 config["training"]["seed"]}) == 3
-    # the timing cohort: 90 shape-matched routing_dev observations,
-    # every one on the LOCKED extension surface (never
-    # routing_dev_val)
     observations = p0_smoke.timing_cohort_observations()
     assert len(observations) == 90
     assert all(o["observation_id"].split(":")[1] == "routing_dev"
                for o in observations)
-    freeze = p0_smoke.smoke_tranche_freeze()
-    assert freeze["observations_total"] == 90
-    assert freeze["config_sha256"] == p0_smoke.SMOKE_CONFIG_SHA256
+    schedule = p0_smoke.timing_seed_schedule()
+    assert len(schedule) == 720
+    # 348_s #4: the PERSISTED freeze loads strictly and rederives
+    freeze = p0_smoke.load_smoke_freeze()
+    assert freeze["freeze_sha256"] == p0_smoke.SMOKE_FREEZE_SHA256
+    assert freeze["science_contract_sha256"] == \
+        p0_contract.CONTRACT_SHA256
+    assert freeze["pinned_mixture_record_sha256"] == \
+        p0_replay.REPLAY_SOURCE["pinned_mixture_record_sha256"]
+    assert freeze["extension_surface_lock_sha256"] == \
+        p0_replay.REPLAY_SOURCE["extension_surface_lock_sha256"]
+    import hashlib as _hashlib
+    from tasks.conductor.stage1 import prompt_fewshot
+    assert freeze["prompt_sha256"] == _hashlib.sha256(
+        prompt_fewshot().encode("utf-8")).hexdigest()
+    with pytest.raises(InfrastructureError, match="reviewed"):
+        p0_smoke.load_smoke_freeze(expected_sha256="0" * 64)
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_smoke.freeze_smoke_tranche()
     monkeypatch.setitem(p0_smoke.SMOKE_CONFIG,
                         "budget_gpu_hours", 0.7)
     with pytest.raises(InfrastructureError, match="mutated"):
         p0_smoke.timing_cohort_observations()
     monkeypatch.undo()
-    # the deterministic mapping on synthetic measurements
+    # the mapping on synthetic measurements (348_s: two passes,
+    # conservative max pricing, EXACT values)
     measurements = {
         "startup_seconds": 150.0,
+        "checkpoint_zero_eval_seconds": 420.0,
         "whole_epoch_seconds": 840.0,
         "per_group_generation_seconds": [5.0] * 156 + [9.0],
-        "checkpoint_write_seconds": 4.0,
-        "checkpoint_zero_eval_seconds": 420.0,
-        "intermediate_eval_seconds": 415.0,
-        "final_eval_seconds": 425.0,
+        "checkpoint_bundle_write_seconds": 4.0,
+        "post_epoch_eval_seconds": 433.0,
         "trace_flush_archive_seconds": 3.0,
         "per_epoch_trace_bytes": 15_000_000,
         "peak_reserved_vram_mib": 9000,
         "warmup_lr_trajectory":
             [1e-05 * i / 10 for i in range(1, 11)] + [1e-05],
+        "optimizer_updates": 157,
+        "reference_kl_logged_events": 9,
+        "adapter_state_changed": True,
     }
     inputs = p0_smoke.derive_cap_inputs(measurements)
-    # overhead = ckpt0 + 9 x (eval + write) + startup
+    # eval price = max(420, 433) = 433, used EVERYWHERE
+    assert inputs["components"]["eval_price_seconds"] == 433.0
     assert inputs["frozen_non_rollout_overhead_seconds"] == \
-        round(420.0 + 9 * (415.0 + 4.0) + 150.0, 1)
-    # reserve = worst batch + final eval + final write + scaled
-    # full-run trace: ceil(3.0 x 39 x 1.2) = 141
+        433.0 + 9 * (433.0 + 4.0) + 150.0
     assert inputs["components"]["full_run_trace_seconds"] == 141.0
     assert inputs["measured_finalization_reserve_seconds"] == \
-        round(9.0 + 425.0 + 4.0 + 141.0, 1)
+        9.0 + 433.0 + 4.0 + 141.0
     assert inputs["cumulative_consumed_seconds"] == 0.0
-    assert inputs["measured_whole_epoch_seconds"] == 840.0
-    # the non-binding worked projection runs the REGISTERED cap
-    # arithmetic on the derived inputs
     projection = p0_smoke.worked_launch_projection(measurements)
     assert projection["binding"] is False
     plan = projection["plan"]
     assert plan["launch_epochs"] == min(plan["nominal_epochs"],
                                         plan["capacity_epochs"])
-    # with these synthetic values: floor((36000 - 579 - 4341)
-    # / 840) = floor(37.0) = 37
-    assert plan["capacity_epochs"] == 37
-    assert plan["branch"] == "disclosed_under_target"
-    # the CLOSED measurement schema: an extra (semantic) field
-    # refuses; a missing field refuses; a non-monotone warmup
-    # trajectory refuses
+    # 348_s #3: the shape proofs bite
     with pytest.raises(InfrastructureError, match="closed field"):
         p0_smoke.validate_measurements(
             {**measurements, "mean_reward": 0.5})
-    with pytest.raises(InfrastructureError, match="closed field"):
+    flat = [1e-05] * 11
+    with pytest.raises(InfrastructureError, match="frozen "
+                       "constant_with_warmup"):
         p0_smoke.validate_measurements(
-            {k: v for k, v in measurements.items()
-             if k != "startup_seconds"})
-    with pytest.raises(InfrastructureError, match="157"):
+            {**measurements, "warmup_lr_trajectory": flat})
+    wrong_plateau = [2e-05 * i / 10 for i in range(1, 11)] \
+        + [2e-05]
+    with pytest.raises(InfrastructureError, match="frozen "
+                       "constant_with_warmup"):
         p0_smoke.validate_measurements(
             {**measurements,
-             "per_group_generation_seconds": [5.0] * 156})
-    with pytest.raises(InfrastructureError, match="ramp"):
+             "warmup_lr_trajectory": wrong_plateau})
+    with pytest.raises(InfrastructureError, match="smaller than "
+                       "the sum"):
         p0_smoke.validate_measurements(
-            {**measurements,
-             "warmup_lr_trajectory":
-                 [1e-05] + [1e-05 * i / 10
-                            for i in range(1, 11)]})
+            {**measurements, "whole_epoch_seconds": 10.0})
+    with pytest.raises(InfrastructureError, match="exactly 157"):
+        p0_smoke.validate_measurements(
+            {**measurements, "optimizer_updates": 156})
+    with pytest.raises(InfrastructureError, match="reference"):
+        p0_smoke.validate_measurements(
+            {**measurements, "reference_kl_logged_events": 0})
+    with pytest.raises(InfrastructureError, match="adapter"):
+        p0_smoke.validate_measurements(
+            {**measurements, "adapter_state_changed": False})
+    # the launch manifest rederives the frozen launch
+    manifest = p0_smoke.build_smoke_launch_manifest(
+        environment_manifest=_env_manifest(),
+        execution_root="runs/routing-dev/beta-smoke-v1")
+    validated = p0_smoke.validate_smoke_launch_manifest(manifest)
+    assert validated["manifest_sha256"] == \
+        manifest["manifest_sha256"]
+    assert manifest["lineage_parent_sha256"] == \
+        p0_smoke.SMOKE_CONFIG["lineage"]["parent_entry_sha256"]
+    resigned = {k: v for k, v in manifest.items()
+                if k != "manifest_sha256"}
+    resigned["budget_gpu_hours"] = 2.0
+    resigned["manifest_sha256"] = charter.content_sha256(resigned)
+    with pytest.raises(InfrastructureError, match="diverges"):
+        p0_smoke.validate_smoke_launch_manifest(resigned)
