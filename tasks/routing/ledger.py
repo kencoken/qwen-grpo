@@ -737,6 +737,69 @@ def admit_and_append_launch(entry: Mapping[str, Any],
                 raise InfrastructureError(
                     "a completed smoke exists — never rerun "
                     "(352_s #1)")
+    if launch_kind == "training_run":
+        # Unit L (330_f §4): the P0 execution manifest is
+        # MANDATORY — the branch mirrors the smoke rules with the
+        # launch-freeze hash as the retry design identity, and a
+        # fresh P0 launch is admitted only on the manifest's
+        # frozen lineage parent.
+        if launch_manifest is None:
+            raise InfrastructureError(
+                "a P0 training run is admitted WITH its execution "
+                "manifest (330_f §4)")
+        if launch_manifest.get("kind") != "routing-dev-p0-launch-v1":
+            raise InfrastructureError(
+                "a P0 training run binds a P0 execution manifest, "
+                f"not a {launch_manifest.get('kind')!r}")
+        named = entry["freeze"].get("p0_launch_manifest_sha256")
+        if named != launch_manifest.get("manifest_sha256") \
+                or not named:
+            raise InfrastructureError(
+                "the P0 entry's freeze must name the exact "
+                "execution manifest hash")
+        if launch_max != launch_manifest.get("budget_gpu_hours"):
+            raise InfrastructureError(
+                f"the admitted budget {launch_max} differs from "
+                f"the manifest budget "
+                f"{launch_manifest.get('budget_gpu_hours')}")
+        frozen = entry["freeze"].get("launch_freeze_sha256")
+        if not frozen or frozen != \
+                launch_manifest.get("launch_freeze_sha256"):
+            raise InfrastructureError(
+                "the P0 entry's freeze must carry the reviewed "
+                "launch-freeze hash the manifest binds")
+        if entry["freeze"].get("execution_identity_sha256") \
+                != launch_manifest.get("execution_identity_sha256") \
+                or not entry["freeze"].get(
+                    "execution_identity_sha256"):
+            raise InfrastructureError(
+                "the P0 entry's freeze must carry the reviewed "
+                "execution-identity hash the manifest binds")
+        if entry.get("parent") != (entries[-1]["entry_sha256"]
+                                   if entries else None):
+            raise InfrastructureError(
+                "a P0 entry must persist the ACTUAL lineage "
+                "parent — the verified head it is admitted on")
+        prior_p0 = [e for e in entries
+                    if e["kind"] == "training_run"
+                    and e["freeze"].get("launch_freeze_sha256")
+                    == frozen]
+        if not prior_p0 and entry.get("parent") != \
+                launch_manifest.get("lineage_parent_sha256"):
+            raise InfrastructureError(
+                "the FIRST P0 launch is admitted only on the "
+                "manifest's frozen lineage parent")
+        p0_closeouts = {e.get("closes_entry_sha256"): e
+                        for e in entries if e["kind"] == "closeout"}
+        for attempt in prior_p0:
+            closeout = p0_closeouts.get(attempt["entry_sha256"])
+            if closeout is None:
+                raise InfrastructureError(
+                    "a prior P0 attempt is OPEN — no new launch")
+            if closeout.get("terminal_status") == "complete":
+                raise InfrastructureError(
+                    "a completed P0 exists — a relaunch is a "
+                    "REVIEWED decision, never a retry (330_f §5)")
     state = envelope_state(entries, CYCLE_ENVELOPE_GPU_HOURS)
     remaining = state["remaining_gpu_hours"]
     reserve = state["reserve"]
