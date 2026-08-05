@@ -7646,3 +7646,116 @@ def test_p0_runner_cpu_boundaries(monkeypatch, tmp_path):
             / "s2_eval_upd628.jsonl.gz").read_bytes() == b"partial"
     assert "sentinel-block" in " ".join(
         p0_execution.P0_RUNNER_OUTSTANDING)
+
+
+def test_p0_runner_rev4_regressions(monkeypatch, tmp_path):
+    """367_s: writer-verifier bundle-inventory agreement; the
+    session state machine (the reviewer's double-end chain
+    refuses); separate scheduler unwrapping; crash sanitation;
+    whole-attempt exclusion."""
+    from types import SimpleNamespace
+
+    from tasks.routing import checkpoint as ckpt_module
+    from tasks.routing import p0_execution
+    # F1: the inventory DERIVES from the authoritative contract
+    expected = {ckpt_module.CHECKPOINT_BUNDLE_FILENAMES[n]
+                for n in ("adapter", "optimizer", "scheduler",
+                          "rng")} | {"checkpoint_record.json"}
+    assert set(p0_execution._bundle_inventory()) == expected
+    assert "adapter.safetensors" in expected
+    assert "adapter_state.safetensors" not in expected
+    # the state machine: a valid CHAIN with a second end refuses
+    # at load (the reviewer's start(1), end(1,100), end(1,0))
+    log_dir = tmp_path / "sm"
+    log_dir.mkdir()
+    import time as _time
+    p0_execution._append_session_entry(log_dir, {
+        "kind": "session_start", "session_index": 1,
+        "mode": "fresh", "start_group_index": 0,
+        "resume_update_index": None,
+        "wall_start_utc": _time.time()})
+    p0_execution._append_session_entry(log_dir, {
+        "kind": "session_end", "session_index": 1,
+        "elapsed_seconds": 100.0, "status": "interrupted"})
+    p0_execution._append_session_entry(log_dir, {
+        "kind": "session_end", "session_index": 1,
+        "elapsed_seconds": 0.0, "status": "interrupted"})
+    with pytest.raises(InfrastructureError, match="SECOND end"):
+        p0_execution._load_sessions(log_dir)
+    # non-contiguous start and end-without-start refuse
+    log_dir2 = tmp_path / "sm2"
+    log_dir2.mkdir()
+    with pytest.raises(InfrastructureError, match="contiguous"):
+        p0_execution._append_session_entry(log_dir2, {
+            "kind": "session_start", "session_index": 2,
+            "mode": "fresh", "start_group_index": 0,
+            "resume_update_index": None,
+            "wall_start_utc": _time.time()})
+        p0_execution._load_sessions(log_dir2)
+    log_dir3 = tmp_path / "sm3"
+    log_dir3.mkdir()
+    p0_execution._append_session_entry(log_dir3, {
+        "kind": "session_end", "session_index": 1,
+        "elapsed_seconds": 1.0, "status": "interrupted"})
+    with pytest.raises(InfrastructureError,
+                       match="without starting"):
+        p0_execution._load_sessions(log_dir3)
+    # separate unwrapping: a REPLACED scheduler holding the same
+    # optimizer no longer passes the identity comparison
+    optimizer = SimpleNamespace()
+    scheduler_a = SimpleNamespace(optimizer=optimizer)
+    scheduler_b = SimpleNamespace(optimizer=optimizer)
+    assert p0_execution._unwrap_scheduler(scheduler_a) \
+        is scheduler_a
+    assert p0_execution._unwrap_scheduler(scheduler_a) \
+        is not p0_execution._unwrap_scheduler(scheduler_b)
+    wrapped = SimpleNamespace(scheduler=scheduler_a)
+    assert p0_execution._unwrap_scheduler(wrapped) is scheduler_a
+    assert p0_execution._unwrap_optimizer(scheduler_a) \
+        is optimizer  # the old single unwrapper's failure shape
+    # F3: killed-session closing SANITIZES evidence (idempotent)
+    crash_dir = tmp_path / "crash"
+    sealed = crash_dir / "sealed"
+    sealed.mkdir(parents=True)
+    (sealed / "training_trace_s1.jsonl").write_text(
+        '{"g": 0}\n', encoding="utf-8")
+    (sealed / "eval_upd628.jsonl").write_text(
+        '{"o": 1}\n', encoding="utf-8")
+    p0_execution._append_session_entry(crash_dir, {
+        "kind": "session_start", "session_index": 1,
+        "mode": "fresh", "start_group_index": 0,
+        "resume_update_index": None,
+        "wall_start_utc": _time.time() - 30.0})
+    state = p0_execution._session_state(crash_dir)
+    state = p0_execution._close_killed_session(crash_dir, state)
+    assert state["unclosed_session_index"] is None
+    assert not (sealed / "training_trace_s1.jsonl").exists()
+    assert (sealed / "training_trace_s1.jsonl.gz").exists()
+    assert (sealed / "eval_upd628.jsonl.gz").exists()
+    p0_execution._sanitize_after_crash(crash_dir)  # idempotent
+    # F4: the WHOLE uncommitted attempt moves to excluded/
+    attempt = tmp_path / "attempt"
+    (attempt / "sealed").mkdir(parents=True)
+    (attempt / "sealed" / "eval_upd1256.jsonl.gz"
+     ).write_bytes(b"partial")
+    bundle = attempt / "checkpoint_bundle_upd1256"
+    bundle.mkdir()
+    (bundle / "adapter.safetensors").write_bytes(b"lora")
+    hf = attempt / "checkpoint-1256"
+    hf.mkdir()
+    (hf / "trainer_state.json").write_bytes(b"{}")
+    p0_execution._exclude_uncommitted_attempt(attempt, 1256, 3)
+    assert not bundle.exists() and not hf.exists()
+    excluded = attempt / "excluded"
+    assert (excluded / "s3_eval_upd1256.jsonl.gz"
+            ).read_bytes() == b"partial"
+    assert (excluded / "s3_checkpoint_bundle_upd1256"
+            / "adapter.safetensors").read_bytes() == b"lora"
+    assert (excluded / "s3_checkpoint-1256"
+            / "trainer_state.json").exists()
+    # a second exclusion into the same session scope refuses
+    bundle.mkdir()
+    with pytest.raises(InfrastructureError,
+                       match="never" ):
+        p0_execution._exclude_uncommitted_attempt(
+            attempt, 1256, 3)
