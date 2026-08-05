@@ -128,6 +128,59 @@ CYCLE_CONFIG: dict[str, Any] = {
                       "materialize_dev_support → surface lock), "
                       "validated against THIS record's cohort and "
                       "execution identities"),
+        "exact_regeneration": (
+            "BEFORE any worker call at synthesis, the record must "
+            "load through load_cycle_record — which REGENERATES "
+            "the cohort, the declaration geometry, and the "
+            "semantic/rendered-prompt schedule hashes from the "
+            "frozen generator and refuses on ANY drift (344_s "
+            "P1-1: a generator semantic change without a version "
+            "bump is caught by the schedule hashes)"),
+    },
+    # 344_s P1-2: the CLOSED one-reveal reporting rule — no
+    # post-reveal discretion
+    "report_schema": {
+        "rule_id": "cycle-report-v1",
+        "science_contract_sha256": (
+            "d47a63ff435e3b2964f09f0d97f287ee722cae5bbc7df58104d7"
+            "e10c6d519517"),
+        "estimands": ("the frozen P0ScienceContract rules BY "
+                      "REFERENCE, computed by p0_estimands: "
+                      "q1-counted-v1 (bridge semantics do not "
+                      "apply here — counted events reported "
+                      "descriptively per cell), c2-eligibility-v1, "
+                      "q2-conditional-v1 (zero denominator = "
+                      "undefined), group contrasts"),
+        "comparisons": ("PAIRED checkpoint-zero vs final, per "
+                        "observation under common random numbers; "
+                        "aggregated at LATENT level (5 clusters "
+                        "per cell) — descriptive only, never "
+                        "completion-level precision"),
+        "aggregation": ("the bound natural-mixture weights (1/90) "
+                        "and the equal-cell view; per cell x "
+                        "renderer strata"),
+        "malformed_handling": ("the frozen ladder: malformed "
+                               "scores 0 and is NEVER dropped; "
+                               "invalid-completion rate reported "
+                               "with raw numerators/denominators"),
+        "metrics": [
+            "mean_reward (per checkpoint; denominator 720 "
+            "completions)",
+            "family_correctness_mean (C1; denominator 720)",
+            "q1_counted_groups_by_cell (denominator 15 groups per "
+            "cell per checkpoint)",
+            "q2_eligibility_and_conditional_per_direction (raw "
+            "numerators and denominators; zero denominator = "
+            "undefined)",
+            "zero_variance_rate (denominator 90 groups)",
+            "invalid_completion_rate (denominator 720)",
+        ],
+        "repeated_vs_novel_templates": (
+            "RETAINED, descriptive only, using EXACTLY the frozen "
+            "membership: the cycle_vs_training "
+            "affected_candidate_ids bound in this record's overlap "
+            "re-assertion (45 of 90 cycle observations) — never "
+            "recomputed post-reveal"),
     },
     "never_trained_on": (
         "structural — the P0 trainer consumes only the pinned "
@@ -145,7 +198,7 @@ CYCLE_CONFIG: dict[str, Any] = {
     },
 }
 CYCLE_CONFIG_SHA256 = \
-    "2b404642a06c0441246d5d634889d34e4fede99f48dcfb92bba9e65559d125d6"
+    "843521a836f63c78979ed8af053bcd1b2688b418639a398bf6e2637daecdb206"
 
 # the frozen 720-entry cycle seed schedule (90 obs x slots 0..7)
 CYCLE_SEED_SCHEDULE_SHA256 = \
@@ -154,9 +207,9 @@ CYCLE_SEED_SCHEDULE_SHA256 = \
 # the externally reviewed record pins (set at the one-time freezes;
 # recorded by the Unit-Y review)
 CYCLE_RECORD_SHA256 = \
-    "c1caf158cbac0ec8e1daf75a3b9330df1a1304d814053c036871ee7b9f76bb8f"
+    "d617ab5fbb609fc89c250e6a79627b2ed28e54603fa1fed2253d855a3abaccdc"
 R_CYCLE_RECORD_SHA256 = \
-    "dd924326eb15695c417941009bcb0b31af9aeefabd7431687c3c3563ea5209a8"
+    "e13cf4d3605393186499cab0490d5e2bc289c77841b146841d0f52258f422265"
 
 
 def _validated_config() -> dict[str, Any]:
@@ -219,28 +272,7 @@ _EXECUTION_IDENTITY_FIELDS = (
     "worker_pool_fingerprint", "request_contract", "cache_identity")
 
 
-def _val_execution_identities() -> dict[str, str]:
-    """The worker/prompt/request identities the cycle surface will
-    be materialized against — read from the AUTHENTICATED Unit-V
-    evidence (the validated val-launch manifest binds the
-    declaration that carries them; the same frozen pool)."""
-    evidence = Path(VAL_EVIDENCE_DIR)
-    declaration = json.loads(
-        (evidence / "prelaunch" / "declaration.json")
-        .read_text("utf-8"))
-    manifest = validate_val_launch_manifest(
-        json.loads((evidence / "prelaunch" / "val_launch.json")
-                   .read_text("utf-8")),
-        declaration, recompute=False)
-    return {field: manifest[field]
-            for field in _EXECUTION_IDENTITY_FIELDS}
-
-
-def _val_lock_overlap() -> dict[str, Any]:
-    """The Unit-V lock's bound three-way overlap result — the
-    cycle record RE-ASSERTS the frozen numbers (never re-measures);
-    the lock bytes authenticate under the externally reviewed
-    pin."""
+def _val_lock_payload() -> dict[str, Any]:
     payload = json.loads(
         (Path(VAL_EVIDENCE_DIR) / "val_lock.json")
         .read_text("utf-8"))
@@ -251,6 +283,112 @@ def _val_lock_overlap() -> dict[str, Any]:
         raise InfrastructureError(
             "the archived val lock does not authenticate under the "
             "reviewed pin")
+    return payload
+
+
+def _val_execution_identities() -> dict[str, str]:
+    """344_s P1-1: the identities the cycle surface will be
+    materialized against are read from the VAL-LOCK-BOUND SURFACE
+    LOCK — the authentication chain is the reviewed val-lock pin →
+    the surface-lock self AND file hashes → the identity fields.
+    The prelaunch manifest must AGREE (a rehashed mixed archive
+    with a changed fingerprint refuses on either side)."""
+    val_lock = _val_lock_payload()
+    surface_lock_path = (Path(VAL_EVIDENCE_DIR) / "surface"
+                         / "surface_lock.json")
+    if _sha_file(surface_lock_path) != \
+            val_lock["surface_lock_file_sha256"]:
+        raise InfrastructureError(
+            "the archived surface lock bytes do not match the val "
+            "lock binding (344_s P1-1)")
+    surface_lock = json.loads(
+        surface_lock_path.read_text("utf-8"))
+    if surface_lock.get("lock_sha256") != \
+            val_lock["surface_lock_sha256"]:
+        raise InfrastructureError(
+            "the archived surface lock is not the val-lock-bound "
+            "lock")
+    identities = {field: surface_lock[field]
+                  for field in _EXECUTION_IDENTITY_FIELDS}
+    evidence = Path(VAL_EVIDENCE_DIR)
+    declaration = json.loads(
+        (evidence / "prelaunch" / "declaration.json")
+        .read_text("utf-8"))
+    manifest = validate_val_launch_manifest(
+        json.loads((evidence / "prelaunch" / "val_launch.json")
+                   .read_text("utf-8")),
+        declaration, recompute=False)
+    for field, value in identities.items():
+        if manifest[field] != value:
+            raise InfrastructureError(
+                f"prelaunch manifest {field} disagrees with the "
+                "val-lock-bound surface (344_s P1-1)")
+    return identities
+
+
+def _pool_prompt_revision() -> str:
+    from tasks.conductor.pool_runtime import FOUR_WORKER_RUNTIME_PROFILE
+    return FOUR_WORKER_RUNTIME_PROFILE["prompts"]["d16_revision"]
+
+
+def _cycle_declaration() -> dict[str, Any]:
+    """344_s P1-1: the COMPLETE cycle-specific declaration (328_f
+    §5) frozen NOW — generator/profile versions, the exact
+    90-row/4,020-step geometry, worker ids, the prompt revision,
+    and the SEMANTIC and RENDERED-PROMPT schedule hashes (a
+    generator semantic change without a version bump is caught
+    here at regeneration)."""
+    from tasks.conductor import oracle, program
+    from tasks.conductor.policy import policy_messages
+    from .dev_support import WORKER_IDS
+    from .p0_val import alpha_normalize, normalized_latent_semantics
+    observations = cycle_cohort_observations()
+    versions = {(obs["latent"]["generator_version"],
+                 obs["latent"]["difficulty_profile_version"])
+                for obs in observations}
+    if len(versions) != 1:
+        raise InfrastructureError(
+            "the cycle cohort spans multiple generator/profile "
+            "versions")
+    generator_version, profile_version = next(iter(versions))
+    rows = [
+        {"observation_id": obs["observation_id"],
+         "cell_id": obs["cell_id"],
+         "renderer_id": obs["renderer_id"],
+         "num_nodes": obs["num_nodes"],
+         "assignments": len(oracle.enumerate_assignments(
+             obs["num_nodes"]))}
+        for obs in observations]
+    prompts = []
+    for obs in observations:
+        steps = [{"subtask": s["subtask"],
+                  "resource": s["resource"], "access": s["access"]}
+                 for s in program.workflow_steps(obs["latent"])]
+        prompts.append(alpha_normalize(policy_messages(
+            obs["instance"], steps)[1]["content"]))
+    return {
+        "generator_version": generator_version,
+        "difficulty_profile_version": profile_version,
+        # the frozen pool profile's prompt revision (the
+        # authoritative in-code source; the val declaration
+        # recorded the same value, cross-checked in tests)
+        "prompt_revision": _pool_prompt_revision(),
+        "worker_ids": list(WORKER_IDS),
+        "observations": rows,
+        "planned_step_executions": sum(
+            row["assignments"] * row["num_nodes"] for row in rows),
+        "semantic_schedule_sha256": content_sha256(
+            [normalized_latent_semantics(obs["latent"])
+             for obs in observations]),
+        "rendered_prompt_schedule_sha256": content_sha256(prompts),
+    }
+
+
+def _val_lock_overlap() -> dict[str, Any]:
+    """The Unit-V lock's bound three-way overlap result — the
+    cycle record RE-ASSERTS the frozen numbers (never
+    re-measures)."""
+    payload = _val_lock_payload()
     return {key: dict(payload["overlap_report"][key])
             for key in ("val_vs_cycle", "cycle_vs_training")}
 
@@ -276,8 +414,10 @@ def build_cycle_record() -> dict[str, Any]:
         "checkpoint_rule": config["checkpoint_rule"],
         "partial_reveal_rule": config["partial_reveal_rule"],
         "materialization_plan": config["materialization_plan"],
+        "report_schema": config["report_schema"],
         "ordered_observation_ids": [obs["observation_id"]
                                     for obs in observations],
+        "declaration": _cycle_declaration(),
         "execution_identities": _val_execution_identities(),
         "overlap_reassertion": _val_lock_overlap(),
         "val_lock_sha256": VAL_LOCK_SHA256,
@@ -342,18 +482,70 @@ SUPPORT_SURFACE_LOCK_SHA256 = \
 
 R_CYCLE_FINAL_GPU_HOURS = 1.0
 
-_ITEMIZED_CLOSURE = (
-    ("cycle_surface_materialization", 0.0637,
-     "the MEASURED Unit-V cost for the identical 90-observation "
-     "shape (closeout 929e1724…, 342_f) — the direct calibrator"),
-    ("two_checkpoint_inference", 0.2325,
-     "2 checkpoints × 90 evaluation groups × 4.65 s/group (the "
-     "C2-measured generation rate, 299_f)"),
-    ("verification_traces_archival", 0.05,
-     "conservative margin: terminal verification (~minutes CPU), "
-     "trace flush, deterministic-gzip archival (the Unit-V "
-     "closure measured well under this)"),
-)
+# 344_s P1-3: named FROZEN allowances (constants, not measurements)
+VERIFICATION_ARCHIVAL_ALLOWANCE_GPU_HOURS = 0.05
+CHECKPOINT_LOAD_STARTUP_ALLOWANCE_GPU_HOURS = 0.10
+
+
+def _itemized_closure() -> list[dict[str, Any]]:
+    """344_s P1-3: every measured item is DERIVED from its
+    authenticated source at build time — never hand-entered:
+    the materialization cost from the verified Unit-V closeout;
+    the inference rate from the AUTHENTICATED C2 sample record
+    (wall_seconds / groups); the two allowances are named frozen
+    constants."""
+    import hashlib as _hashlib
+    from .ledger import LEDGER_PATH, ledger_head, verify_ledger_head
+    from .p0_replay import C2_EVIDENCE_DIR, REPLAY_SOURCE
+    config = _validated_config()
+    parent = config["lineage"]["parent_entry_sha256"]
+    entries = verify_ledger_head(ledger_head(), LEDGER_PATH)
+    val_closeouts = [e for e in entries
+                     if e["entry_sha256"] == parent]
+    if len(val_closeouts) != 1 or val_closeouts[0].get(
+            "terminal_status") != "complete":
+        raise InfrastructureError(
+            "the Unit-V closeout is not in the verified chain")
+    materialization = val_closeouts[0][
+        "budget_consumed_gpu_hours"]
+    record_path = Path(C2_EVIDENCE_DIR) / "sample_record.json"
+    raw = record_path.read_bytes()
+    if _hashlib.sha256(raw).hexdigest() != \
+            REPLAY_SOURCE["c2_record_file_sha256"]:
+        raise InfrastructureError(
+            "the C2 sample record does not authenticate under the "
+            "frozen pin")
+    c2 = json.loads(raw.decode("utf-8"))
+    wall = c2["execution_telemetry"]["wall_seconds"]
+    groups = c2["counters"]["generated_groups"]
+    seconds_per_group = wall / groups
+    inference = round(2 * 90 * seconds_per_group / 3600.0, 6)
+    return [
+        {"obligation": "cycle_surface_materialization",
+         "gpu_hours": materialization,
+         "source": ("DERIVED: budget_consumed_gpu_hours of the "
+                    f"verified Unit-V closeout {parent[:12]}… — "
+                    "the identical 90-observation shape")},
+        {"obligation": "two_checkpoint_inference",
+         "gpu_hours": inference,
+         "source": (f"DERIVED: 2 × 90 groups × ({wall} s / "
+                    f"{groups} groups = "
+                    f"{seconds_per_group:.5f} s/group) from the "
+                    "AUTHENTICATED C2 sample record "
+                    "(cc42c16b…)")},
+        {"obligation": "verification_traces_archival",
+         "gpu_hours": VERIFICATION_ARCHIVAL_ALLOWANCE_GPU_HOURS,
+         "source": ("NAMED FROZEN ALLOWANCE: terminal "
+                    "verification, trace flush, "
+                    "deterministic-gzip archival (the Unit-V "
+                    "closure measured well under this)")},
+        {"obligation": "checkpoint_loading_evaluator_startup",
+         "gpu_hours": CHECKPOINT_LOAD_STARTUP_ALLOWANCE_GPU_HOURS,
+         "source": ("NAMED FROZEN ALLOWANCE: policy/checkpoint "
+                    "loading for the two evaluated checkpoints "
+                    "plus evaluator startup (observed model+pool "
+                    "loads run 2-3 minutes each, rounded up)")},
+    ]
 
 
 def build_r_cycle_reserve_record() -> dict[str, Any]:
@@ -376,8 +568,9 @@ def build_r_cycle_reserve_record() -> dict[str, Any]:
     cohort_size = len(load_cycle_record()["ordered_observation_ids"])
     implied = cohort_size * 2.0 * seconds / 3600.0
     basis_ceiling = float(math.ceil(implied))
-    itemized_total = round(sum(hours for _, hours, _
-                               in _ITEMIZED_CLOSURE), 4)
+    items = _itemized_closure()
+    itemized_total = round(sum(item["gpu_hours"]
+                               for item in items), 4)
     itemized_ceiling = float(math.ceil(itemized_total))
     reserve = max(basis_ceiling, itemized_ceiling)
     if reserve != R_CYCLE_FINAL_GPU_HOURS:
@@ -404,9 +597,7 @@ def build_r_cycle_reserve_record() -> dict[str, Any]:
             "rounding": "ceil_to_whole_gpu_hours",
         },
         "itemized_closure_ceiling": {
-            "items": [{"obligation": name, "gpu_hours": hours,
-                       "source": source}
-                      for name, hours, source in _ITEMIZED_CLOSURE],
+            "items": items,
             "total_gpu_hours": itemized_total,
             "ceiling_gpu_hours": itemized_ceiling,
         },
@@ -465,7 +656,7 @@ def record_final_r_cycle(*, expected_head_sha256: str,
     records under their reviewed pins, then appends the
     `status: final` reserve_update — replacing the provisional
     5.0 — through the ledger's validator-gated final path."""
-    from .ledger import LEDGER_PATH, _append
+    from .ledger import LEDGER_PATH, _append, verify_ledger_head
     ledger_path = ledger_path or LEDGER_PATH
     cycle = load_cycle_record()
     reserve = load_r_cycle_reserve_record()
@@ -473,6 +664,30 @@ def record_final_r_cycle(*, expected_head_sha256: str,
         raise InfrastructureError(
             "the reserve record does not bind the committed cycle "
             "record")
+    # 344_s P1-4: the append is bound to the FROZEN lifecycle —
+    # the head must be EXACTLY the cycle record's frozen parent
+    # (the complete Unit-V closeout), and no final reserve may
+    # already exist
+    frozen_parent = cycle["lineage"]["parent_entry_sha256"]
+    if expected_head_sha256 != frozen_parent:
+        raise InfrastructureError(
+            "the final reserve is appended EXACTLY on the cycle "
+            "record's frozen parent — the Unit-V closeout head "
+            "(344_s P1-4)")
+    chain = verify_ledger_head(expected_head_sha256, ledger_path)
+    head_entry = chain[-1]
+    if head_entry["entry_sha256"] != frozen_parent \
+            or head_entry["kind"] != "closeout" \
+            or head_entry.get("terminal_status") != "complete":
+        raise InfrastructureError(
+            "the chain head is not the complete Unit-V closeout "
+            "(344_s P1-4)")
+    if any(e["kind"] == "reserve_update"
+           and e.get("reserve", {}).get("status") == "final"
+           for e in chain):
+        raise InfrastructureError(
+            "a final reserve already exists — it is recorded "
+            "exactly once (344_s P1-4)")
     basis = reserve["registered_basis"]
     entry = {
         "kind": "reserve_update",

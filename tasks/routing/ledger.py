@@ -403,9 +403,11 @@ def _append(entry: Mapping[str, Any],
                         f"{field} (330_f §3 — the real validators, "
                         "not truthy strings)")
             from .p0_cycle import (
+                R_CYCLE_RECORD_PATH,
                 load_cycle_record,
                 load_r_cycle_reserve_record,
             )
+            import hashlib as _hashlib
             cycle = load_cycle_record(
                 expected_sha256=entry["freeze"][
                     "cycle_record_sha256"])
@@ -413,12 +415,42 @@ def _append(entry: Mapping[str, Any],
                 expected_sha256=entry["freeze"][
                     "r_cycle_record_sha256"])
             if final["cycle_record_sha256"] != \
-                    cycle["record_sha256"] \
-                    or final["r_cycle_gpu_hours"] != \
-                    entry["reserve"]["r_cycle_gpu_hours"]:
+                    cycle["record_sha256"]:
                 raise InfrastructureError(
                     "the final reserve entry does not match the "
                     "validated reserve record (330_f §3)")
+            # 344_s cheap repair: the committed FILE bytes and the
+            # COMPLETE persisted reserve projection must match the
+            # strictly loaded record — same-rounding lookalikes
+            # refuse
+            actual_file = _hashlib.sha256(Path(
+                R_CYCLE_RECORD_PATH).read_bytes()).hexdigest()
+            if entry["freeze"]["r_cycle_record_file_sha256"] != \
+                    actual_file:
+                raise InfrastructureError(
+                    "the final reserve freeze does not bind the "
+                    "committed reserve-record bytes (344_s)")
+            basis = final["registered_basis"]
+            projection = {
+                "status": "final",
+                "r_cycle_gpu_hours": final["r_cycle_gpu_hours"],
+                "assumed_cohort_size":
+                    basis["assumed_cohort_size"],
+                "evaluation_multiplier":
+                    basis["evaluation_multiplier"],
+                "measured_seconds_per_observation":
+                    basis["measured_seconds_per_observation"],
+                "measured_support_gpu_hours":
+                    basis["measured_support_gpu_hours"],
+                "itemized_ceiling_gpu_hours":
+                    final["itemized_closure_ceiling"][
+                        "ceiling_gpu_hours"],
+                "rounding": basis["rounding"],
+            }
+            if dict(entry["reserve"]) != projection:
+                raise InfrastructureError(
+                    "the persisted reserve does not project "
+                    "exactly from the validated record (344_s)")
     record = dict(entry)
     record["previous_entry_sha256"] = (
         existing[-1]["entry_sha256"] if existing else None)

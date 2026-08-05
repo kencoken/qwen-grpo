@@ -6532,13 +6532,38 @@ def test_p0_cycle_record(monkeypatch):
     assert record["val_lock_sha256"] == p0_val.VAL_LOCK_SHA256
     weights = dict(map(tuple, record["natural_mixture_weights"]))
     assert all(abs(w - 1 / 90) < 1e-12 for w in weights.values())
-    # execution identities come from the AUTHENTICATED val
-    # evidence manifest
+    # 344_s P1-1: execution identities come from the
+    # VAL-LOCK-BOUND SURFACE LOCK (and the prelaunch manifest
+    # must agree)
+    surface_lock = json.loads(Path(
+        p0_val.VAL_EVIDENCE_DIR,
+        "surface/surface_lock.json").read_text("utf-8"))
     manifest = json.loads(Path(
         p0_val.VAL_EVIDENCE_DIR,
         "prelaunch/val_launch.json").read_text("utf-8"))
     for field, value in record["execution_identities"].items():
+        assert surface_lock[field] == value
         assert manifest[field] == value
+    # 344_s P1-1: the COMPLETE cycle declaration is frozen
+    declaration = record["declaration"]
+    assert declaration["planned_step_executions"] == 4020
+    assert len(declaration["observations"]) == 90
+    assert declaration["worker_ids"] == [0, 1, 2, 3]
+    assert declaration["prompt_revision"] == "rev10"
+    for key in ("generator_version",
+                "difficulty_profile_version",
+                "semantic_schedule_sha256",
+                "rendered_prompt_schedule_sha256"):
+        assert declaration[key]
+    # 344_s P1-2: the closed one-reveal reporting rule binds the
+    # frozen contract and the frozen template membership
+    schema = record["report_schema"]
+    assert schema["rule_id"] == "cycle-report-v1"
+    assert schema["science_contract_sha256"] == \
+        p0_contract.CONTRACT_SHA256
+    assert "45 of 90" in schema["repeated_vs_novel_templates"]
+    assert len(record["overlap_reassertion"][
+        "cycle_vs_training"]["affected_candidate_ids"]) == 45
     # overlap re-assertion binds the val lock's frozen numbers
     assert record["overlap_reassertion"]["val_vs_cycle"][
         "alpha_prompt_collisions"] == 15
@@ -6584,6 +6609,23 @@ def test_p0_r_cycle_final_reserve(tmp_path, monkeypatch):
         item["gpu_hours"] for item in itemized["items"]), 4)
     assert itemized["total_gpu_hours"] <= \
         record["r_cycle_gpu_hours"]
+    # 344_s P1-3: every measured item DERIVES from its
+    # authenticated source
+    items = {item["obligation"]: item
+             for item in itemized["items"]}
+    val_closeout = [e for e in ledger.read_ledger()
+                    if e["entry_sha256"] ==
+                    p0_cycle.CYCLE_CONFIG["lineage"][
+                        "parent_entry_sha256"]][0]
+    assert items["cycle_surface_materialization"]["gpu_hours"] \
+        == val_closeout["budget_consumed_gpu_hours"]
+    assert items["two_checkpoint_inference"]["gpu_hours"] == \
+        round(2 * 90 * (3648.0 / 785) / 3600.0, 6)
+    assert items["verification_traces_archival"]["gpu_hours"] == \
+        p0_cycle.VERIFICATION_ARCHIVAL_ALLOWANCE_GPU_HOURS
+    assert items["checkpoint_loading_evaluator_startup"][
+        "gpu_hours"] == \
+        p0_cycle.CHECKPOINT_LOAD_STARTUP_ALLOWANCE_GPU_HOURS
     assert record["cycle_record_sha256"] == \
         p0_cycle.CYCLE_RECORD_SHA256
     with pytest.raises(InfrastructureError, match="exactly once"):
@@ -6618,6 +6660,11 @@ def test_p0_r_cycle_final_reserve(tmp_path, monkeypatch):
     ledger_copy = tmp_path / "ledger.md"
     shutil.copy2(ledger.LEDGER_PATH, ledger_copy)
     head = ledger.ledger_head(ledger_copy)
+    # 344_s P1-4: only the FROZEN parent head admits the append
+    with pytest.raises(InfrastructureError, match="frozen parent"):
+        p0_cycle.record_final_r_cycle(
+            expected_head_sha256="ab" * 32,
+            ledger_path=ledger_copy)
     appended = p0_cycle.record_final_r_cycle(
         expected_head_sha256=head, ledger_path=ledger_copy)
     entries = ledger.verify_ledger_head(
@@ -6626,6 +6673,12 @@ def test_p0_r_cycle_final_reserve(tmp_path, monkeypatch):
         entries, charter.CYCLE_ENVELOPE_GPU_HOURS)
     assert state["reserve"]["r_cycle_gpu_hours"] == 1.0
     assert state["reserve"]["status"] == "final"
+    # 344_s P1-4: a SECOND final reserve refuses (head has moved
+    # off the frozen parent, and the once-only rule also bites)
+    with pytest.raises(InfrastructureError, match="frozen parent"):
+        p0_cycle.record_final_r_cycle(
+            expected_head_sha256=appended["entry_sha256"],
+            ledger_path=ledger_copy)
     # a final append WITHOUT the cycle-record bindings refuses
     with pytest.raises(InfrastructureError, match="must bind"):
         ledger._append(

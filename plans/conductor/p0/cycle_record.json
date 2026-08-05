@@ -55,7 +55,653 @@
    4
   ]
  },
- "cycle_config_sha256": "2b404642a06c0441246d5d634889d34e4fede99f48dcfb92bba9e65559d125d6",
+ "cycle_config_sha256": "843521a836f63c78979ed8af053bcd1b2688b418639a398bf6e2637daecdb206",
+ "declaration": {
+  "difficulty_profile_version": "dp-2bcb6373340a8a79",
+  "generator_version": "specs-v0.8+0a0",
+  "observations": [
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00000:9cb5dfe6:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00000:9cb5dfe6:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00000:9cb5dfe6:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00001:27fa2fd7:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00001:27fa2fd7:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00001:27fa2fd7:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00002:7fb8823f:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00002:7fb8823f:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00002:7fb8823f:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00003:d85caabb:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00003:d85caabb:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00003:d85caabb:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00004:1f940368:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00004:1f940368:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "code_atomic",
+    "num_nodes": 1,
+    "observation_id": "code_atomic:routing_dev_cycle:00004:1f940368:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00000:c22b7fa4:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00000:c22b7fa4:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00000:c22b7fa4:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00001:f661d0f6:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00001:f661d0f6:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00001:f661d0f6:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00002:d170319f:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00002:d170319f:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00002:d170319f:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00003:e61b4b94:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00003:e61b4b94:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00003:e61b4b94:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00004:2dd8f738:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00004:2dd8f738:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 64,
+    "cell_id": "fork_join",
+    "num_nodes": 3,
+    "observation_id": "fork_join:routing_dev_cycle:00004:2dd8f738:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00000:1c844bb1:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00000:1c844bb1:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00000:1c844bb1:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00001:f1d40cf8:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00001:f1d40cf8:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00001:f1d40cf8:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00002:7e2ae5fb:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00002:7e2ae5fb:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00002:7e2ae5fb:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00003:fe7bd0a6:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00003:fe7bd0a6:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00003:fe7bd0a6:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00004:fb2103aa:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00004:fb2103aa:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "lookup_atomic",
+    "num_nodes": 1,
+    "observation_id": "lookup_atomic:routing_dev_cycle:00004:fb2103aa:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00000:3d7721a2:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00000:3d7721a2:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00000:3d7721a2:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00001:d957f043:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00001:d957f043:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00001:d957f043:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00002:2ccd3a4f:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00002:2ccd3a4f:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00002:2ccd3a4f:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00003:3e900cdb:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00003:3e900cdb:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00003:3e900cdb:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00004:6b8df595:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00004:6b8df595:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "lookup_math",
+    "num_nodes": 2,
+    "observation_id": "lookup_math:routing_dev_cycle:00004:6b8df595:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00000:236197c9:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00000:236197c9:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00000:236197c9:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00001:75ef7374:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00001:75ef7374:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00001:75ef7374:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00002:caf22bec:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00002:caf22bec:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00002:caf22bec:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00003:d58276bf:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00003:d58276bf:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00003:d58276bf:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00004:ae44c2f8:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00004:ae44c2f8:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 4,
+    "cell_id": "math_atomic",
+    "num_nodes": 1,
+    "observation_id": "math_atomic:routing_dev_cycle:00004:ae44c2f8:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00000:1bbfb452:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00000:1bbfb452:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00000:1bbfb452:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00001:1afb6c7e:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00001:1afb6c7e:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00001:1afb6c7e:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00002:42fa1514:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00002:42fa1514:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00002:42fa1514:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00003:00e88c15:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00003:00e88c15:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00003:00e88c15:bound_var:private",
+    "renderer_id": "bound_var"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00004:b90f184b:resource_first:private",
+    "renderer_id": "resource_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00004:b90f184b:goal_first:private",
+    "renderer_id": "goal_first"
+   },
+   {
+    "assignments": 16,
+    "cell_id": "math_code",
+    "num_nodes": 2,
+    "observation_id": "math_code:routing_dev_cycle:00004:b90f184b:bound_var:private",
+    "renderer_id": "bound_var"
+   }
+  ],
+  "planned_step_executions": 4020,
+  "prompt_revision": "rev10",
+  "rendered_prompt_schedule_sha256": "c7bda9b2b0f0b064b60d5aebd59bab6fcf29dd1f6a2c3d5b74f76cfb25f7d37f",
+  "semantic_schedule_sha256": "0a0644c11c4e4f7c294ddde6aee4f1d1044448056b67bea7d3e4893d4113975a",
+  "worker_ids": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
  "development_only": true,
  "evaluation": {
   "base_seed": 20260805,
@@ -89,6 +735,7 @@
  },
  "materialization_plan": {
   "budget_source": "the final R_cycle reserve",
+  "exact_regeneration": "BEFORE any worker call at synthesis, the record must load through load_cycle_record \u2014 which REGENERATES the cohort, the declaration geometry, and the semantic/rendered-prompt schedule hashes from the frozen generator and refuses on ANY drift (344_s P1-1: a generator semantic change without a version bump is caught by the schedule hashes)",
   "ledger_kind": "cycle_closure",
   "machinery": "the frozen \u00a74 machinery (dev declaration \u2192 materialize_dev_support \u2192 surface lock), validated against THIS record's cohort and execution identities"
  },
@@ -662,12 +1309,29 @@
   }
  },
  "partial_reveal_rule": "if cycle-surface materialization partially reveals outcomes, only an EXACT design-preserving resume/retry is permitted; otherwise the cohort is retired and cycle evaluation is reported UNAVAILABLE \u2014 never re-selected (330_f \u00a75)",
- "record_sha256": "c1caf158cbac0ec8e1daf75a3b9330df1a1304d814053c036871ee7b9f76bb8f",
+ "record_sha256": "d617ab5fbb609fc89c250e6a79627b2ed28e54603fa1fed2253d855a3abaccdc",
  "renderers": [
   "resource_first",
   "goal_first",
   "bound_var"
  ],
+ "report_schema": {
+  "aggregation": "the bound natural-mixture weights (1/90) and the equal-cell view; per cell x renderer strata",
+  "comparisons": "PAIRED checkpoint-zero vs final, per observation under common random numbers; aggregated at LATENT level (5 clusters per cell) \u2014 descriptive only, never completion-level precision",
+  "estimands": "the frozen P0ScienceContract rules BY REFERENCE, computed by p0_estimands: q1-counted-v1 (bridge semantics do not apply here \u2014 counted events reported descriptively per cell), c2-eligibility-v1, q2-conditional-v1 (zero denominator = undefined), group contrasts",
+  "malformed_handling": "the frozen ladder: malformed scores 0 and is NEVER dropped; invalid-completion rate reported with raw numerators/denominators",
+  "metrics": [
+   "mean_reward (per checkpoint; denominator 720 completions)",
+   "family_correctness_mean (C1; denominator 720)",
+   "q1_counted_groups_by_cell (denominator 15 groups per cell per checkpoint)",
+   "q2_eligibility_and_conditional_per_direction (raw numerators and denominators; zero denominator = undefined)",
+   "zero_variance_rate (denominator 90 groups)",
+   "invalid_completion_rate (denominator 720)"
+  ],
+  "repeated_vs_novel_templates": "RETAINED, descriptive only, using EXACTLY the frozen membership: the cycle_vs_training affected_candidate_ids bound in this record's overlap re-assertion (45 of 90 cycle observations) \u2014 never recomputed post-reveal",
+  "rule_id": "cycle-report-v1",
+  "science_contract_sha256": "d47a63ff435e3b2964f09f0d97f287ee722cae5bbc7df58104d7e10c6d519517"
+ },
  "seed_schedule_sha256": "89076715ba7bef4d2a8077a75961f6aa4c6785ace98a8a1f48e736b8b26c16c7",
  "val_lock_sha256": "2aecdf28ad25cae10e494aa9fc1a95138a9feb5a29ab0636314b847987caf19d",
  "visibility": "private"
