@@ -821,26 +821,22 @@ def admit_p0_execution(*, execution_manifest: Mapping[str, Any],
     }
 
 
-# --- the P0 execution runner (rev2, response to 363_s) -------------------------
+# --- the P0 execution runner (rev3, response to 365_s) -------------------------
 # THE runner invariant (361_f): trainer inputs come ONLY from
-# `admit_p0_execution`'s returned ADMITTED bundle — no path in
-# this module appends a `training_run` through the lower-level
-# ledger helper. Lifecycle states (363_s F4): a RESUMABLE
-# INTERRUPTION seals partial evidence, retains every checkpoint,
-# records cumulative elapsed time, and leaves the launch OPEN;
-# `resume_p0_run` continues under the ORIGINAL launch and the
-# CUMULATIVE ten-hour deadline; `terminally_abort_p0` is the only
-# operation that closes the launch aborted.
+# `admit_p0_execution`'s returned ADMITTED bundle. Lifecycle
+# (363_s F4 / 365_s): a RESUMABLE INTERRUPTION seals partial
+# evidence, retains every checkpoint, and leaves the launch OPEN;
+# accounting lives in a HASH-CHAINED append-only session log
+# (365_s: mutable interruption.json is gone — a SIGKILL'd session
+# gets a conservative wall-clock-inferred end at the next
+# session); cadence completion is an ATOMIC per-index record
+# written only after the FULL evaluation validates (365_s F2);
+# resume derives from those records, never from bundle existence;
+# trace segments carry checkpoint-authorized prefixes and
+# post-checkpoint tails are EXCLUDED evidence (365_s F3).
 
 P0_RUN_ID = "routing-dev-p0-v1"
 
-# The EXECUTED checkpoint-evaluation realization (363_s F2): the
-# identity's evaluation block freezes the BATCHED per-observation
-# rule explicitly — one slot-0 CRN seed per observation seeds a
-# single batched generation of group_size sequences (the
-# smoke-priced operation; slots 1..7 of the 720-entry schedule
-# are NOT consumed by checkpoint evaluation). The realization pin
-# covers the 90 executed seeds in lock order.
 P0_EVAL_REALIZATION_SHA256 = \
     "a8e9cf7322a008889414c68ce133bb50cd82fe960340d079b0f1a66fd7f2f802"
 
@@ -854,6 +850,16 @@ P0_RUNNER_OUTSTANDING = (
 def _check_deadline(deadline: float, where: str) -> None:
     from .p0_smoke import _check_deadline as _impl
     _impl(deadline, where)
+
+
+def _require_nonneg_finite(value: Any, where: str) -> None:
+    import math
+    if isinstance(value, bool) or not isinstance(
+            value, (int, float)) or not math.isfinite(value) \
+            or value < 0:
+        raise InfrastructureError(
+            f"{where}: must be a non-negative finite number, got "
+            f"{value!r}")
 
 
 def p0_eval_seed_realization() -> list[tuple[str, int]]:
@@ -877,10 +883,7 @@ def p0_eval_seed_realization() -> list[tuple[str, int]]:
 
 def prepare_p0_launch(*, run_dir: str | Path = P0_RUN_ROOT,
                       _environment_builder=None) -> dict[str, Any]:
-    """Phase 1 (CPU): persist the prelaunch inputs exactly once —
-    the environment manifest, the execution manifest, and byte
-    copies of the two reviewed artifacts. The manifest hash goes
-    to the narrow prelaunch review."""
+    """Phase 1 (CPU): persist the prelaunch inputs exactly once."""
     from .p0_launch import LAUNCH_FREEZE_PATH
     from .support_run import _default_environment
     run_dir = Path(run_dir)
@@ -905,12 +908,162 @@ def prepare_p0_launch(*, run_dir: str | Path = P0_RUN_ROOT,
     return manifest
 
 
+# --- the hash-chained session log (365_s: authenticated accounting) ------------
+
+_SESSION_LOG = "sessions.jsonl"
+
+
+def _append_session_entry(run_dir: Path,
+                          entry: dict[str, Any]) -> dict[str, Any]:
+    """Append-only, hash-chained: each entry binds the previous
+    entry's hash; elapsed values are validated finite here (a NaN
+    can never disable the deadline comparison)."""
+    log_path = Path(run_dir) / _SESSION_LOG
+    entries = _load_sessions(run_dir) if log_path.exists() else []
+    prev = entries[-1]["entry_sha256"] if entries else None
+    if "elapsed_seconds" in entry:
+        _require_nonneg_finite(entry["elapsed_seconds"],
+                               "session elapsed_seconds")
+    body = {**entry, "prev_sha256": prev}
+    body["entry_sha256"] = content_sha256(body)
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(body, sort_keys=True) + "\n")
+    return body
+
+
+def _load_sessions(run_dir: Path) -> list[dict[str, Any]]:
+    """Load and VALIDATE the chain: hashes link, kinds are known,
+    every elapsed value is finite and non-negative, and session
+    indices are coherent."""
+    log_path = Path(run_dir) / _SESSION_LOG
+    if not log_path.exists():
+        return []
+    entries = []
+    prev = None
+    for line in log_path.read_text("utf-8").splitlines():
+        entry = json.loads(line)
+        body = {k: v for k, v in entry.items()
+                if k != "entry_sha256"}
+        if entry.get("prev_sha256") != prev \
+                or content_sha256(body) != entry["entry_sha256"]:
+            raise InfrastructureError(
+                "session log chain is broken or rewritten (365_s)")
+        if entry["kind"] not in ("session_start", "session_end",
+                                 "session_end_inferred"):
+            raise InfrastructureError(
+                f"unknown session entry kind {entry['kind']!r}")
+        if "elapsed_seconds" in entry:
+            _require_nonneg_finite(entry["elapsed_seconds"],
+                                   "session elapsed_seconds")
+        prev = entry["entry_sha256"]
+        entries.append(entry)
+    return entries
+
+
+def _session_state(run_dir: Path) -> dict[str, Any]:
+    """Derived state: cumulative validated elapsed, the next
+    session index, and whether the last session is unclosed (a
+    SIGKILL/power loss — its conservative wall-clock end is
+    appended by the CALLER before starting a new session)."""
+    entries = _load_sessions(run_dir)
+    ends = {e["session_index"]: e for e in entries
+            if e["kind"] in ("session_end",
+                             "session_end_inferred")}
+    starts = {e["session_index"]: e for e in entries
+              if e["kind"] == "session_start"}
+    cumulative = sum(e["elapsed_seconds"] for e in ends.values())
+    unclosed = sorted(set(starts) - set(ends))
+    if len(unclosed) > 1:
+        raise InfrastructureError(
+            "more than one unclosed session — the log is "
+            "incoherent")
+    return {"entries": entries, "starts": starts, "ends": ends,
+            "cumulative_elapsed_seconds": cumulative,
+            "unclosed_session_index":
+                unclosed[0] if unclosed else None,
+            "next_session_index": len(starts) + 1}
+
+
+def _close_killed_session(run_dir: Path, state: dict[str, Any]
+                          ) -> dict[str, Any]:
+    """365_s: a session that recorded no end (SIGKILL, power
+    loss) is closed with a CONSERVATIVE wall-clock-inferred
+    elapsed — the interval from its recorded start to now."""
+    import time as _time
+    index = state["unclosed_session_index"]
+    if index is None:
+        return state
+    start = state["starts"][index]
+    inferred = _time.time() - float(start["wall_start_utc"])
+    _require_nonneg_finite(inferred, "inferred session elapsed")
+    _append_session_entry(run_dir, {
+        "kind": "session_end_inferred", "session_index": index,
+        "elapsed_seconds": inferred,
+        "status": "killed_no_graceful_end"})
+    return _session_state(run_dir)
+
+
+# --- atomic per-cadence completion records (365_s F2) --------------------------
+
+def _cadence_record_path(run_dir: Path, update_index: int) -> Path:
+    return Path(run_dir) / "cadence" / f"upd{update_index}.json"
+
+
+def _write_cadence_record(run_dir: Path,
+                          record: dict[str, Any]) -> None:
+    """ATOMIC (tmp + rename), written ONLY after the full
+    evaluation validated — bundle existence NEVER implies a
+    completed cadence point."""
+    import os
+    path = _cadence_record_path(run_dir, record["update_index"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        raise InfrastructureError(
+            f"{path} exists — a cadence point completes exactly "
+            "once")
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(record, indent=1, sort_keys=True)
+                   + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _load_cadence_records(run_dir: Path,
+                          cadence: list[int]) -> dict[str, Any]:
+    """The completed set is a CONTIGUOUS cadence prefix; each
+    record carries its ACTUAL measured timings and proof (never
+    reconstructed)."""
+    records: dict[str, Any] = {}
+    for update_index in cadence:
+        path = _cadence_record_path(run_dir, update_index)
+        if not path.exists():
+            break
+        record = json.loads(path.read_text("utf-8"))
+        if set(record) != {"update_index", "bundle_seconds",
+                           "eval_seconds", "checkpoint_proof",
+                           "hf_checkpoint_dir"}:
+            raise InfrastructureError(
+                f"cadence record upd{update_index}: closed schema")
+        _require_nonneg_finite(record["bundle_seconds"],
+                               "cadence bundle_seconds")
+        _require_nonneg_finite(record["eval_seconds"],
+                               "cadence eval_seconds")
+        if record["update_index"] != update_index:
+            raise InfrastructureError(
+                f"cadence record upd{update_index}: index "
+                "mismatch")
+        records[str(update_index)] = record
+    for update_index in cadence[len(records):]:
+        if _cadence_record_path(run_dir, update_index).exists():
+            raise InfrastructureError(
+                "cadence records are not a contiguous prefix")
+    return records
+
+
 def _p0_identities(manifest: Mapping[str, Any],
                    training_lock: Mapping[str, Any],
                    rows, seed: int) -> dict[str, str]:
-    """363_s conformance: renderer/surface/worker/cache fields
-    derive from the admitted rows and the AUTHENTICATED training
-    surface lock — never placeholders or duplicated hashes."""
+    """Renderer/surface/worker/cache fields derive from the
+    admitted rows and the AUTHENTICATED training surface lock."""
     from .resume_validation import schedule_identities
     return {
         "routing_source_sha256": manifest["routing_source_sha256"],
@@ -927,32 +1080,52 @@ def _p0_identities(manifest: Mapping[str, Any],
 
 
 def _cast_and_assert_lora(trainer) -> None:
-    """363_s conformance: the explicit FP32 LoRA cast with the
-    frozen key set asserted (count + sorted-keys hash + dtype)."""
-    import hashlib as _hashlib
-
+    """The explicit FP32 LoRA cast; the frozen key set asserted
+    the C2 WAY (365_s F1): `content_sha256(sorted(keys))` over
+    the saved-map key naming (the state-dict LoRA keys)."""
     import torch
 
     from .p0_launch import _validated_profile
     profile = _validated_profile()
-    keys = []
     for name, parameter in trainer.model.named_parameters():
         if "lora" in name:
             parameter.data = parameter.data.to(torch.float32)
-            keys.append(name)
+    saved_keys = sorted(k for k in trainer.model.state_dict()
+                        if "lora" in k)
     expected = profile["lora_key_set"]
-    normalized = sorted(keys)
-    digest = _hashlib.sha256(
-        json.dumps(normalized).encode("utf-8")).hexdigest()
-    if len(normalized) != expected["count"] \
-            or digest != expected["sorted_keys_sha256"]:
+    if len(saved_keys) != expected["count"] \
+            or content_sha256(saved_keys) \
+            != expected["sorted_keys_sha256"]:
         raise InfrastructureError(
-            f"LoRA key set diverges from the frozen profile: "
-            f"{len(normalized)} keys, digest {digest[:12]}…")
+            f"LoRA key set diverges from the frozen profile "
+            f"({len(saved_keys)} keys)")
     for name, parameter in trainer.model.named_parameters():
         if "lora" in name and parameter.dtype is not torch.float32:
             raise InfrastructureError(
                 f"{name}: LoRA parameter not FP32 after the cast")
+
+
+def _prepare_training_objects(trainer, final_index: int) -> tuple:
+    """365_s F1: Transformers DISCARDS a scheduler it created
+    itself when `train()` begins (`_created_lr_scheduler=True`).
+    The optimizer is created through the Trainer API; the
+    FULL-horizon scheduler is then created and marked
+    USER-PROVIDED so `train()` keeps it — checkpoint zero
+    therefore captures the exact objects training uses, and the
+    post-train reuse assertion proves it."""
+    trainer.create_optimizer()
+    trainer.create_scheduler(num_training_steps=final_index,
+                             optimizer=trainer.optimizer)
+    trainer._created_lr_scheduler = False
+    return trainer.optimizer, trainer.lr_scheduler
+
+
+def _unwrapped(obj):
+    inner = obj
+    for attr in ("optimizer", "scheduler"):
+        while hasattr(inner, attr):
+            inner = getattr(inner, attr)
+    return inner
 
 
 def _save_p0_checkpoint_bundle(trainer, accountant, identities,
@@ -960,10 +1133,9 @@ def _save_p0_checkpoint_bundle(trainer, accountant, identities,
                                parent_checkpoint: str | None,
                                hf_dir: Path | None
                                ) -> tuple[float, dict]:
-    """363_s F3: the P0-SPECIFIC v1 saver — correct run/segment/
-    parent lineage, the five-way counter cross-check at the
-    cadence index, the HF-checkpoint binding when one exists, and
-    an IMMEDIATE `checkpoint.validate_resume` from disk."""
+    """The P0-specific v1 saver (363_s F3): correct lineage, the
+    five-way counter cross-check, the HF binding, and an
+    IMMEDIATE validate_resume from disk."""
     import time as _time
 
     import torch
@@ -1032,12 +1204,9 @@ def _save_p0_checkpoint_bundle(trainer, accountant, identities,
 
 def _p0_eval_pass(trainer, out_path: Path, deadline: float,
                   eval_context: dict[str, Any]) -> float:
-    """One COMPLETE checkpoint evaluation: the frozen batched
-    per-observation realization (identity's
-    `checkpoint_eval_realization`) against the AUTHENTICATED val
-    surface, inside `isolated_rng`, sealed inside the pass,
-    deadline-checked at every observation; EVERY frozen sampling
-    field is consumed (363_s conformance)."""
+    """One COMPLETE checkpoint evaluation under the frozen batched
+    realization, sealed inside the pass; every frozen sampling
+    field consumed."""
     import time as _time
 
     import torch
@@ -1124,12 +1293,32 @@ def _p0_eval_pass(trainer, out_path: Path, deadline: float,
     return _time.monotonic() - started
 
 
+def _exclude_partial_evidence(run_dir: Path, name: str,
+                              session_index: int) -> None:
+    """365_s F2/F3: partial or superseded evidence is MOVED to
+    `excluded/` (retained, hashed into closeouts, never part of
+    the learning trajectory) — it is never deleted and never
+    silently overwritten."""
+    source = run_dir / "sealed" / name
+    if not source.exists():
+        return
+    excluded = run_dir / "excluded"
+    excluded.mkdir(exist_ok=True)
+    target = excluded / f"s{session_index}_{name}"
+    if target.exists():
+        raise InfrastructureError(
+            f"{target} exists — excluded evidence is never "
+            "overwritten")
+    source.rename(target)
+
+
 def _p0_cadence_event(context: dict[str, Any],
                       update_index: int,
                       hf_dir: Path | None) -> None:
-    """One cadence event: deadline BEFORE, the RETAINED P0 bundle
-    (validated immediately), the CRN evaluation, deadline AFTER
-    both operations (363_s F6)."""
+    """One cadence event: deadline BEFORE; the RETAINED bundle
+    (validated immediately); the FULL evaluation; deadline AFTER
+    each operation; then — and only then — the ATOMIC
+    cadence-complete record (365_s F2)."""
     deadline = context["deadline"]
     run_dir = context["run_dir"]
     _check_deadline(deadline, f"cadence update {update_index}")
@@ -1146,23 +1335,23 @@ def _p0_cadence_event(context: dict[str, Any],
         deadline, context["eval_context"])
     _check_deadline(deadline,
                     f"post-evaluation update {update_index}")
-    context["record_sink"]["checkpoints"][str(update_index)] = {
+    record = {
+        "update_index": update_index,
         "bundle_seconds": bundle_seconds,
         "eval_seconds": eval_seconds,
         "checkpoint_proof": proof,
+        "hf_checkpoint_dir": str(hf_dir) if hf_dir else None,
     }
-    context["record_sink"]["cadence_completed"].append(
-        update_index)
+    _write_cadence_record(run_dir, record)
     context["last_checkpoint_sha256"] = proof["checkpoint_sha256"]
 
 
 def _make_p0_callback(context: dict[str, Any],
                       cadence_updates, already_completed=()):
-    """Lifecycle ordering as reviewed (352_s/355_s): deadline
-    BEFORE the step; consumption at the optimizer; at each
-    remaining intermediate index the callback requests an HF save
+    """Deadline BEFORE the step; consumption at the optimizer; at
+    each REMAINING intermediate the callback requests an HF save
     and the cadence event fires at `on_save` (the 235_s F2
-    pattern — the bundle binds the HF checkpoint it shadows)."""
+    binding)."""
     from transformers import TrainerCallback
 
     intermediates = set(cadence_updates[1:-1]) \
@@ -1200,39 +1389,31 @@ def _make_p0_callback(context: dict[str, Any],
 
 
 def _record_resumable_interruption(run_dir: Path,
+                                   session_index: int,
                                    session_elapsed: float,
                                    error: BaseException) -> None:
-    """363_s F4: a RESUMABLE interruption — partial evidence
-    sealed, every checkpoint retained, CUMULATIVE elapsed time
-    recorded, the launch left OPEN (no ledger write). A failure
-    here propagates and the launch stays visibly blocked."""
+    """A RESUMABLE interruption: partial evidence sealed, every
+    checkpoint retained, the session closed in the HASH-CHAINED
+    log — no ledger write, the launch stays OPEN."""
     from .p0_smoke import _seal_file
     sealed = run_dir / "sealed"
     if sealed.exists():
         for raw in sorted(sealed.iterdir()):
             if raw.is_file() and not raw.name.endswith(".gz"):
                 _seal_file(raw)
-    marker = run_dir / "interruption.json"
-    prior = {"cumulative_elapsed_seconds": 0.0,
-             "interruption_count": 0}
-    if marker.exists():
-        prior = json.loads(marker.read_text("utf-8"))
-    marker.write_text(json.dumps({
-        "cumulative_elapsed_seconds":
-            prior["cumulative_elapsed_seconds"]
-            + float(session_elapsed),
-        "interruption_count": prior["interruption_count"] + 1,
-        "last_error": f"{type(error).__name__}: {error}",
-    }, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    _append_session_entry(run_dir, {
+        "kind": "session_end", "session_index": session_index,
+        "elapsed_seconds": float(session_elapsed),
+        "status": "interrupted",
+        "last_error": f"{type(error).__name__}: {error}"})
 
 
 def terminally_abort_p0(*, run_dir: str | Path = P0_RUN_ROOT,
                         question: str, reason: str,
                         ledger_path=None) -> dict[str, Any]:
     """The ONLY operation that closes an interrupted P0 launch
-    aborted (363_s F4) — an explicit, deliberate retirement, never
-    an automatic reaction. Binds the sanitized inventory and the
-    CUMULATIVE consumed time."""
+    aborted — explicit, binding the sanitized inventory and the
+    validated CUMULATIVE consumed time from the session chain."""
     from .ledger import (
         LEDGER_PATH,
         append_ledger_entry,
@@ -1259,11 +1440,9 @@ def terminally_abort_p0(*, run_dir: str | Path = P0_RUN_ROOT,
            == launch["entry_sha256"]):
         raise InfrastructureError(
             "this launch is already closed")
-    marker = run_dir / "interruption.json"
-    cumulative = 0.0
-    if marker.exists():
-        cumulative = json.loads(marker.read_text("utf-8"))[
-            "cumulative_elapsed_seconds"]
+    state = _session_state(run_dir)
+    state = _close_killed_session(run_dir, state)
+    cumulative = state["cumulative_elapsed_seconds"]
     return append_ledger_entry(
         {"kind": "closeout", "question": question,
          "motivating_evidence": "P0 TERMINALLY ABORTED (explicit)",
@@ -1289,37 +1468,59 @@ _P0_RECORD_KEYS = frozenset({
     "cadence_completed", "checkpoints", "whole_run_seconds",
     "sealed_sha256", "development_only"})
 
+_BUNDLE_FILES = frozenset({
+    "adapter_state.safetensors", "optimizer_state.pt",
+    "scheduler_state.pt", "rng_state.json",
+    "checkpoint_record.json"})
 
-def _require_nonneg_finite(value: Any, where: str) -> None:
-    import math
-    if isinstance(value, bool) or not isinstance(
-            value, (int, float)) or not math.isfinite(value) \
-            or value < 0:
-        raise InfrastructureError(
-            f"{where}: must be a non-negative finite number, got "
-            f"{value!r}")
+
+def _expected_p0_identities(manifest: Mapping[str, Any]
+                            ) -> dict[str, str]:
+    """365_s: the verifier re-derives ALL TEN identity fields
+    INDEPENDENTLY — from the manifest, the freeze under its pin,
+    the AUTHENTICATED training surface lock, and the frozen
+    schedule — and every bundle must match exactly."""
+    from .p0_launch import prepare_p0_dataset
+    from .p0_replay import restore_extension_surface_if_absent
+    from .unit_c2_sample import UNIT_C2_CONFIG
+    training_surface = dev_support.load_dev_surface(
+        restore_extension_surface_if_absent(),
+        expected_lock_sha256=UNIT_C2_CONFIG[
+            "extension_surface_lock_sha256"])
+    freeze = load_real_launch_freeze()
+    preparation = prepare_p0_dataset(
+        Path("plans/conductor/p0/p0_launch_freeze.json"),
+        manifest["launch_freeze_sha256"])
+    return _p0_identities(manifest, training_surface["lock"],
+                          preparation["trainer_rows"],
+                          freeze.runtime.seed)
 
 
 def verify_p0_run(run_dir: str | Path, *, ledger_path,
                   expected_head_sha256: str | None
                   ) -> dict[str, Any]:
-    """The P0 terminal verifier (hardened per 363_s F5): the
-    chain-authenticated launch; the EXACT frozen cadence and
-    checkpoint/evaluation/sealed inventories; finite nonnegative
-    measurements within the ceiling; the exact training-group
-    sequence with eight completions per group; full checkpoint
-    validation from disk with the parent chain; byte-exact
-    prelaunch artifact copies; prelaunch-execution environment
-    attestation; the lifecycle status; the complete-closeout
-    terminal inventory."""
+    """The P0 terminal verifier (hardened per 363_s F5 + 365_s):
+    trusts NOTHING declared. Chain-authenticated launch; exact
+    frozen cadence from the loaded identity; every bundle
+    re-validated from disk against INDEPENDENTLY re-derived
+    identities, exact bundle inventories, the parent chain, and
+    every bound HF checkpoint; exact sealed inventories; every
+    evaluation trace re-read (90 observations in lock order,
+    eight completions/rewards each); the training trajectory
+    merged from the session log's AUTHORIZED segment prefixes
+    (post-checkpoint tails excluded) and compared to the frozen
+    schedule; HISTORICAL environment self-validation; the
+    session-chain accounting within the ceiling; the lifecycle
+    and closeout consistency."""
     import gzip
 
+    from . import checkpoint as ckpt
     from .ledger import verify_ledger_head
     from .p0_contract import load_p0_science_contract as _load_c
     from .p0_launch import LAUNCH_FREEZE_PATH
     from .p0_schedule import schedule_for_epochs
+    from .resume_validation import verify_hf_checkpoint_against_bundle
     from .support_run import _sha_file, attest_environment
-    from . import checkpoint as ckpt
     run_dir = Path(run_dir)
     chain = verify_ledger_head(expected_head_sha256, ledger_path)
     manifest = validate_p0_execution_manifest(json.loads(
@@ -1334,7 +1535,6 @@ def verify_p0_run(run_dir: str | Path, *, ledger_path,
             "launches binding this manifest — exactly one is "
             "required")
     launch = launches[0]
-    # byte-exact prelaunch artifact copies (363_s F5)
     prelaunch = run_dir / "prelaunch"
     if (prelaunch / "launch_freeze.json").read_bytes() \
             != Path(LAUNCH_FREEZE_PATH).read_bytes() \
@@ -1344,10 +1544,12 @@ def verify_p0_run(run_dir: str | Path, *, ledger_path,
         raise InfrastructureError(
             "prelaunch artifact copies are not byte-identical to "
             "the committed reviewed artifacts (363_s F5)")
+    # 365_s: HISTORICAL self-validation — evidence stays
+    # verifiable after later source commits
     frozen_env = json.loads(
         (prelaunch / "env_manifest.json").read_text("utf-8"))
-    if dev_support.validate_environment_manifest_binding(
-            frozen_env) != manifest["environment_manifest_sha256"]:
+    if dev_support.validate_env_self_hash(frozen_env) \
+            != manifest["environment_manifest_sha256"]:
         raise InfrastructureError(
             "the prelaunch environment does not bind to the "
             "manifest")
@@ -1355,8 +1557,7 @@ def verify_p0_run(run_dir: str | Path, *, ledger_path,
     if execute_env_path.exists():
         execute_env = json.loads(
             execute_env_path.read_text("utf-8"))
-        dev_support.validate_environment_manifest_binding(
-            execute_env)
+        dev_support.validate_env_self_hash(execute_env)
         attest_environment(frozen_env, execute_env)
     record = json.loads(
         (run_dir / "p0_record.json").read_text("utf-8"))
@@ -1375,8 +1576,6 @@ def verify_p0_run(run_dir: str | Path, *, ledger_path,
             or record["development_only"] is not True:
         raise InfrastructureError(
             "P0 record does not bind the authenticated launch")
-    # the EXACT frozen cadence (363_s F5 — never the record's
-    # declared collections)
     identity = load_p0_execution_identity(
         prelaunch / "execution_identity.json",
         expected_sha256=manifest["execution_identity_sha256"])
@@ -1396,20 +1595,38 @@ def verify_p0_run(run_dir: str | Path, *, ledger_path,
         raise InfrastructureError(
             "the recorded run time exceeds the ten-hour ceiling "
             "(363_s F6)")
-    # full checkpoint validation FROM DISK with the parent chain
-    identities = None
+    # the record's blocks must BE the persisted cadence records
+    persisted = _load_cadence_records(run_dir, cadence)
+    if set(persisted) != {str(i) for i in cadence}:
+        raise InfrastructureError(
+            "persisted cadence records do not cover the frozen "
+            "cadence")
+    # every bundle from disk against INDEPENDENT identities
+    expected_identities = _expected_p0_identities(manifest)
     parent = None
     for update_index in cadence:
         block = record["checkpoints"][str(update_index)]
-        _require_nonneg_finite(block["bundle_seconds"],
-                               f"bundle_seconds[{update_index}]")
-        _require_nonneg_finite(block["eval_seconds"],
-                               f"eval_seconds[{update_index}]")
+        cadence_record = persisted[str(update_index)]
+        if block != {"bundle_seconds":
+                     cadence_record["bundle_seconds"],
+                     "eval_seconds":
+                     cadence_record["eval_seconds"],
+                     "checkpoint_proof":
+                     cadence_record["checkpoint_proof"]}:
+            raise InfrastructureError(
+                f"update {update_index}: record block diverges "
+                "from the persisted cadence record (365_s)")
         bundle = run_dir / f"checkpoint_bundle_upd{update_index}"
+        on_disk = {p.name for p in bundle.iterdir()
+                   if p.is_file()}
+        if on_disk != set(_BUNDLE_FILES):
+            raise InfrastructureError(
+                f"update {update_index}: bundle inventory is not "
+                f"exact: {sorted(on_disk)[:6]} (365_s)")
         disk_record = json.loads(
             (bundle / "checkpoint_record.json")
             .read_text("utf-8"))
-        proof = block["checkpoint_proof"]
+        proof = cadence_record["checkpoint_proof"]
         if set(proof) != {"checkpoint_sha256",
                           "state_artifact_sha256", "counters"}:
             raise InfrastructureError(
@@ -1438,32 +1655,35 @@ def verify_p0_run(run_dir: str | Path, *, ledger_path,
             raise InfrastructureError(
                 f"update {update_index}: run/segment/parent "
                 "lineage diverges (363_s F3)")
-        if identities is None:
-            identities = dict(disk_record["identities"])
-            if identities.get("config_sha256") \
-                    != manifest["launch_freeze_sha256"] \
-                    or identities.get("routing_source_sha256") \
-                    != manifest["routing_source_sha256"]:
-                raise InfrastructureError(
-                    "checkpoint identities do not bind the "
-                    "manifest")
-        ckpt.validate_resume(disk_record, identities,
+        if dict(disk_record["identities"]) != expected_identities:
+            raise InfrastructureError(
+                f"update {update_index}: identities diverge from "
+                "the independent re-derivation (365_s)")
+        ckpt.validate_resume(disk_record, expected_identities,
                              bundle_dir=bundle)
+        hf_dir = disk_record["sampler_position"][
+            "hf_checkpoint_dir"]
+        if hf_dir is not None:
+            verify_hf_checkpoint_against_bundle(
+                bundle, Path(hf_dir), disk_record)
         parent = disk_record["checkpoint_sha256"]
-    # EXACT sealed inventory: eval per cadence index + the
-    # training-trace segments + the trainer log
+    # sessions: validated chain, all closed on a complete run
+    sessions = _session_state(run_dir)
+    starts = sessions["starts"]
+    if not starts:
+        raise InfrastructureError("no session records (365_s)")
+    # EXACT sealed inventory
     sealed = run_dir / "sealed"
     on_disk = {p.name for p in sealed.iterdir() if p.is_file()}
     eval_files = {f"eval_upd{i}.jsonl.gz" for i in cadence}
-    trace_segments = sorted(
-        name for name in on_disk
-        if name.startswith("training_trace")
-        and name.endswith(".jsonl.gz"))
-    expected_sealed = eval_files | set(trace_segments) \
+    segment_names = {
+        f"training_trace_s{k}.jsonl.gz" for k in starts}
+    present_segments = {n for n in segment_names if n in on_disk}
+    expected_sealed = eval_files | present_segments \
         | {"trainer_log_history.json.gz"}
     if on_disk != expected_sealed \
             or set(record["sealed_sha256"]) != expected_sealed \
-            or not trace_segments:
+            or not present_segments:
         raise InfrastructureError(
             "sealed inventory is not exactly the frozen set "
             "(363_s F5)")
@@ -1472,37 +1692,96 @@ def verify_p0_run(run_dir: str | Path, *, ledger_path,
             raise InfrastructureError(
                 f"sealed file {name} does not match the recorded "
                 "hash")
-    # the EXACT training-group sequence: the frozen schedule with
-    # eight completions per group (363_s F5)
+    # every evaluation trace re-read: 90 observations in lock
+    # order, eight completions and eight finite rewards (365_s)
+    lock_order = list(
+        _val_lock_for_identity()["ordered_observation_ids"])
+    for i in cadence:
+        rows = []
+        with gzip.open(sealed / f"eval_upd{i}.jsonl.gz", "rt",
+                       encoding="utf-8") as handle:
+            for line in handle:
+                rows.append(json.loads(line))
+        if [r["observation_id"] for r in rows] != lock_order:
+            raise InfrastructureError(
+                f"eval_upd{i}: observation order is not the lock "
+                "order (365_s)")
+        for r in rows:
+            if len(r["completions"]) != 8 \
+                    or len(r["rewards"]) != 8:
+                raise InfrastructureError(
+                    f"eval_upd{i}: not eight completions/rewards")
+            for value in r["rewards"]:
+                _require_nonneg_finite(value, "eval reward")
+    # the training trajectory: AUTHORIZED segment prefixes merged
+    # (post-checkpoint tails are excluded evidence, 365_s F3)
     contract = _load_c()
     freeze = load_real_launch_freeze(
         prelaunch / "launch_freeze.json")
     schedule = schedule_for_epochs(
         contract, freeze.launch_plan.launch_epochs)
-    observed: list[str] = []
-    for name in trace_segments:
-        with gzip.open(sealed / name, "rt",
+    ordered_sessions = sorted(starts)
+    merged: list[dict[str, Any]] = []
+    for position, k in enumerate(ordered_sessions):
+        segment_file = sealed / f"training_trace_s{k}.jsonl.gz"
+        if not segment_file.exists():
+            continue
+        start_index = int(starts[k]["start_group_index"])
+        # the NEXT session's resume point defines this segment's
+        # checkpoint-authorized prefix (365_s F3)
+        later = ordered_sessions[position + 1:]
+        authorized_end = (int(starts[later[0]]
+                              ["start_group_index"])
+                          if later else len(schedule))
+        with gzip.open(segment_file, "rt",
                        encoding="utf-8") as handle:
-            for line in handle:
+            for offset, line in enumerate(handle):
                 group = json.loads(line)
-                observed.append(group["observation_id"])
-                if len(group["completions"]) != 8:
+                index = group["global_group_index"]
+                if index != start_index + offset:
                     raise InfrastructureError(
-                        f"group {len(observed) - 1}: "
-                        f"{len(group['completions'])} completions "
-                        "!= 8 (363_s F5)")
-    if observed != schedule:
+                        f"segment s{k}: group index {index} out "
+                        "of sequence")
+                if len(group["completions"]) != 8 \
+                        or len(group["actions"]) != 8 \
+                        or len(group["assignments"]) != 8 \
+                        or len(group["rewards"]) != 8:
+                    raise InfrastructureError(
+                        f"segment s{k} group {index}: malformed "
+                        "row (365_s)")
+                if index < authorized_end:
+                    merged.append(group)
+    if [g["global_group_index"] for g in merged] != \
+            list(range(len(schedule))) or \
+            [g["observation_id"] for g in merged] != schedule:
         raise InfrastructureError(
-            f"the training trace ({len(observed)} groups) is not "
-            f"the exact frozen {len(schedule)}-group schedule "
-            "(363_s F5)")
-    # lifecycle status (363_s F5)
+            f"the merged authorized trajectory ({len(merged)} "
+            f"groups) is not the exact frozen "
+            f"{len(schedule)}-group schedule (363_s F5/365_s F3)")
+    # accounting within the ceiling; lifecycle consistency
+    cumulative = sessions["cumulative_elapsed_seconds"]
     closeouts = [e for e in chain if e["kind"] == "closeout"
                  and e.get("closes_entry_sha256")
                  == launch["entry_sha256"]]
     if closeouts:
         status = closeouts[0].get("terminal_status")
         if status == "complete":
+            if sessions["unclosed_session_index"] is not None:
+                raise InfrastructureError(
+                    "a complete run cannot carry an unclosed "
+                    "session (365_s)")
+            if cumulative > manifest["budget_gpu_hours"] * 3600.0:
+                raise InfrastructureError(
+                    "cumulative session time exceeds the ceiling "
+                    "(363_s F6)")
+            consumed = closeouts[0]["budget_consumed_gpu_hours"]
+            _require_nonneg_finite(consumed, "closeout consumed")
+            if consumed > manifest["budget_gpu_hours"] \
+                    or record["whole_run_seconds"] \
+                    > consumed * 3600.0 + 1.0:
+                raise InfrastructureError(
+                    "closeout consumed time is inconsistent with "
+                    "the record (365_s)")
             from .support_run import _hash_directory
             if closeouts[0]["freeze"].get(
                     "terminal_artifact_hashes") \
@@ -1510,68 +1789,144 @@ def verify_p0_run(run_dir: str | Path, *, ledger_path,
                 raise InfrastructureError(
                     "terminal evidence does not match the "
                     "closeout inventory")
-            _require_nonneg_finite(
-                closeouts[0]["budget_consumed_gpu_hours"],
-                "closeout consumed")
-            if closeouts[0]["budget_consumed_gpu_hours"] \
-                    > manifest["budget_gpu_hours"]:
-                raise InfrastructureError(
-                    "closeout consumed time exceeds the ceiling "
-                    "(363_s F6)")
     return {"verdict": "PASS",
             "launch_entry_sha256": launch["entry_sha256"],
             "lifecycle": (closeouts[0].get("terminal_status")
                           if closeouts else "open")}
 
 
-def _unwrapped(obj):
-    """Accelerate may WRAP the optimizer/scheduler at `train()`;
-    reuse is proven against the inner object."""
-    inner = obj
-    for attr in ("optimizer", "scheduler"):
-        while hasattr(inner, attr):
-            inner = getattr(inner, attr)
-    return inner
+def _persist_record_atomic(path: Path, payload: Mapping[str, Any]
+                           ) -> None:
+    """365_s: `p0_record.json` is atomically REPLACEABLE — a
+    failure after it is written must remain finalizable."""
+    import os
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=1, sort_keys=True)
+                   + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _finalize_p0_completion(*, run_dir: Path,
+                            manifest: Mapping[str, Any],
+                            cadence: list[int],
+                            launch_entry_sha256: str,
+                            session_index: int,
+                            session_started_monotonic: float,
+                            question: str,
+                            ledger_path) -> dict[str, Any]:
+    """The recoverable completion tail (365_s): rebuild the
+    record from the PERSISTED cadence records + sealed hashes,
+    verify OPEN, close the session in the chained log, recompute
+    the CUMULATIVE total AFTER persistence and verification,
+    enforce the ceiling, append the complete closeout, and
+    re-verify against the completed head."""
+    import time as _time
+
+    from .ledger import append_ledger_entry, ledger_head
+    from .support_run import _hash_directory, _sha_file
+    sealed = run_dir / "sealed"
+    persisted = _load_cadence_records(run_dir, cadence)
+    if set(persisted) != {str(i) for i in cadence}:
+        raise InfrastructureError(
+            "finalization requires every cadence record")
+    sealed_hashes = {p.name: _sha_file(p)
+                     for p in sorted(sealed.iterdir())}
+    prior = _session_state(run_dir)["cumulative_elapsed_seconds"]
+    record = {
+        "run": P0_RUN_ID,
+        "p0_launch_manifest_sha256": manifest["manifest_sha256"],
+        "launch_freeze_sha256": manifest["launch_freeze_sha256"],
+        "execution_identity_sha256":
+            manifest["execution_identity_sha256"],
+        "launch_entry_sha256": launch_entry_sha256,
+        "cadence_completed": list(cadence),
+        "checkpoints": {
+            key: {"bundle_seconds": value["bundle_seconds"],
+                  "eval_seconds": value["eval_seconds"],
+                  "checkpoint_proof": value["checkpoint_proof"]}
+            for key, value in persisted.items()},
+        "whole_run_seconds": prior
+        + (_time.monotonic() - session_started_monotonic),
+        "sealed_sha256": sealed_hashes,
+        "development_only": True,
+    }
+    _persist_record_atomic(run_dir / "p0_record.json", record)
+    verify_p0_run(run_dir, ledger_path=ledger_path,
+                  expected_head_sha256=launch_entry_sha256)
+    # close the session, THEN recompute the cumulative total
+    # AFTER persistence + verification (365_s)
+    _append_session_entry(run_dir, {
+        "kind": "session_end", "session_index": session_index,
+        "elapsed_seconds":
+            _time.monotonic() - session_started_monotonic,
+        "status": "completed"})
+    total_seconds = _session_state(run_dir)[
+        "cumulative_elapsed_seconds"]
+    if total_seconds > manifest["budget_gpu_hours"] * 3600.0:
+        raise InfrastructureError(
+            "cumulative run time crossed the ten-hour ceiling "
+            "before closeout (363_s F6)")
+    measured = round(total_seconds / 3600.0, 4)
+    closeout = append_ledger_entry(
+        {"kind": "closeout", "question": question,
+         "motivating_evidence": "P0 COMPLETE (development-only)",
+         "freeze": {
+             "p0_record_file_sha256":
+                 _sha_file(run_dir / "p0_record.json"),
+             "execute_env_file_sha256":
+                 _sha_file(run_dir / "execute_env_manifest.json"),
+             "terminal_artifact_hashes": _hash_directory(run_dir),
+         },
+         "parent": ledger_head(ledger_path),
+         "budget_allocated_gpu_hours": 0.0,
+         "budget_consumed_gpu_hours": measured,
+         "closes_entry_sha256": launch_entry_sha256,
+         "terminal_status": "complete",
+         "outcome_informed": False,
+         "outcome_pointer": str(run_dir / "p0_record.json")},
+        ledger_head(ledger_path), ledger_path)
+    verify_p0_run(run_dir, ledger_path=ledger_path,
+                  expected_head_sha256=closeout["entry_sha256"])
+    return {**record, "measured_gpu_hours": measured,
+            "closeout_entry_sha256": closeout["entry_sha256"],
+            "ledger_head": closeout["entry_sha256"]}
 
 
 def _p0_session(*, run_dir: Path, manifest: Mapping[str, Any],
                 identity: Mapping[str, Any], rows,
                 runtime_seed: int, deadline: float,
-                prior_elapsed_seconds: float,
                 resume_state: Mapping[str, Any] | None,
                 question: str, ledger_path,
                 launch_entry_sha256: str) -> dict[str, Any]:
-    """The shared session core for fresh execution and resume:
-    startup under pins → (checkpoint zero | restore) → training
-    with cadence → the final event → seal → record → verify →
-    complete closeout. A failure records a RESUMABLE interruption
-    (launch stays OPEN) and re-raises."""
+    """The shared session core for fresh execution and resume."""
     import time as _time
 
-    from .ledger import append_ledger_entry
     from . import checkpoint as ckpt
     from . import p0_smoke
     from .p0_replay import restore_extension_surface_if_absent
-    from .p0_smoke import (
-        _make_smoke_reward,
-        _seal_file,
-        _strip_console_callbacks,
-    )
+    from .p0_smoke import _make_smoke_reward, _seal_file, \
+        _strip_console_callbacks
     from .p0_val import VAL_RUN_ROOT, val_cohort_observations
     from .resume_validation import make_validation_reward
-    from .support_run import (
-        _default_environment,
-        _hash_directory,
-        _sha_file,
-    )
+    from .support_run import _default_environment, _persist_verified
     from .unit_c2_sample import UNIT_C2_CONFIG
     started = _time.monotonic()
-    session_elapsed = 0.0
+    session_index = _session_state(run_dir)["next_session_index"]
+    _append_session_entry(run_dir, {
+        "kind": "session_start", "session_index": session_index,
+        "mode": "fresh" if resume_state is None else "resume",
+        "start_group_index":
+            0 if resume_state is None
+            else int(resume_state["start_group_index"]),
+        "resume_update_index":
+            None if resume_state is None
+            else int(resume_state["resume_update_index"]),
+        "wall_start_utc": __import__("time").time()})
     try:
-        _persist = p0_smoke._persist_verified
         if not (run_dir / "execute_env_manifest.json").exists():
-            _persist(run_dir / "execute_env_manifest.json",
-                     _default_environment())
+            _persist_verified(
+                run_dir / "execute_env_manifest.json",
+                _default_environment())
         sealed = run_dir / "sealed"
         sealed.mkdir(parents=True, exist_ok=True)
 
@@ -1611,25 +1966,17 @@ def _p0_session(*, run_dir: Path, manifest: Mapping[str, Any],
             accountant = ckpt.GroupAccountant()
             start_group_index = 0
             already_completed: tuple[int, ...] = ()
-            trace_path = sealed / "training_trace.jsonl"
-            record_sink: dict[str, Any] = {
-                "checkpoints": {}, "cadence_completed": []}
             last_sha = None
         else:
             accountant = ckpt.GroupAccountant.restore(
                 resume_state["counters"])
-            start_group_index = accountant.consumed_groups
+            start_group_index = int(
+                resume_state["start_group_index"])
             already_completed = tuple(
                 resume_state["cadence_completed"])
-            trace_path = sealed / (
-                "training_trace_r"
-                f"{resume_state['interruption_count'] + 1}.jsonl")
-            record_sink = {
-                "checkpoints":
-                    dict(resume_state["checkpoints"]),
-                "cadence_completed":
-                    list(resume_state["cadence_completed"])}
             last_sha = resume_state["last_checkpoint_sha256"]
+        trace_path = sealed \
+            / f"training_trace_s{session_index}.jsonl"
 
         instrumentation = p0_smoke._EpochInstrumentation()
         base_reward = make_validation_reward(
@@ -1645,7 +1992,6 @@ def _p0_session(*, run_dir: Path, manifest: Mapping[str, Any],
             "instrumentation": instrumentation,
             "identities": identities,
             "eval_context": eval_context,
-            "record_sink": record_sink,
             "last_checkpoint_sha256": last_sha,
         }
         callback = _make_p0_callback(context, cadence_updates,
@@ -1656,12 +2002,8 @@ def _p0_session(*, run_dir: Path, manifest: Mapping[str, Any],
         context["trainer"] = trainer
         _strip_console_callbacks(trainer)
         _cast_and_assert_lora(trainer)
-        # 363_s F1: the optimizer and FULL-horizon scheduler exist
-        # BEFORE checkpoint zero; train() must REUSE them
-        trainer.create_optimizer_and_scheduler(
-            num_training_steps=final_index)
-        pre_optimizer = _unwrapped(trainer.optimizer)
-        pre_scheduler = _unwrapped(trainer.lr_scheduler)
+        pre_optimizer, pre_scheduler = _prepare_training_objects(
+            trainer, final_index)
 
         if resume_state is None:
             # checkpoint ZERO: P0's FIRST execution (charter §7)
@@ -1672,89 +2014,42 @@ def _p0_session(*, run_dir: Path, manifest: Mapping[str, Any],
             instrumentation.start_epoch()
             trainer.train(resume_from_checkpoint=str(
                 resume_state["hf_checkpoint_dir"]))
-        if _unwrapped(trainer.optimizer) is not pre_optimizer \
+        if _unwrapped(trainer.optimizer) \
+                is not _unwrapped(pre_optimizer) \
                 or _unwrapped(trainer.lr_scheduler) \
-                is not pre_scheduler:
+                is not _unwrapped(pre_scheduler):
             raise InfrastructureError(
                 "train() replaced the pre-created optimizer/"
                 "scheduler — checkpoint zero did not capture the "
                 "training objects (363_s F1)")
         _check_deadline(deadline, "post-training boundary")
-
         if int(trainer.state.global_step) != final_index:
             raise InfrastructureError(
                 f"trainer ended at step {trainer.state.global_step}"
                 f" != the frozen final update {final_index}")
         _p0_cadence_event(context, final_index, None)
-        if record_sink["cadence_completed"] != cadence_updates:
-            raise InfrastructureError(
-                "completed cadence diverges from the frozen index "
-                "set")
         _seal_file(trace_path)
-        log_path = sealed / "trainer_log_history.json"
+        log_name = "trainer_log_history.json"
+        if (sealed / (log_name + ".gz")).exists():
+            _exclude_partial_evidence(run_dir, log_name + ".gz",
+                                      session_index)
+        log_path = sealed / log_name
         log_path.write_text(
             json.dumps(trainer.state.log_history, sort_keys=True),
             encoding="utf-8")
         _seal_file(log_path)
-        session_elapsed = _time.monotonic() - started
-        total_seconds = prior_elapsed_seconds + session_elapsed
-        sealed_hashes = {p.name: _sha_file(p)
-                         for p in sorted(sealed.iterdir())}
-        record = {
-            "run": P0_RUN_ID,
-            "p0_launch_manifest_sha256":
-                manifest["manifest_sha256"],
-            "launch_freeze_sha256":
-                manifest["launch_freeze_sha256"],
-            "execution_identity_sha256":
-                manifest["execution_identity_sha256"],
-            "launch_entry_sha256": launch_entry_sha256,
-            "cadence_completed": record_sink["cadence_completed"],
-            "checkpoints": record_sink["checkpoints"],
-            "whole_run_seconds": total_seconds,
-            "sealed_sha256": sealed_hashes,
-            "development_only": True,
-        }
-        _persist(run_dir / "p0_record.json", record)
-        verify_p0_run(run_dir, ledger_path=ledger_path,
-                      expected_head_sha256=launch_entry_sha256)
-        # 363_s F6: the ceiling is enforced immediately BEFORE the
-        # successful closeout, on CUMULATIVE time
-        if total_seconds > manifest["budget_gpu_hours"] * 3600.0:
-            raise InfrastructureError(
-                "cumulative run time crossed the ten-hour ceiling "
-                "before closeout (363_s F6)")
     except BaseException as error:
-        session_elapsed = _time.monotonic() - started
-        _record_resumable_interruption(run_dir, session_elapsed,
-                                       error)
+        _record_resumable_interruption(
+            run_dir, session_index,
+            _time.monotonic() - started, error)
         raise
-
-    measured = round(total_seconds / 3600.0, 4)
-    from .ledger import ledger_head as _head
-    closeout = append_ledger_entry(
-        {"kind": "closeout", "question": question,
-         "motivating_evidence": "P0 COMPLETE (development-only)",
-         "freeze": {
-             "p0_record_file_sha256":
-                 _sha_file(run_dir / "p0_record.json"),
-             "execute_env_file_sha256":
-                 _sha_file(run_dir / "execute_env_manifest.json"),
-             "terminal_artifact_hashes": _hash_directory(run_dir),
-         },
-         "parent": _head(ledger_path),
-         "budget_allocated_gpu_hours": 0.0,
-         "budget_consumed_gpu_hours": measured,
-         "closes_entry_sha256": launch_entry_sha256,
-         "terminal_status": "complete",
-         "outcome_informed": False,
-         "outcome_pointer": str(run_dir / "p0_record.json")},
-        _head(ledger_path), ledger_path)
-    verify_p0_run(run_dir, ledger_path=ledger_path,
-                  expected_head_sha256=closeout["entry_sha256"])
-    return {**record, "measured_gpu_hours": measured,
-            "closeout_entry_sha256": closeout["entry_sha256"],
-            "ledger_head": closeout["entry_sha256"]}
+    return _finalize_p0_completion(
+        run_dir=run_dir, manifest=manifest,
+        cadence=list(identity["cadence"]["update_indices"]),
+        launch_entry_sha256=launch_entry_sha256,
+        session_index=session_index,
+        session_started_monotonic=started,
+        question=question, ledger_path=ledger_path)
 
 
 def execute_p0_run(*, run_dir: str | Path = P0_RUN_ROOT,
@@ -1763,8 +2058,7 @@ def execute_p0_run(*, run_dir: str | Path = P0_RUN_ROOT,
                    question: str, motivating_evidence: str,
                    ledger_path=None) -> dict[str, Any]:
     """Phase 2 (GPU), FRESH launch: VRAM preflight → admission
-    (the ONLY input source) → the shared session core (checkpoint
-    zero first)."""
+    (the ONLY input source) → the shared session core."""
     from .ledger import LEDGER_PATH
     from .resume_validation import gpu_session_preflight
     ledger_path = ledger_path or LEDGER_PATH
@@ -1776,13 +2070,11 @@ def execute_p0_run(*, run_dir: str | Path = P0_RUN_ROOT,
         (prelaunch / "env_manifest.json").read_text("utf-8"))
     for path in (run_dir / "sealed", run_dir / "p0_record.json",
                  run_dir / "execute_env_manifest.json",
-                 run_dir / "interruption.json"):
+                 run_dir / _SESSION_LOG, run_dir / "cadence"):
         if path.exists():
             raise InfrastructureError(
                 f"{path} exists — outputs are preflighted before "
                 "admission")
-    # 363_s conformance: the >=20 GiB free-VRAM preflight BEFORE
-    # the irreversible ledger admission
     gpu_session_preflight()
     bundle = admit_p0_execution(
         execution_manifest=manifest,
@@ -1800,8 +2092,7 @@ def execute_p0_run(*, run_dir: str | Path = P0_RUN_ROOT,
         identity=bundle["execution_identity"],
         rows=bundle["preparation"]["trainer_rows"],
         runtime_seed=bundle["preparation"]["runtime"].seed,
-        deadline=deadline, prior_elapsed_seconds=0.0,
-        resume_state=None, question=question,
+        deadline=deadline, resume_state=None, question=question,
         ledger_path=ledger_path,
         launch_entry_sha256=bundle["launch_entry_sha256"])
 
@@ -1810,21 +2101,27 @@ def resume_p0_run(*, run_dir: str | Path = P0_RUN_ROOT,
                   expected_manifest_sha256: str,
                   question: str,
                   ledger_path=None) -> dict[str, Any]:
-    """363_s F4: the resume entry point — under the ORIGINAL
-    launch (which must be OPEN; resume NEVER re-admits) and the
-    CUMULATIVE ten-hour deadline. The last cadence bundle is
-    validated (`checkpoint.validate_resume`) and its bound HF
-    checkpoint verified (`verify_hf_checkpoint_against_bundle` —
-    the 246_f-validated pattern) before training continues."""
+    """The resume entry point (363_s F4 / 365_s): the ORIGINAL
+    launch must be OPEN (resume NEVER re-admits); accounting from
+    the validated session chain (a killed session is closed with
+    its conservative inferred elapsed); resume state from the
+    ATOMIC cadence records — never bundle existence; the live
+    environment and bound run root re-attested; superseded
+    partial evaluations excluded; an all-cadence-complete state
+    finalizes WITHOUT the GPU."""
     import time as _time
 
     from . import checkpoint as ckpt
     from .ledger import LEDGER_PATH, ledger_head, verify_ledger_head
     from .p0_launch import prepare_p0_dataset
+    from .p0_replay import restore_extension_surface_if_absent
     from .resume_validation import (
+        attested_environment_sha256,
         gpu_session_preflight,
         verify_hf_checkpoint_against_bundle,
     )
+    from .support_run import _default_environment, attest_environment
+    from .unit_c2_sample import UNIT_C2_CONFIG
     ledger_path = ledger_path or LEDGER_PATH
     run_dir = Path(run_dir)
     prelaunch = run_dir / "prelaunch"
@@ -1834,6 +2131,10 @@ def resume_p0_run(*, run_dir: str | Path = P0_RUN_ROOT,
         raise InfrastructureError(
             "the execution manifest does not match the externally "
             "supplied hash (360_s P1-2)")
+    if str(run_dir.resolve()) != manifest["execution_root"]:
+        raise InfrastructureError(
+            "the resolved run root diverges from the manifest's "
+            "execution root (365_s)")
     chain = verify_ledger_head(ledger_head(ledger_path),
                                ledger_path)
     launches = [e for e in chain if e["kind"] == "training_run"
@@ -1849,116 +2150,118 @@ def resume_p0_run(*, run_dir: str | Path = P0_RUN_ROOT,
         raise InfrastructureError(
             "this launch is CLOSED — resume applies only to an "
             "open interrupted launch (363_s F4)")
-    marker = run_dir / "interruption.json"
-    if not marker.exists():
+    # 365_s: live environment + run-root attestation on EVERY
+    # resume
+    freeze = load_real_launch_freeze(
+        prelaunch / "launch_freeze.json")
+    prepared_env = json.loads(
+        (prelaunch / "env_manifest.json").read_text("utf-8"))
+    live_env = _default_environment()
+    dev_support.validate_environment_manifest_binding(live_env)
+    attest_environment(prepared_env, live_env)
+    if attested_environment_sha256(live_env) \
+            != freeze.runtime.attested_environment_sha256:
         raise InfrastructureError(
-            "no interruption record — nothing to resume")
-    interruption = json.loads(marker.read_text("utf-8"))
-    prior = float(interruption["cumulative_elapsed_seconds"])
+            "the live environment does not attest to the freeze's "
+            "commit-independent expectation (330_f §4.4)")
+    # accounting from the validated chain; close a killed session
+    state = _session_state(run_dir)
+    state = _close_killed_session(run_dir, state)
+    prior = state["cumulative_elapsed_seconds"]
     remaining = manifest["budget_gpu_hours"] * 3600.0 - prior
     if remaining <= 0:
         raise InfrastructureError(
             "the cumulative ten-hour ceiling is exhausted — only "
             "terminally_abort_p0 remains (363_s F6)")
-    gpu_session_preflight()
     identity = load_p0_execution_identity(
         prelaunch / "execution_identity.json",
         expected_sha256=manifest["execution_identity_sha256"])
     cadence = list(identity["cadence"]["update_indices"])
-    # the last VALID cadence bundle with a bound HF checkpoint
-    freeze = load_real_launch_freeze(
-        prelaunch / "launch_freeze.json")
-    preparation = prepare_p0_dataset(
-        prelaunch / "launch_freeze.json",
-        manifest["launch_freeze_sha256"])
-    completed = []
-    resume_index = None
-    resume_record = None
-    for update_index in cadence:
-        bundle_dir = run_dir \
-            / f"checkpoint_bundle_upd{update_index}"
-        if not (bundle_dir / "checkpoint_record.json").exists():
-            break
-        disk_record = json.loads(
-            (bundle_dir / "checkpoint_record.json")
-            .read_text("utf-8"))
-        completed.append(update_index)
-        if update_index > 0 and disk_record[
-                "sampler_position"]["hf_checkpoint_dir"]:
-            resume_index = update_index
-            resume_record = disk_record
-    if resume_index is None or resume_record is None:
+    completed_records = _load_cadence_records(run_dir, cadence)
+    completed = [i for i in cadence
+                 if str(i) in completed_records]
+    session_index = _session_state(run_dir)[
+        "next_session_index"]
+    if len(completed) == len(cadence):
+        # 365_s: completion finalization is RECOVERABLE — no GPU
+        started = _time.monotonic()
+        _append_session_entry(run_dir, {
+            "kind": "session_start",
+            "session_index": session_index,
+            "mode": "finalize", "start_group_index": -1,
+            "resume_update_index": None,
+            "wall_start_utc": _time.time()})
+        return _finalize_p0_completion(
+            run_dir=run_dir, manifest=manifest, cadence=cadence,
+            launch_entry_sha256=launch["entry_sha256"],
+            session_index=session_index,
+            session_started_monotonic=started,
+            question=question, ledger_path=ledger_path)
+    gpu_session_preflight()
+    positive_completed = [i for i in completed if i > 0
+                          and completed_records[str(i)]
+                          ["hf_checkpoint_dir"]]
+    if not positive_completed:
         raise InfrastructureError(
-            "no resumable positive-index checkpoint exists — only "
-            "terminally_abort_p0 remains (363_s F4)")
+            "no resumable positive-index cadence record exists — "
+            "only terminally_abort_p0 remains (363_s F4)")
+    resume_index = positive_completed[-1]
+    resume_record_meta = completed_records[str(resume_index)]
     bundle_dir = run_dir / f"checkpoint_bundle_upd{resume_index}"
-    from .p0_replay import restore_extension_surface_if_absent
-    from .unit_c2_sample import UNIT_C2_CONFIG
+    disk_record = json.loads(
+        (bundle_dir / "checkpoint_record.json").read_text("utf-8"))
+    if disk_record["checkpoint_sha256"] != resume_record_meta[
+            "checkpoint_proof"]["checkpoint_sha256"]:
+        raise InfrastructureError(
+            "the resume bundle diverges from its cadence record")
     training_surface = dev_support.load_dev_surface(
         restore_extension_surface_if_absent(),
         expected_lock_sha256=UNIT_C2_CONFIG[
             "extension_surface_lock_sha256"])
+    preparation = prepare_p0_dataset(
+        prelaunch / "launch_freeze.json",
+        manifest["launch_freeze_sha256"])
     identities = _p0_identities(
         manifest, training_surface["lock"],
         preparation["trainer_rows"], freeze.runtime.seed)
-    ckpt.validate_resume(resume_record, identities,
+    ckpt.validate_resume(disk_record, identities,
                          bundle_dir=bundle_dir)
-    hf_dir = Path(resume_record["sampler_position"][
-        "hf_checkpoint_dir"])
+    hf_dir = Path(resume_record_meta["hf_checkpoint_dir"])
     verify_hf_checkpoint_against_bundle(bundle_dir, hf_dir,
-                                        resume_record)
+                                        disk_record)
+    # 365_s F2: a partial evaluation for the NEXT cadence point
+    # (bundle written, eval unfinished) is EXCLUDED evidence; its
+    # index reruns completely
+    for pending in cadence:
+        if str(pending) not in completed_records:
+            _exclude_partial_evidence(
+                run_dir, f"eval_upd{pending}.jsonl.gz",
+                session_index)
     deadline = _time.monotonic() + remaining
     resume_state = {
-        "counters": resume_record["counters"],
+        "counters": disk_record["counters"],
+        "start_group_index": disk_record["counters"][
+            "consumed_groups"],
+        "resume_update_index": resume_index,
         "cadence_completed": completed[:completed.index(
             resume_index) + 1],
-        "checkpoints": {},  # rebuilt below from disk records
-        "interruption_count":
-            int(interruption["interruption_count"]),
         "last_checkpoint_sha256":
-            resume_record["checkpoint_sha256"],
+            disk_record["checkpoint_sha256"],
         "hf_checkpoint_dir": hf_dir,
     }
-    # the record blocks for already-completed cadence points are
-    # rebuilt from the PRIOR record if one exists, else from disk
-    prior_record_path = run_dir / "p0_record.json"
-    if prior_record_path.exists():
-        prior_blocks = json.loads(
-            prior_record_path.read_text("utf-8"))["checkpoints"]
-    else:
-        prior_blocks = {}
-    for update_index in resume_state["cadence_completed"]:
-        key = str(update_index)
-        if key in prior_blocks:
-            resume_state["checkpoints"][key] = prior_blocks[key]
-        else:
-            disk_record = json.loads(
-                (run_dir / f"checkpoint_bundle_upd{update_index}"
-                 / "checkpoint_record.json").read_text("utf-8"))
-            resume_state["checkpoints"][key] = {
-                "bundle_seconds": 0.0, "eval_seconds": 0.0,
-                "checkpoint_proof": {
-                    "checkpoint_sha256":
-                        disk_record["checkpoint_sha256"],
-                    "state_artifact_sha256":
-                        disk_record["state_artifact_sha256"],
-                    "counters": disk_record["counters"]}}
     return _p0_session(
         run_dir=run_dir, manifest=manifest, identity=identity,
         rows=preparation["trainer_rows"],
         runtime_seed=freeze.runtime.seed, deadline=deadline,
-        prior_elapsed_seconds=prior, resume_state=resume_state,
-        question=question, ledger_path=ledger_path,
+        resume_state=resume_state, question=question,
+        ledger_path=ledger_path,
         launch_entry_sha256=launch["entry_sha256"])
 
 
 def _build_p0_trainer(rows, reward, run_dir: Path, seed: int, *,
                       max_steps: int, extra_callbacks=()):
-    """The canonical-profile construction for the FULL horizon:
-    identical to the smoke's reviewed builder except `max_steps`
-    (from the admitted execution identity — never hardcoded) and
-    the P0 training seed; HF checkpoints are saved ONLY when the
-    cadence callback requests them."""
+    """The canonical-profile construction for the FULL horizon
+    (`max_steps` from the admitted execution identity)."""
     import random
 
     import numpy

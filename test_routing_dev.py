@@ -7359,10 +7359,14 @@ def test_p0_unit_l_admission(monkeypatch, tmp_path):
     (run_dir / "p0_record.json").unlink()
     # 363_s F4: the EXPLICIT terminal abort closes the launch with
     # the cumulative consumed time; a second abort refuses
-    (run_dir / "interruption.json").write_text(json.dumps(
-        {"cumulative_elapsed_seconds": 9000.0,
-         "interruption_count": 1, "last_error": "X"}),
-        encoding="utf-8")
+    import time as _time3
+    p0_execution._append_session_entry(run_dir, {
+        "kind": "session_start", "session_index": 1,
+        "mode": "fresh", "start_group_index": 0,
+        "resume_update_index": None,
+        "wall_start_utc": _time3.time()})
+    p0_execution._record_resumable_interruption(
+        run_dir, 1, 9000.0, RuntimeError("X"))
     aborted = p0_execution.terminally_abort_p0(
         run_dir=run_dir, question="q",
         reason="360_s reproduction (2.5 GPU-h consumed)",
@@ -7558,31 +7562,87 @@ def test_p0_runner_cpu_boundaries(monkeypatch, tmp_path):
                         "parent_entry_sha256", PRISTINE_VAL_LINEAGE)
     monkeypatch.setattr(p0_val, "VAL_CONFIG_SHA256",
                         PRISTINE_VAL_CONFIG_SHA256)
-    # 363_s F4: a resumable interruption seals raws, RETAINS every
-    # checkpoint, records CUMULATIVE elapsed, writes NO closeout
+    # 365_s: the HASH-CHAINED session log — interruptions seal
+    # raws, RETAIN checkpoints, close the session; cumulative
+    # accounting is validated; tampering and NaN refuse; a killed
+    # session gets a conservative inferred end
     abort_dir = tmp_path / "interrupted"
     sealed = abort_dir / "sealed"
     sealed.mkdir(parents=True)
-    (sealed / "training_trace.jsonl").write_text(
+    (sealed / "training_trace_s1.jsonl").write_text(
         '{"row": 1}\n', encoding="utf-8")
     bundle = abort_dir / "checkpoint_bundle_upd628"
     bundle.mkdir()
     (bundle / "adapter_state.safetensors").write_bytes(b"resume")
+    import time as _time2
+    p0_execution._append_session_entry(abort_dir, {
+        "kind": "session_start", "session_index": 1,
+        "mode": "fresh", "start_group_index": 0,
+        "resume_update_index": None,
+        "wall_start_utc": _time2.time()})
     p0_execution._record_resumable_interruption(
-        abort_dir, 100.0, RuntimeError("gpu fell over"))
-    assert not (sealed / "training_trace.jsonl").exists()
-    assert (sealed / "training_trace.jsonl.gz").exists()
+        abort_dir, 1, 100.0, RuntimeError("gpu fell over"))
+    assert not (sealed / "training_trace_s1.jsonl").exists()
+    assert (sealed / "training_trace_s1.jsonl.gz").exists()
     assert bundle.exists()
-    marker = json.loads(
-        (abort_dir / "interruption.json").read_text("utf-8"))
-    assert marker["cumulative_elapsed_seconds"] == 100.0
-    assert marker["interruption_count"] == 1
-    p0_execution._record_resumable_interruption(
-        abort_dir, 50.0, RuntimeError("again"))
-    marker = json.loads(
-        (abort_dir / "interruption.json").read_text("utf-8"))
-    assert marker["cumulative_elapsed_seconds"] == 150.0
-    assert marker["interruption_count"] == 2
-    assert "again" in marker["last_error"]
+    state = p0_execution._session_state(abort_dir)
+    assert state["cumulative_elapsed_seconds"] == 100.0
+    assert state["unclosed_session_index"] is None
+    # a killed session (start, no end) closes with an INFERRED
+    # conservative wall-clock elapsed at the next entry point
+    p0_execution._append_session_entry(abort_dir, {
+        "kind": "session_start", "session_index": 2,
+        "mode": "resume", "start_group_index": 628,
+        "resume_update_index": 628,
+        "wall_start_utc": _time2.time() - 50.0})
+    state = p0_execution._session_state(abort_dir)
+    assert state["unclosed_session_index"] == 2
+    state = p0_execution._close_killed_session(abort_dir, state)
+    assert state["unclosed_session_index"] is None
+    assert state["cumulative_elapsed_seconds"] >= 150.0
+    # a NaN elapsed can never enter the chain
+    with pytest.raises(InfrastructureError,
+                       match="non-negative finite"):
+        p0_execution._append_session_entry(abort_dir, {
+            "kind": "session_end", "session_index": 3,
+            "elapsed_seconds": float("nan"), "status": "x"})
+    # a REWRITTEN line breaks the chain
+    log = abort_dir / "sessions.jsonl"
+    lines = log.read_text("utf-8").splitlines()
+    tampered = json.loads(lines[0])
+    tampered["elapsed_seconds"] = 0.0
+    tampered_line = json.dumps(tampered, sort_keys=True)
+    log.write_text("\n".join([tampered_line] + lines[1:]) + "\n",
+                   encoding="utf-8")
+    with pytest.raises(InfrastructureError, match="chain"):
+        p0_execution._load_sessions(abort_dir)
+    # 365_s F2: cadence records are atomic, once-only, contiguous
+    cadence_dir = tmp_path / "cadence-run"
+    cadence_dir.mkdir()
+    record = {"update_index": 0, "bundle_seconds": 1.0,
+              "eval_seconds": 2.0,
+              "checkpoint_proof": {"checkpoint_sha256": "a" * 64,
+                                   "state_artifact_sha256": {},
+                                   "counters": {}},
+              "hf_checkpoint_dir": None}
+    p0_execution._write_cadence_record(cadence_dir, record)
+    with pytest.raises(InfrastructureError, match="exactly once"):
+        p0_execution._write_cadence_record(cadence_dir, record)
+    loaded = p0_execution._load_cadence_records(
+        cadence_dir, [0, 628, 1256])
+    assert list(loaded) == ["0"]
+    gap = {**record, "update_index": 1256}
+    p0_execution._write_cadence_record(cadence_dir, gap)
+    with pytest.raises(InfrastructureError, match="contiguous"):
+        p0_execution._load_cadence_records(
+            cadence_dir, [0, 628, 1256])
+    # excluded evidence is never overwritten
+    (cadence_dir / "sealed").mkdir()
+    (cadence_dir / "sealed" / "eval_upd628.jsonl.gz"
+     ).write_bytes(b"partial")
+    p0_execution._exclude_partial_evidence(
+        cadence_dir, "eval_upd628.jsonl.gz", 2)
+    assert (cadence_dir / "excluded"
+            / "s2_eval_upd628.jsonl.gz").read_bytes() == b"partial"
     assert "sentinel-block" in " ".join(
         p0_execution.P0_RUNNER_OUTSTANDING)
