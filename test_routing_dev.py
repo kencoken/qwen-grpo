@@ -6664,6 +6664,7 @@ def test_p0_r_cycle_final_reserve(tmp_path, monkeypatch):
     # the frozen parent — a valid chain PREFIX)
     frozen_parent = p0_cycle.CYCLE_CONFIG["lineage"][
         "parent_entry_sha256"]
+    real_head_before = ledger.ledger_head()
     full_text = Path(ledger.LEDGER_PATH).read_text("utf-8")
     truncated = full_text[:full_text.index("\n## entry 20 ")]
     ledger_copy = tmp_path / "ledger.md"
@@ -6721,9 +6722,11 @@ def test_p0_r_cycle_final_reserve(tmp_path, monkeypatch):
                  "itemized_ceiling_gpu_hours": 1.0,
                  "rounding": "ceil_to_whole_gpu_hours"}},
             appended["entry_sha256"], ledger_copy)
-    # the REAL ledger is untouched by the rehearsal (its head is
-    # the real appended final-reserve entry)
-    assert ledger.ledger_head() == real_final[0]["entry_sha256"]
+    # the REAL ledger is untouched by the rehearsal (the head is
+    # exactly what it was before; the chain may legitimately have
+    # grown past entry 20 — e.g. the smoke launch/closeout — so
+    # the final-reserve entry need not be the head)
+    assert ledger.ledger_head() == real_head_before
 
 
 # --- precursors Unit T: the beta timing smoke (347_f) --------------------------
